@@ -664,24 +664,143 @@ document.addEventListener("DOMContentLoaded", () => {
           <td>${delivBadge}</td>
           <td>${aiDraftCell}</td>
           <td><span class="stage-badge ${l.stage}">${l.stage}</span></td>
-          <td>
-            <div style="display:flex; gap:4px;">
-              <button class="btn-ghost-sm btn-open-lead-ai" data-id="${l.id}" title="Review & Edit AI Pitch">🤖 Draft</button>
-              <button class="btn-ghost-sm btn-audit-single-lead" data-id="${l.id}" title="Deep Audit MX & Reachability">🔍 MX</button>
-              <button class="btn-ghost-sm btn-delete-lead" data-id="${l.id}" style="color:var(--rose);" title="Delete">🗑</button>
+          <td style="text-align: right;">
+            <div class="lead-action-cell">
+              <button class="btn-lead-kebab-trigger" data-id="${l.id}" title="Lead Actions">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
+                  <circle cx="12" cy="5" r="2.2" />
+                  <circle cx="12" cy="12" r="2.2" />
+                  <circle cx="12" cy="19" r="2.2" />
+                </svg>
+              </button>
+
+              <!-- Floating Glassmorphic Burger / Kebab Action Menu -->
+              <div class="lead-kebab-menu" id="kebab-menu-${l.id}">
+                <div class="kebab-menu-header">
+                  <span class="kebab-lead-title">${esc(l.name || "Prospect")}</span>
+                  <span class="kebab-lead-sub">${esc(l.company || "Lead")} &bull; ${esc(l.niche || "B2B")}</span>
+                </div>
+
+                <button class="kebab-menu-item btn-open-lead-ai" data-id="${l.id}">
+                  <div class="kebab-item-icon">🤖</div>
+                  <div class="kebab-item-text">
+                    <strong>AI Pitch Studio</strong>
+                    <small>Review & custom personalize copy</small>
+                  </div>
+                </button>
+
+                <button class="kebab-menu-item btn-quick-regen-ai" data-id="${l.id}">
+                  <div class="kebab-item-icon">⚡</div>
+                  <div class="kebab-item-text">
+                    <strong>Quick AI Rewrite</strong>
+                    <small>Regenerate with custom video hook</small>
+                  </div>
+                </button>
+
+                <button class="kebab-menu-item btn-audit-single-lead" data-id="${l.id}">
+                  <div class="kebab-item-icon">🛡️</div>
+                  <div class="kebab-item-text">
+                    <strong>Zero-Bounce MX Audit</strong>
+                    <small>Verify DNS & Catch-All mailbox</small>
+                  </div>
+                </button>
+
+                <button class="kebab-menu-item btn-send-lead-preview" data-id="${l.id}" data-email="${esc(l.email)}">
+                  <div class="kebab-item-icon">✉️</div>
+                  <div class="kebab-item-text">
+                    <strong>Send Test Preview</strong>
+                    <small>Deliver sample to f12x.studio</small>
+                  </div>
+                </button>
+
+                <div class="kebab-divider"></div>
+
+                <button class="kebab-menu-item kebab-danger btn-delete-lead" data-id="${l.id}">
+                  <div class="kebab-item-icon" style="background: rgba(239, 68, 68, 0.2); border-color: rgba(239, 68, 68, 0.4); color: #ef4444;">🗑️</div>
+                  <div class="kebab-item-text">
+                    <strong style="color: #ef4444;">Delete Prospect</strong>
+                    <small>Remove permanently from pipeline</small>
+                  </div>
+                </button>
+              </div>
             </div>
           </td>
         </tr>`;
     }).join("");
 
-    // Wire buttons
-    tbody.querySelectorAll(".btn-open-lead-ai, .btn-quick-ai-draft").forEach(btn => {
-      btn.addEventListener("click", () => openLeadAiDraftModal(btn.dataset.id));
+    // Wire 3-dots Kebab Toggles
+    tbody.querySelectorAll(".btn-lead-kebab-trigger").forEach(btn => {
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const leadId = btn.dataset.id;
+        const menu = g(`kebab-menu-${leadId}`);
+        const wasActive = menu?.classList.contains("active");
+
+        // Close any other open kebab menus
+        document.querySelectorAll(".lead-kebab-menu.active").forEach(m => m.classList.remove("active"));
+        document.querySelectorAll(".btn-lead-kebab-trigger.active").forEach(b => b.classList.remove("active"));
+
+        if (!wasActive && menu) {
+          menu.classList.add("active");
+          btn.classList.add("active");
+        }
+      });
     });
 
+    // Wire AI Pitch Studio buttons
+    tbody.querySelectorAll(".btn-open-lead-ai, .btn-quick-ai-draft").forEach(btn => {
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        closeAllKebabMenus();
+        openLeadAiDraftModal(btn.dataset.id);
+      });
+    });
+
+    // Wire Quick AI Rewrite
+    tbody.querySelectorAll(".btn-quick-regen-ai").forEach(btn => {
+      btn.addEventListener("click", async (e) => {
+        e.stopPropagation();
+        closeAllKebabMenus();
+        showToast("Generating unique AI pitch…", "info");
+        try {
+          const d = await apiFetch(`/api/leads/${btn.dataset.id}/ai-draft`, "POST");
+          if (d.success) {
+            showToast("New AI pitch generated!", "success");
+            showAlert(`⚡ Generated new AI pitch for lead #${btn.dataset.id}: "${d.ai_subject}"`, "success", 4000);
+            loadLeads();
+          }
+        } catch (err) {
+          showToast(`Error: ${err}`, "error");
+        }
+      });
+    });
+
+    // Wire Send Test Preview for this Lead
+    tbody.querySelectorAll(".btn-send-lead-preview").forEach(btn => {
+      btn.addEventListener("click", async (e) => {
+        e.stopPropagation();
+        closeAllKebabMenus();
+        showToast("Sending test email to f12x.studio@gmail.com…", "info");
+        try {
+          const d = await apiFetch("/api/signature/test-preview", "POST", { to_email: "f12x.studio@gmail.com" });
+          if (d.success) {
+            showToast("Test email dispatched!", "success");
+            showAlert("🚀 Test email with Apple-minimal Signature delivered to f12x.studio@gmail.com!", "success", 5000);
+          } else {
+            showToast("Failed to dispatch test", "error");
+          }
+        } catch (err) {
+          showToast(`Error: ${err}`, "error");
+        }
+      });
+    });
+
+    // Wire Zero-Bounce MX Audit
     tbody.querySelectorAll(".btn-audit-single-lead").forEach(btn => {
-      btn.addEventListener("click", async () => {
-        btn.textContent = "…";
+      btn.addEventListener("click", async (e) => {
+        e.stopPropagation();
+        closeAllKebabMenus();
+        showToast("Running deep DNS & MX audit…", "info");
         try {
           const d = await apiFetch(`/api/leads/${btn.dataset.id}/verify-deep`, "POST");
           if (d.success) {
@@ -689,20 +808,35 @@ document.addEventListener("DOMContentLoaded", () => {
             showToast(`MX: ${a.primary_mx || "None"} · Score: ${a.score}/100`, a.valid ? "success" : "error");
             loadLeads();
           }
-        } finally {
-          btn.textContent = "🔍 MX";
+        } catch (err) {
+          showToast(`Audit failed: ${err}`, "error");
         }
       });
     });
 
+    // Wire Delete Lead
     tbody.querySelectorAll(".btn-delete-lead").forEach(btn => {
-      btn.addEventListener("click", async () => {
-        if (!confirm("Delete this lead?")) return;
+      btn.addEventListener("click", async (e) => {
+        e.stopPropagation();
+        closeAllKebabMenus();
+        if (!confirm("Delete this lead permanently?")) return;
         await apiFetch(`/api/leads/${btn.dataset.id}`, "DELETE");
+        showToast("Lead removed", "info");
         loadLeads();
       });
     });
   }
+
+  function closeAllKebabMenus() {
+    document.querySelectorAll(".lead-kebab-menu.active").forEach(m => m.classList.remove("active"));
+    document.querySelectorAll(".btn-lead-kebab-trigger.active").forEach(b => b.classList.remove("active"));
+  }
+
+  // Global click & escape listeners to dismiss floating kebab menus
+  document.addEventListener("click", () => closeAllKebabMenus());
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") closeAllKebabMenus();
+  });
 
   // Download Sample CSV
   on("btn-download-sample-csv", "click", () => {
