@@ -366,6 +366,7 @@
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
                 <input type="text" id="leads-search-input" placeholder="Search leads…" />
               </div>
+              <button class="btn-ghost-sm" id="btn-clean-leads">🧹 Zero-Bounce Clean</button>
               <button class="btn-primary-sm" id="btn-open-add-lead">+ Add Lead</button>
             </div>
           </div>
@@ -659,18 +660,53 @@
           <div class="view-header-bar">
             <div>
               <h2 class="view-title">A/B Testing & Spintax Simulator</h2>
-              <p class="view-subtitle">Generate and inspect 5 unique variations to verify high-entropy fingerprinting before launching</p>
+              <p class="view-subtitle">High-entropy permutation testing with live lead variable interpolation & grammar normalization</p>
             </div>
             <div class="view-header-actions">
               <button class="btn-primary-sm" id="btn-ab-generate">⚡ Simulate 5 Variants</button>
             </div>
           </div>
 
-          <div class="form-field" style="margin-bottom: 16px;">
-            <label>Template with Spintax</label>
-            <input type="text" id="ab-input-text" placeholder="{Hey|Hi|Hello} {{first_name}}, {loved|impressed by} your recent work on {Instagram|TikTok}." value="{Hey|Hi|Hello} {{first_name}}, {loved|was really impressed by} your recent video on {Instagram|TikTok}. We helped 14 brands add $120k ARR using {short-form clips|organic shorts}. Open to {a 10-min chat|seeing how it works}?" />
+          <!-- Entropy & Performance HUD -->
+          <div class="ab-hud-grid">
+            <div class="ab-hud-card">
+              <span class="ab-hud-label">Total Combinations</span>
+              <div class="ab-hud-val" id="ab-hud-comb">24</div>
+              <span class="ab-hud-sub">Unique copy permutations</span>
+            </div>
+            <div class="ab-hud-card">
+              <span class="ab-hud-label">Entropy Score</span>
+              <div class="ab-hud-val cyan" id="ab-hud-entropy">95%</div>
+              <span class="ab-hud-sub">High variance / anti-fingerprint</span>
+            </div>
+            <div class="ab-hud-card">
+              <span class="ab-hud-label">Vocabulary Density</span>
+              <div class="ab-hud-val emerald" id="ab-hud-words">48</div>
+              <span class="ab-hud-sub">Unique keywords detected</span>
+            </div>
+            <div class="ab-hud-card">
+              <span class="ab-hud-label">Reading Pacing</span>
+              <div class="ab-hud-val" id="ab-hud-pacing">Ideal (45s)</div>
+              <span class="ab-hud-sub">Optimal cold email length</span>
+            </div>
           </div>
 
+          <!-- Mock Lead Variables Bar -->
+          <div class="ab-lead-sim-bar">
+            <div class="ab-sim-title">👤 Live Lead Preview Variables:</div>
+            <div class="ab-sim-fields">
+              <input type="text" id="ab-sim-name" placeholder="First Name" value="Sarah" title="First Name" />
+              <input type="text" id="ab-sim-company" placeholder="Company" value="Apex Media" title="Company Name" />
+              <input type="text" id="ab-sim-niche" placeholder="Niche" value="E-Commerce" title="Niche / Industry" />
+            </div>
+          </div>
+
+          <div class="form-field" style="margin-bottom: 16px;">
+            <label>Template with Nested Spintax & Fallbacks</label>
+            {% raw %}<input type="text" id="ab-input-text" placeholder="{Hey|Hi|Hello} {{first_name|there}}, {loved|impressed by} your recent work on {Instagram|TikTok}." value="{Hey|Hi|Hello} {{first_name|there}}, {loved|was really impressed by} your recent video on {Instagram|TikTok}. We helped 14 brands add $120k ARR using {short-form clips|organic shorts}. Open to {a 10-min chat|seeing how it works}?" />{% endraw %}
+          </div>
+
+          <!-- Variants Display -->
           <div class="ab-variants-grid" id="ab-variants-container">
             <div class="skeleton-card"></div>
             <div class="skeleton-card"></div>

@@ -20,6 +20,8 @@ import config
 import email_toolkit
 import requests
 import database as db
+import email_verifier
+import outreach_engine
 
 logger = logging.getLogger(__name__)
 
@@ -165,7 +167,13 @@ def send_email_now(to_email: str, subject: str, body: str, account: dict, tracki
 
         domain = from_email.split("@")[1] if "@" in from_email else "gmail.com"
         message_id = make_msgid(domain=domain)
-        msg["Message-ID"] = message_id
+        # Attach Google & Yahoo compliant RFC 8058 List-Unsubscribe headers
+        try:
+            unsub_headers = outreach_engine.get_unsubscribe_headers(to_email)
+            msg["List-Unsubscribe"] = unsub_headers["List-Unsubscribe"]
+            msg["List-Unsubscribe-Post"] = unsub_headers["List-Unsubscribe-Post"]
+        except Exception:
+            pass
 
         # Plain text and HTML parts
         msg.attach(MIMEText(body, "plain", "utf-8"))
@@ -281,7 +289,27 @@ def send_with_logging(lead_id: int, to_email: str, subject: str, body: str,
     If email_id is given, updates existing queued record. Otherwise logs new.
     Returns: {success, email_id, account_used, message_id, queued, error}
     """
-    account = db.get_next_available_account()
+    # 0. Zero-Bounce Pre-Send Verification Shield
+    try:
+        verify_res = email_verifier.verify_lead_email(to_email, deep_smtp=False)
+        if not verify_res["valid"]:
+            db.update_lead_stage(lead_id, "bounced")
+            db.add_to_blacklist(to_email, reason=f"Zero-Bounce shield: {verify_res.get('reason')}")
+            logger.warning(f"Zero-Bounce shield blocked invalid email: {to_email} ({verify_res.get('reason')})")
+            return {
+                "success": False,
+                "error": f"Zero-Bounce shield blocked: {verify_res.get('reason')}",
+                "bounce": True,
+                "suppressed": True
+            }
+    except Exception as e:
+        logger.debug(f"Pre-check bypassed on exception: {e}")
+
+    # 1. Mailbox Selection via MailboxPoolRouter
+    account = outreach_engine.mailbox_pool.select_next_mailbox()
+    if not account:
+        account = db.get_next_available_account()
+
     if not account:
         # No capacity — just log as queued if not already logged
         if not email_id:
@@ -290,7 +318,7 @@ def send_with_logging(lead_id: int, to_email: str, subject: str, body: str,
             "success": False,
             "queued": True,
             "email_id": email_id,
-            "message": "All accounts at daily limit. Queued for tomorrow.",
+            "message": "All mailboxes at daily limit. Queued for tomorrow.",
         }
 
     # Log as queued first (idempotent if already exists)
@@ -299,6 +327,17 @@ def send_with_logging(lead_id: int, to_email: str, subject: str, body: str,
 
     tracking_token = db.create_tracking_token(email_id)
     result = send_email_now(to_email, subject, body, account, tracking_token=tracking_token)
+
+    # 2. Automatic Failover to backup mailbox if temporary SMTP rate-limit or auth failure
+    if not result.get("success") and not result.get("bounce"):
+        err_msg = result.get("error", "SMTP send error")
+        outreach_engine.mailbox_pool.trigger_cooldown(account["from_email"], minutes=15, reason=err_msg)
+        backup_account = outreach_engine.mailbox_pool.select_next_mailbox()
+        if backup_account and backup_account["email"] != account["from_email"]:
+            logger.info(f"Failing over dispatch from {account['from_email']} to backup {backup_account['email']}")
+            result = send_email_now(to_email, subject, body, backup_account, tracking_token=tracking_token)
+            if result.get("success"):
+                account = backup_account
 
     if result["success"]:
         db.mark_email_sent(email_id, result.get("message_id"), account["from_email"])

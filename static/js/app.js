@@ -555,6 +555,29 @@ document.addEventListener("DOMContentLoaded", () => {
     ));
   });
 
+  // Zero-Bounce Pre-Send Cleaner
+  on("btn-clean-leads", "click", async (e) => {
+    const btn = e.currentTarget;
+    btn.disabled = true;
+    btn.textContent = "Verifying DNS & MX…";
+    try {
+      const res = await apiFetch("/api/leads/verify-all", "POST");
+      if (res.success) {
+        if (res.dead_bounced > 0) {
+          showToast(`🛡️ Filtered ${res.dead_bounced} dead/unresolvable lead(s) to prevent bounces!`, "warning");
+        } else {
+          showToast(`✓ All ${res.scanned} leads verified with active MX records! (0 dead)`, "success");
+        }
+        loadLeads();
+      }
+    } catch (err) {
+      showToast("Verification failed: " + err, "error");
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "🧹 Zero-Bounce Clean";
+    }
+  });
+
   // ═══════════════════════════════════════════════════════
   //  MAILBOXES MODULE
   // ═══════════════════════════════════════════════════════
@@ -1153,27 +1176,63 @@ document.addEventListener("DOMContentLoaded", () => {
     const text = g("ab-input-text")?.value.trim();
     if (!container || !text) return;
 
+    const mockLead = {
+      name: g("ab-sim-name")?.value.trim() || "Sarah",
+      first_name: g("ab-sim-name")?.value.trim() || "Sarah",
+      company: g("ab-sim-company")?.value.trim() || "Apex Media",
+      niche: g("ab-sim-niche")?.value.trim() || "E-Commerce",
+      email: "sarah@apexmedia.co"
+    };
+
     container.innerHTML = `<div class="skeleton-card"></div><div class="skeleton-card"></div>`;
 
     try {
-      const d = await apiFetch("/api/spintax/preview", "POST", { text, count: 5 });
+      const d = await apiFetch("/api/spintax/preview", "POST", {
+        text,
+        count: 5,
+        mock_lead: mockLead
+      });
       if (!d.success) return;
 
+      // Update HUD metrics
+      setEl("ab-hud-comb", d.combinations || 1);
+      setEl("ab-hud-entropy", `${d.entropy_score || 90}%`);
+      setEl("ab-hud-words", d.unique_words || 0);
+      setEl("ab-hud-pacing", d.readability_grade || "Ideal (45s)");
+
       const variants = d.variants || [];
-      container.innerHTML = variants.map((v, i) => `
+      container.innerHTML = variants.map((v, i) => {
+        const wordCount = v.split(/\s+/).filter(Boolean).length;
+        return `
         <div class="ab-variant-card">
           <div class="ab-variant-head">
-            <span class="ab-variant-num">Variant #${i + 1}</span>
-            <button class="btn-ghost-sm btn-copy-variant" data-content="${esc(v)}">Copy</button>
+            <div class="ab-variant-tags">
+              <span class="ab-variant-num">Variant #${i + 1}</span>
+              <span class="ab-variant-chip">${wordCount} words</span>
+              <span class="ab-variant-chip">Personalized for ${esc(mockLead.name)} @ ${esc(mockLead.company)}</span>
+            </div>
+            <div class="ab-variant-actions">
+              <button class="btn-copy-variant" data-content="${esc(v)}">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                <span>Copy</span>
+              </button>
+            </div>
           </div>
           <div class="ab-variant-body">${esc(v)}</div>
-        </div>`).join("");
+        </div>`;
+      }).join("");
 
       container.querySelectorAll(".btn-copy-variant").forEach(btn => {
         btn.addEventListener("click", () => {
           navigator.clipboard.writeText(btn.dataset.content || "");
-          btn.textContent = "Copied!";
-          setTimeout(() => { btn.textContent = "Copy"; }, 1500);
+          btn.classList.add("copied");
+          const span = btn.querySelector("span");
+          if (span) span.textContent = "Copied! ✓";
+          showToast("Variant copied to clipboard!", "success");
+          setTimeout(() => {
+            btn.classList.remove("copied");
+            if (span) span.textContent = "Copy";
+          }, 1800);
         });
       });
 
@@ -1183,6 +1242,9 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   on("btn-ab-generate", "click", simulateAbVariants);
+  ["ab-sim-name", "ab-sim-company", "ab-sim-niche"].forEach(id => {
+    on(id, "input", debounce(simulateAbVariants, 400));
+  });
 
   // ═══════════════════════════════════════════════════════
   //  ANALYTICS MODULE

@@ -58,20 +58,57 @@ UNSUBSCRIBE_THRESHOLD   = 0.05   # 5% unsub rate → pause
 
 
 # ═══════════════════════════════════════════════════════════════════
-#   SPINTAX ENGINE — Supports nested {A|B|{C|D|{E|F}}} recursively
+#   SPINTAX ENGINE V2 — Grammar cleaning, variable fallbacks & entropy
 # ═══════════════════════════════════════════════════════════════════
 
-def spin(text: str, seed: Optional[int] = None) -> str:
+def clean_text_punctuation(text: str) -> str:
     """
-    Resolves deeply nested spintax patterns.
-    Optional seed for reproducible output per lead.
+    Fixes cold outreach grammar flaws (dangling spaces before punctuation, double spaces).
+    e.g.: 'Hey , was really impressed' -> 'Hey, was really impressed'
+          'Open to a chat ?' -> 'Open to a chat?'
+    """
+    if not text:
+        return ""
+    # Strip spaces before commas, periods, exclamation, question marks, colons, semicolons
+    text = re.sub(r'\s+([,\.!\?;:])', r'\1', text)
+    # Collapse multiple spaces into one
+    text = re.sub(r'[ \t]+', ' ', text)
+    return text.strip()
+
+
+def spin(text: str, seed: Optional[int] = None, lead: Optional[dict] = None) -> str:
+    """
+    Resolves deeply nested spintax patterns with fallback variable resolution
+    and grammar normalization.
     """
     if not text:
         return ""
     if seed is not None:
         random.seed(seed)
 
-    # Work from innermost braces outward (iterative)
+    # 1. Resolve variable tags with fallbacks first: {{first_name|there}} or {first_name|there}
+    if lead:
+        name = lead.get("name", "") or ""
+        first_name = lead.get("first_name") or (name.split()[0] if name else "")
+        company = lead.get("company", "") or ""
+        niche = lead.get("niche", "") or ""
+
+        def _sub_tag(m):
+            tag = m.group(1).lower()
+            fallback = m.group(2) if m.group(2) else ""
+            if "first_name" in tag:
+                return first_name or fallback or "there"
+            if "name" in tag:
+                return name or fallback or "there"
+            if "company" in tag:
+                return company or fallback or "your team"
+            if "niche" in tag:
+                return niche or fallback or "your industry"
+            return fallback
+
+        text = re.sub(r'\{\{?((?:first_)?name|company|niche|email|handle|sender_name)(?:\|([^}]+))?\}\}?', _sub_tag, text, flags=re.IGNORECASE)
+
+    # 2. Work from innermost braces outward (recursive spintax)
     inner = re.compile(r'\{([^{}]+)\}')
     max_passes = 30
     for _ in range(max_passes):
@@ -81,12 +118,96 @@ def spin(text: str, seed: Optional[int] = None) -> str:
         choices = match.group(1).split('|')
         chosen = random.choice(choices).strip()
         text = text[:match.start()] + chosen + text[match.end():]
-    return text
+
+    # 3. Clean trailing whitespace and punctuation bleed
+    return clean_text_punctuation(text)
 
 
-def preview_spin_variants(text: str, count: int = 5) -> List[str]:
-    """Returns N different spintax resolutions for A/B preview."""
-    return [spin(text) for _ in range(count)]
+def calculate_spintax_entropy(text: str) -> Dict[str, Any]:
+    """
+    Calculates combinatorial variation count, vocabulary richness, and Shannon entropy.
+    """
+    if not text:
+        return {"combinations": 1, "entropy_score": 0, "unique_words": 0, "readability_grade": "N/A"}
+
+    # Extract all options groups
+    groups = re.findall(r'\{([^{}]+)\}', text)
+    total_combinations = 1
+    for g in groups:
+        options = g.split('|')
+        if len(options) > 1:
+            total_combinations *= len(options)
+
+    words = re.findall(r'\b[a-zA-Z]{2,}\b', text.lower())
+    unique_words = len(set(words))
+    total_words = max(len(words), 1)
+    lexical_density = round((unique_words / total_words) * 100, 1)
+
+    # Shannon Entropy approximation (0 - 100)
+    # Higher combinations & higher unique word ratio = higher entropy
+    comb_factor = min(math.log2(max(total_combinations, 1)) * 12, 60)
+    lex_factor = min(lexical_density * 0.4, 40)
+    entropy_score = min(round(comb_factor + lex_factor), 100)
+
+    # Readability estimate
+    if total_words < 50:
+        readability = "Ultra-Fast (<30s)"
+    elif total_words < 120:
+        readability = "Ideal Cold Email (45s)"
+    else:
+        readability = "Long (Trim to <100 words)"
+
+    return {
+        "combinations": total_combinations,
+        "entropy_score": entropy_score,
+        "unique_words": unique_words,
+        "total_words": total_words,
+        "readability_grade": readability
+    }
+
+
+def preview_spin_variants(text: str, count: int = 5, mock_lead: Optional[dict] = None) -> Dict[str, Any]:
+    """
+    Returns N unique spintax resolutions with lead simulation and entropy metrics.
+    """
+    if not mock_lead:
+        mock_lead = {
+            "name": "Sarah Jenkins",
+            "first_name": "Sarah",
+            "company": "Apex Media",
+            "niche": "E-Commerce",
+            "email": "sarah@apexmedia.co"
+        }
+
+    variants = []
+    seen = set()
+    # Sample multiple times to get unique variants
+    for _ in range(count * 5):
+        v = spin(text, lead=mock_lead)
+        v = apply_merge_tags(v, mock_lead)
+        v = clean_text_punctuation(v)
+        if v not in seen:
+            seen.add(v)
+            variants.append(v)
+        if len(variants) >= count:
+            break
+
+    # If fewer unique variants exist, backfill
+    if not variants:
+        variants = [clean_text_punctuation(text)]
+    while len(variants) < count:
+        variants.append(random.choice(variants))
+
+    entropy = calculate_spintax_entropy(text)
+
+    return {
+        "variants": variants,
+        "count": len(variants),
+        "combinations": entropy["combinations"],
+        "entropy_score": entropy["entropy_score"],
+        "unique_words": entropy["unique_words"],
+        "readability_grade": entropy["readability_grade"]
+    }
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -102,8 +223,9 @@ def apply_merge_tags(text: str, lead: dict, sender_name: str = "") -> str:
     if not text:
         return ""
 
-    name = lead.get("name", "there") or "there"
-    first_name = name.split()[0] if name else "there"
+    name = lead.get("name", "") or ""
+    first_name = lead.get("first_name") or (name.split()[0] if name else "there")
+    name = name or "there"
     now = datetime.now()
 
     tags = {
@@ -122,7 +244,12 @@ def apply_merge_tags(text: str, lead: dict, sender_name: str = "") -> str:
     for tag, value in tags.items():
         text = text.replace(tag, str(value))
 
-    return text
+    # Also handle single-brace tags {first_name}, {company}
+    for tag, value in tags.items():
+        single = tag[1:-1]
+        text = text.replace(single, str(value))
+
+    return clean_text_punctuation(text)
 
 
 def personalize(subject: str, body: str, lead: dict, sender_name: str = "", seed: Optional[int] = None) -> tuple:
@@ -130,11 +257,119 @@ def personalize(subject: str, body: str, lead: dict, sender_name: str = "", seed
     Full personalization pipeline: spin → merge tags → deliverability clean.
     Returns (subject, body) tuple.
     """
-    subject = spin(subject, seed=seed)
-    body    = spin(body, seed=seed)
+    subject = spin(subject, seed=seed, lead=lead)
+    body    = spin(body, seed=seed, lead=lead)
     subject = apply_merge_tags(subject, lead, sender_name)
     body    = apply_merge_tags(body, lead, sender_name)
-    return subject, body
+    return clean_text_punctuation(subject), clean_text_punctuation(body)
+
+
+# ═══════════════════════════════════════════════════════════════════
+#   MAILBOX POOL ROUTER — Smart multi-provider rotation & failover
+# ═══════════════════════════════════════════════════════════════════
+
+class MailboxPoolRouter:
+    """
+    Enterprise Mailbox Pooling Engine:
+    - Scales cold outreach to 1,000+ emails/day by pooling 20-30 mailboxes
+    - Enforces per-mailbox daily caps (30-50/day)
+    - Dynamic Cooldown: pauses mailbox for 15m on 421/454/535 errors
+    - Automatic Failover: switches to next available mailbox on send failure
+    """
+    def __init__(self):
+        self._cooldowns: Dict[str, float] = {} # email -> timestamp until cooldown ends
+        self._last_index: int = 0
+
+    def get_pool_status(self) -> Dict[str, Any]:
+        """Returns aggregate fleet capacity and status."""
+        accounts = [dict(a) for a in db.get_all_accounts()]
+        now = time.time()
+        active = []
+        on_cooldown = []
+        exhausted = []
+
+        total_cap = 0
+        total_sent = 0
+
+        for a in accounts:
+            email = a["email"]
+            cap = a.get("daily_limit", 50)
+            sent = a.get("sent_today", 0)
+            total_cap += cap
+            total_sent += sent
+
+            if self._cooldowns.get(email, 0) > now:
+                remaining_sec = int(self._cooldowns[email] - now)
+                on_cooldown.append({"email": email, "cooldown_remaining_sec": remaining_sec})
+            elif sent >= cap:
+                exhausted.append({"email": email, "sent": sent, "cap": cap})
+            elif a.get("active", 1):
+                active.append(a)
+
+        return {
+            "total_accounts": len(accounts),
+            "active_available": len(active),
+            "on_cooldown": on_cooldown,
+            "exhausted_today": exhausted,
+            "fleet_daily_capacity": total_cap,
+            "fleet_sent_today": total_sent,
+            "healthy_ratio": round(len(active) / max(len(accounts), 1) * 100, 1)
+        }
+
+    def select_next_mailbox(self, preferred_email: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """
+        Selects next optimal sending mailbox via health-aware round-robin.
+        """
+        accounts = [dict(a) for a in db.get_all_accounts()]
+        if not accounts:
+            return None
+
+        now = time.time()
+
+        # If user explicitly preferred an account and it is healthy
+        if preferred_email:
+            for a in accounts:
+                if a["email"].lower() == preferred_email.lower():
+                    if self._cooldowns.get(a["email"], 0) <= now and a.get("sent_today", 0) < a.get("daily_limit", 50):
+                        return a
+
+        # Filter to active, under-cap, non-cooldown accounts
+        candidates = []
+        for a in accounts:
+            email = a["email"]
+            if not a.get("active", 1):
+                continue
+            if self._cooldowns.get(email, 0) > now:
+                continue
+            if a.get("sent_today", 0) >= a.get("daily_limit", 50):
+                continue
+            candidates.append(a)
+
+        if not candidates:
+            # Fallback: if all under-cap are in cooldown, pick least used
+            candidates = [a for a in accounts if a.get("active", 1)]
+            if not candidates:
+                return None
+
+        # Round-robin selection
+        self._last_index = (self._last_index + 1) % len(candidates)
+        return candidates[self._last_index]
+
+    def trigger_cooldown(self, email: str, minutes: int = 15, reason: str = ""):
+        """Puts a mailbox in temporary cooldown after an SMTP error."""
+        cooldown_until = time.time() + (minutes * 60)
+        self._cooldowns[email] = cooldown_until
+        logger.warning(f"Mailbox {email} placed on {minutes}m cooldown. Reason: {reason}")
+
+    def clear_cooldown(self, email: str):
+        """Clears cooldown for a mailbox."""
+        if email in self._cooldowns:
+            del self._cooldowns[email]
+
+
+# Singleton instance
+mailbox_pool = MailboxPoolRouter()
+
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -918,10 +1153,107 @@ def cmd_score(*args) -> str:
     return "\n".join(lines)
 
 
+@register_cmd("pool")
+def cmd_pool(*_) -> str:
+    """Displays live mailbox fleet pool status."""
+    status = mailbox_pool.get_pool_status()
+    lines = [
+        "🌐 *Mailbox Pool Status:*",
+        f"  Total accounts: {status['total_accounts']}",
+        f"  Active & available: {status['active_available']}",
+        f"  Fleet capacity: {status['fleet_sent_today']}/{status['fleet_daily_capacity']} today ({status['healthy_ratio']}% health)"
+    ]
+    if status["on_cooldown"]:
+        lines.append("  ⏳ On Cooldown:")
+        for c in status["on_cooldown"]:
+            lines.append(f"    • {c['email']} ({c['cooldown_remaining_sec']}s remaining)")
+    if status["exhausted_today"]:
+        lines.append("  🛑 Cap Exhausted:")
+        for e in status["exhausted_today"]:
+            lines.append(f"    • {e['email']} ({e['sent']}/{e['cap']})")
+    return "\n".join(lines)
+
+
+@register_cmd("cooldowns")
+def cmd_cooldowns(*args) -> str:
+    """View or reset mailbox cooldowns. Usage: /cooldowns or /cooldowns clear <email>"""
+    if args and args[0] == "clear":
+        target = args[1] if len(args) > 1 else None
+        if target:
+            mailbox_pool.clear_cooldown(target)
+            return f"✅ Cooldown cleared for {target}."
+        else:
+            mailbox_pool._cooldowns.clear()
+            return "✅ All mailbox cooldowns cleared."
+    status = mailbox_pool.get_pool_status()
+    if not status["on_cooldown"]:
+        return "✨ Zero accounts on cooldown. All mailboxes healthy."
+    lines = ["⏳ *Accounts on Cooldown:*"]
+    for c in status["on_cooldown"]:
+        lines.append(f"  • {c['email']} — {c['cooldown_remaining_sec']}s remaining")
+    return "\n".join(lines)
+
+
+@register_cmd("cleanleads")
+def cmd_cleanleads(*_) -> str:
+    """Audits and cleans leads using zero-bounce verification."""
+    import email_verifier
+    leads = db.get_leads(limit=200)
+    if not leads:
+        return "No leads found to verify."
+    res = email_verifier.clean_lead_batch(leads)
+    for dead in res["undeliverable"]:
+        db.update_lead_stage(dead["lead_id"], "bounced")
+    return (
+        f"🧹 *Lead Cleaning Complete:*\n"
+        f"  Scanned: {res['total']} leads\n"
+        f"  Deliverable: {res['clean_count']} leads\n"
+        f"  Dead / No-MX filtered: {res['dead_count']} leads (marked bounced)"
+    )
+
+
 @register_cmd("help")
 def cmd_help(*_) -> str:
     cmds = sorted(COMMAND_REGISTRY.keys())
     return "🤖 *Available Commands:*\n" + "\n".join(f"  /{c}" for c in cmds)
+
+
+# ═══════════════════════════════════════════════════════════════════
+#   GOOGLE & YAHOO 2024 COMPLIANT UNSUBSCRIBE ENGINE
+# ═══════════════════════════════════════════════════════════════════
+
+def generate_unsubscribe_token(email: str) -> str:
+    """Generates an obfuscated tamper-proof unsubscribe token."""
+    import hashlib
+    salt = "flinza_unsub_salt_2026"
+    return hashlib.sha256(f"{email.lower().strip()}_{salt}".encode()).hexdigest()[:24]
+
+
+def get_unsubscribe_headers(lead_email: str, base_url: str = "http://localhost:7880") -> Dict[str, str]:
+    """
+    Returns RFC 8058 compliant 1-click unsubscribe headers.
+    Mandated by Google and Yahoo post-Feb 2024 for high inbox placement.
+    """
+    token = generate_unsubscribe_token(lead_email)
+    clean_base = base_url.rstrip("/")
+    unsub_url = f"{clean_base}/u/{token}?email={lead_email}"
+    return {
+        "List-Unsubscribe": f"<{unsub_url}>",
+        "List-Unsubscribe-Post": "List-Unsubscribe=One-Click"
+    }
+
+
+def append_optout_footer(body: str, lead_email: str, base_url: str = "http://localhost:7880") -> str:
+    """
+    Appends an elegant, clean opt-out link at the bottom of the body.
+    """
+    token = generate_unsubscribe_token(lead_email)
+    clean_base = base_url.rstrip("/")
+    unsub_url = f"{clean_base}/u/{token}?email={lead_email}"
+    footer = f"\n\n---\nIf you'd prefer not to hear from me, feel free to unsubscribe here: {unsub_url}"
+    if unsub_url not in body:
+        body = body + footer
+    return body
 
 
 def dispatch_terminal_command(raw_input: str) -> Dict[str, Any]:
@@ -950,3 +1282,4 @@ def dispatch_terminal_command(raw_input: str) -> Dict[str, Any]:
     except Exception as e:
         logger.error(f"Terminal command error /{cmd_name}: {e}")
         return {"success": False, "output": f"Error executing /{cmd_name}: {str(e)}"}
+

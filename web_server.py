@@ -29,8 +29,17 @@ import email_toolkit
 import google_auth
 import tracking_server
 import outreach_engine
+import email_verifier
 
 logger = logging.getLogger(__name__)
+
+def mask_credentials(data: dict) -> dict:
+    """Masks sensitive credentials before returning in API responses."""
+    clean = dict(data)
+    for key in ["app_password", "smtp_pass", "custom_smtp_pass", "password", "cf_api_token"]:
+        if clean.get(key):
+            clean[key] = "••••••••••••"
+    return clean
 
 BASE_DIR = Path(__file__).resolve().parent
 TEMPLATES_DIR = BASE_DIR / "templates"
@@ -724,7 +733,7 @@ async def get_aliases_routing():
         d["routing_mode"] = d.get("routing_mode") or "gmail_send_as"
         result.append(d)
 
-    return {"success": True, "aliases": result, "accounts": [dict(a) for a in accounts]}
+    return {"success": True, "aliases": [mask_credentials(d) for d in result], "accounts": [mask_credentials(dict(a)) for a in accounts]}
 
 
 @app.post("/api/aliases/create")
@@ -927,7 +936,7 @@ async def campaign_status():
 async def warmup_stats():
     """Returns warmup health stats for all accounts."""
     stats = outreach_engine.get_account_warmup_stats()
-    return {"success": True, "accounts": stats}
+    return {"success": True, "accounts": [mask_credentials(s) for s in stats]}
 
 
 @app.post("/api/warmup/audit")
@@ -951,12 +960,99 @@ async def deliverability_score(request: Request):
 # ── A/B Spintax Preview ───────────────────────────────────────────
 @app.post("/api/spintax/preview")
 async def spintax_preview(request: Request):
-    """Generates N resolved variants of a spintax template."""
+    """Generates N resolved variants with lead personalization and entropy metrics."""
     b = await request.json()
     text = b.get("text", "")
     count = min(int(b.get("count", 5)), 10)
-    variants = outreach_engine.preview_spin_variants(text, count=count)
-    return {"success": True, "variants": variants, "count": len(variants)}
+    mock_lead = b.get("mock_lead")
+    result = outreach_engine.preview_spin_variants(text, count=count, mock_lead=mock_lead)
+    return {"success": True, **result}
+
+
+# ── Mailbox Pool Status ───────────────────────────────────────────
+@app.get("/api/pool/status")
+async def get_mailbox_pool_status():
+    """Returns live fleet status, daily capacity, and active cooldowns."""
+    return {"success": True, **outreach_engine.mailbox_pool.get_pool_status()}
+
+
+# ── Zero-Bounce Lead Verification ─────────────────────────────────
+@app.post("/api/leads/verify-all")
+async def verify_all_leads():
+    """Runs Zero-Bounce lead cleaning on all uncontacted leads."""
+    leads = db.get_leads(stage="new", limit=500)
+    if not leads:
+        return {"success": True, "message": "No new leads to verify", "scanned": 0, "deliverable": 0, "dead_bounced": 0}
+    result = email_verifier.clean_lead_batch(leads)
+    for dead in result["undeliverable"]:
+        db.update_lead_stage(dead["lead_id"], "bounced")
+        db.add_to_blacklist(dead["email"], reason=f"Zero-Bounce audit: {dead['reason']}")
+    return {
+        "success": True,
+        "scanned": result["total"],
+        "deliverable": result["clean_count"],
+        "dead_bounced": result["dead_count"],
+        "dead_leads": [{"email": d["email"], "reason": d["reason"]} for d in result["undeliverable"]]
+    }
+
+
+# ── Open & Click Tracking Endpoints ───────────────────────────────
+@app.get("/t/o/{token}")
+@app.get("/t/o/{token}.png")
+async def track_email_open(token: str, request: Request):
+    """Invisible 1x1 transparent tracking pixel handler for email opens."""
+    clean_token = token.replace(".png", "")
+    ip = request.client.host if request.client else None
+    ua = request.headers.get("user-agent", "")
+    img_bytes = tracking_server.handle_open(clean_token, user_agent=ua, ip=ip)
+    return Response(content=img_bytes, media_type="image/png", headers={
+        "Cache-Control": "no-cache, no-store, must-revalidate",
+        "Pragma": "no-cache",
+        "Expires": "0"
+    })
+
+
+@app.get("/t/c/{token}")
+async def track_email_click(token: str, target: Optional[str] = Query(None), request: Request = None):
+    """Redirect handler for tracking link clicks."""
+    ip = request.client.host if request and request.client else None
+    ua = request.headers.get("user-agent", "") if request else ""
+    dest = tracking_server.handle_click(token, target, user_agent=ua, ip=ip)
+    return RedirectResponse(url=dest or target or "https://google.com")
+
+
+# ── 1-Click Unsubscribe Handler (RFC 8058 Compliant) ──────────────
+@app.get("/u/{token}")
+@app.post("/u/{token}")
+async def one_click_unsubscribe(token: str, email: Optional[str] = Query(None)):
+    """Google & Yahoo RFC 8058 compliant 1-click unsubscribe handler."""
+    if email:
+        lead = db.get_lead_by_email(email)
+        if lead:
+            db.update_lead_stage(lead["id"], "opted_out")
+        db.add_to_blacklist(email, reason="1-Click Unsubscribe link")
+    html = """
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="utf-8">
+      <title>Unsubscribed — Flinza</title>
+      <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #08090f; color: #fff; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; }
+        .card { background: #111219; border: 1px solid rgba(255,255,255,0.1); border-radius: 16px; padding: 40px; max-width: 440px; text-align: center; box-shadow: 0 20px 50px rgba(0,0,0,0.5); }
+        h2 { color: #7ECECE; margin-top: 0; }
+        p { color: #8b949e; line-height: 1.6; font-size: 14px; }
+      </style>
+    </head>
+    <body>
+      <div class="card">
+        <h2>✓ Unsubscribed</h2>
+        <p>You have been successfully removed from our outreach list. You will not receive any further automated emails.</p>
+      </div>
+    </body>
+    </html>
+    """
+    return HTMLResponse(content=html)
 
 
 # ── Reply Intent Classification ───────────────────────────────────
