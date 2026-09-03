@@ -12,6 +12,7 @@ import logging
 import requests
 
 import database as db
+import config
 
 logger = logging.getLogger(__name__)
 

@@ -42,9 +42,14 @@ document.addEventListener("DOMContentLoaded", () => {
       warmup:           loadWarmup,
       builder:          loadBuilder,
       "ab-lab":         loadAbLab,
+      history:          loadHistory,
       analytics:        loadAnalytics,
       terminal:         loadTerminal,
     };
+    if (viewName === "webmail-sent") {
+      switchView("history");
+      return;
+    }
     if (loaders[viewName]) loaders[viewName]();
   }
 
@@ -748,9 +753,15 @@ document.addEventListener("DOMContentLoaded", () => {
       const d = await apiFetch("/api/campaign/testsend", "POST", { to_email: "rajdep.f12x@gmail.com" });
       if (d.success) {
         showToast(`Test delivered (${d.elapsed_ms || 0}ms) via ${d.account_used}`, "success");
+        showAlert(`🚀 Outbound Test Delivered in ${d.elapsed_ms || 0}ms via ${d.account_used}! Checked MX records & List-Unsubscribe attached.`, "success", 6000);
+        const histView = g("view-history");
+        if (histView && histView.classList.contains("active")) loadHistory();
       } else {
         showToast(`Test failed: ${d.error}`, "error");
+        showAlert(`❌ Outbound Test Failed: ${d.error || "SMTP authentication or connection error. Please verify credentials."}`, "error", 8000);
       }
+    } catch (err) {
+      showAlert(`Network error running test send: ${err}`, "error", 8000);
     } finally {
       btn.disabled = false;
       btn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg> Test Send`;
@@ -766,22 +777,52 @@ document.addEventListener("DOMContentLoaded", () => {
       const d = await apiFetch("/api/campaign/launch", "POST");
       if (d.success) {
         showToast(`Campaign launched! ${d.queued_count} leads queued.`, "success");
+        showAlert(`🎉 Campaign Launched: ${d.queued_count} leads queued for smart rotation across mailbox pool with randomized jitter!`, "success", 7000);
         const qd = g("queue-dot");
         if (qd) qd.className = "status-dot running";
         setEl("queue-status-text", `Queue: Running (${d.queued_count})`);
         loadDashboard();
       } else {
-        showToast(d.message || "Notice: campaign already running.", "info");
+        showToast(d.message || "Notice: campaign already running.", "warning");
+        showAlert(`⚠️ ${d.message || "Campaign queue is already active or in progress."}`, "warning", 6000);
       }
+    } catch (err) {
+      showAlert(`Launch error: ${err}`, "error", 8000);
     } finally {
       btn.disabled = false;
-      btn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="5 3 19 12 5 21 5 3"/></svg> Launch Campaign`;
+      btn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="5 3 19 12 5 21 5 3"/></svg> Launch Outreach`;
     }
   });
 
   // ═══════════════════════════════════════════════════════
-  //  TOAST NOTIFICATION SYSTEM
+  //  GLOBAL NOTIFICATIONS & ALERTS SYSTEM
   // ═══════════════════════════════════════════════════════
+  function showAlert(msg, type = "info", timeout = 6000) {
+    const container = g("global-alerts-container");
+    if (!container) return;
+    const icons = { success: "✓", error: "⚠️", warning: "⚡", info: "ℹ️" };
+    const banner = document.createElement("div");
+    banner.className = `alert-banner ${type}`;
+    banner.innerHTML = `
+      <div style="display:flex; align-items:center; gap:8px;">
+        <span style="font-size:14px;">${icons[type] || "•"}</span>
+        <span>${esc(msg)}</span>
+      </div>
+      <button type="button" class="alert-close" aria-label="Close">✕</button>
+    `;
+    banner.querySelector(".alert-close").addEventListener("click", () => {
+      banner.remove();
+    });
+    container.prepend(banner);
+    if (timeout > 0) {
+      setTimeout(() => {
+        banner.style.opacity = "0";
+        banner.style.transition = "opacity 0.3s ease";
+        setTimeout(() => banner.remove(), 300);
+      }, timeout);
+    }
+  }
+
   function showToast(msg, type = "info") {
     const existing = document.querySelector(".flinza-toast-container");
     const container = existing || (() => {
@@ -792,10 +833,12 @@ document.addEventListener("DOMContentLoaded", () => {
       return c;
     })();
 
+    const icons = { success: "✓ ", error: "✕ ", warning: "⚠️ ", info: "⚡ " };
     const colors = {
-      success: { bg: "rgba(52,211,153,0.12)", border: "rgba(52,211,153,0.3)", color: "#34d399" },
-      error:   { bg: "rgba(251,113,133,0.12)", border: "rgba(251,113,133,0.3)", color: "#fb7185" },
-      info:    { bg: "rgba(126,206,206,0.12)", border: "rgba(126,206,206,0.3)", color: "#7ECECE" },
+      success: { bg: "rgba(52,211,153,0.18)", border: "rgba(52,211,153,0.4)", color: "#34d399" },
+      error:   { bg: "rgba(251,113,133,0.18)", border: "rgba(251,113,133,0.4)", color: "#fb7185" },
+      warning: { bg: "rgba(245,158,11,0.18)",  border: "rgba(245,158,11,0.4)",  color: "#fde68a" },
+      info:    { bg: "rgba(126,206,206,0.18)", border: "rgba(126,206,206,0.4)", color: "#7ECECE" },
     };
 
     const c = colors[type] || colors.info;
@@ -804,23 +847,26 @@ document.addEventListener("DOMContentLoaded", () => {
       background: ${c.bg};
       border: 1px solid ${c.border};
       color: ${c.color};
-      padding: 10px 16px;
+      padding: 11px 18px;
       border-radius: 10px;
       font-family: var(--font-body);
       font-size: 13px;
-      font-weight: 500;
-      backdrop-filter: blur(12px);
-      box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+      font-weight: 600;
+      backdrop-filter: blur(14px);
+      box-shadow: 0 8px 24px rgba(0,0,0,0.5);
       animation: fadeUp 0.2s ease;
-      max-width: 320px;
+      max-width: 360px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
     `;
-    toast.textContent = msg;
+    toast.textContent = (icons[type] || "") + msg;
     container.appendChild(toast);
     setTimeout(() => {
       toast.style.opacity = "0";
       toast.style.transition = "opacity 0.3s ease";
       setTimeout(() => toast.remove(), 300);
-    }, 3500);
+    }, 4000);
   }
 
   // ═══════════════════════════════════════════════════════
@@ -1236,7 +1282,11 @@ document.addEventListener("DOMContentLoaded", () => {
         });
       });
 
+      if (d.success) {
+        showAlert(`✓ Simulated ${variants.length} high-entropy variants with ${d.combinations || 1} permutations!`, "success", 4000);
+      }
     } catch (err) {
+      showAlert(`A/B simulation failed: ${err}`, "error", 6000);
       console.error("A/B variant generation error:", err);
     }
   }
@@ -1244,6 +1294,177 @@ document.addEventListener("DOMContentLoaded", () => {
   on("btn-ab-generate", "click", simulateAbVariants);
   ["ab-sim-name", "ab-sim-company", "ab-sim-niche"].forEach(id => {
     on(id, "input", debounce(simulateAbVariants, 400));
+  });
+
+  // ═══════════════════════════════════════════════════════
+  //  SENT EMAILS HISTORY & OUTBOUND AUDIT LOG
+  // ═══════════════════════════════════════════════════════
+  let currentHistoryFilter = "all";
+  let historySearchQuery = "";
+  let historyMailboxFilter = "";
+
+  async function loadHistory() {
+    const tbody = g("history-tbody");
+    if (!tbody) return;
+
+    tbody.innerHTML = `<tr><td colspan="7" class="table-empty">Loading outbound sent email history…</td></tr>`;
+
+    const url = `/api/history?status=${currentHistoryFilter}&search=${encodeURIComponent(historySearchQuery)}&from_account=${encodeURIComponent(historyMailboxFilter)}`;
+
+    try {
+      const data = await apiFetch(url);
+      if (!data.success) {
+        tbody.innerHTML = `<tr><td colspan="7" class="table-empty" style="color:var(--rose);">Failed to load history: ${esc(data.detail || "Server error")}</td></tr>`;
+        return;
+      }
+
+      const items = data.items || [];
+      const total = data.total || 0;
+      setEl("badge-history-count", total);
+      setEl("hist-stat-sent", total);
+
+      // Populate mailbox filter dropdown if empty
+      const mbSelect = g("history-mailbox-filter");
+      if (mbSelect && mbSelect.options.length <= 1) {
+        const uniqueAccounts = [...new Set(items.map(i => i.from_account).filter(Boolean))];
+        uniqueAccounts.forEach(acc => {
+          const opt = document.createElement("option");
+          opt.value = acc;
+          opt.textContent = acc;
+          mbSelect.appendChild(opt);
+        });
+      }
+
+      // Calculate HUD stats
+      if (items.length > 0) {
+        const delivered = items.filter(i => i.status === "sent").length;
+        const opened = items.filter(i => (i.open_count || 0) > 0).length;
+        const clicked = items.filter(i => (i.click_count || 0) > 0).length;
+
+        const delivRate = Math.round((delivered / items.length) * 100);
+        const openRate = Math.round((opened / items.length) * 100);
+        const clickRate = Math.round((clicked / items.length) * 100);
+
+        setEl("hist-stat-delivered", `${delivRate}%`);
+        setEl("hist-stat-opens", `${openRate}%`);
+        setEl("hist-stat-clicks", `${clickRate}%`);
+      }
+
+      if (items.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="7" class="table-empty">No sent email records matching current criteria. Dispatched cold emails and test sends will appear here automatically.</td></tr>`;
+        return;
+      }
+
+      tbody.innerHTML = items.map(item => {
+        const dt = item.sent_at || item.queued_at || "";
+        const formattedDate = dt ? new Date(dt).toLocaleString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "—";
+
+        let statusBadge = "";
+        if (item.status === "sent") {
+          if ((item.click_count || 0) > 0) {
+            statusBadge = `<span class="badge-clicked">🔗 Clicked (${item.click_count}x)</span>`;
+          } else if ((item.open_count || 0) > 0) {
+            statusBadge = `<span class="badge-opened">👁️ Opened (${item.open_count}x)</span>`;
+          } else {
+            statusBadge = `<span class="badge-delivered">✓ Delivered</span>`;
+          }
+        } else if (item.status === "failed") {
+          statusBadge = `<span class="badge-failed" title="${esc(item.error_msg || 'Delivery failed')}">⚠️ Failed</span>`;
+        } else {
+          statusBadge = `<span class="route-mode-chip chip-ses">Queued</span>`;
+        }
+
+        const providerCls = (item.from_account || "").includes("ses") ? "chip-ses" : ((item.from_account || "").includes("gmail") ? "chip-gmail" : "chip-cf");
+
+        return `
+          <tr>
+            <td style="color:var(--text-secondary); font-size:12px;">${formattedDate}</td>
+            <td>
+              <span class="route-mode-chip ${providerCls}" style="font-size:11px;">${esc(item.from_account || "Default Relay")}</span>
+            </td>
+            <td>
+              <div style="font-weight:600; color:#fff;">${esc(item.lead_name || item.to_email)}</div>
+              <div style="font-size:11.5px; color:var(--text-dim);">${esc(item.to_email)} ${item.lead_company ? `· ${esc(item.lead_company)}` : ""}</div>
+            </td>
+            <td><span style="font-weight:500; color:#e2e8f0;">${esc(item.subject || "(No Subject)")}</span></td>
+            <td><span class="intent-chip chip-inbound" style="font-size:10.5px;">${esc(item.message_type || "opener")}</span></td>
+            <td>${statusBadge}</td>
+            <td>
+              <button class="btn-ghost-sm btn-view-history-email" data-id="${item.id}" title="View Email Content">👁️ View</button>
+            </td>
+          </tr>`;
+      }).join("");
+
+      // Wire view email detail buttons
+      tbody.querySelectorAll(".btn-view-history-email").forEach(btn => {
+        btn.addEventListener("click", () => openHistoryDetail(btn.dataset.id));
+      });
+
+    } catch (err) {
+      tbody.innerHTML = `<tr><td colspan="7" class="table-empty" style="color:var(--rose);">Network error loading history: ${esc(err)}</td></tr>`;
+    }
+  }
+
+  async function openHistoryDetail(emailId) {
+    const modal = g("backdrop-history-detail");
+    if (!modal) return;
+    modal.classList.add("active");
+
+    setEl("history-modal-subject", "Loading email details…");
+    setEl("history-modal-meta", "");
+    setEl("history-modal-badges", "");
+    setEl("history-modal-body", "Fetching message content from database…");
+
+    try {
+      const d = await apiFetch(`/api/history/${emailId}`);
+      if (!d.success || !d.email) {
+        setEl("history-modal-body", "Email record not found.");
+        return;
+      }
+      const e = d.email;
+      setEl("history-modal-subject", e.subject || "(No Subject)");
+      setEl("history-modal-meta", `Sent ${e.sent_at || e.queued_at || "recently"} from ${e.from_account || "System"} to ${e.to_email}`);
+
+      const badgesEl = g("history-modal-badges");
+      if (badgesEl) {
+        badgesEl.innerHTML = `
+          <div class="history-detail-chip"><strong>Status:</strong> ${esc(e.status)}</div>
+          <div class="history-detail-chip"><strong>Type:</strong> ${esc(e.message_type)}</div>
+          <div class="history-detail-chip"><strong>Opens:</strong> ${e.open_count || 0} times ${e.opened_at ? `(last: ${e.opened_at})` : ""}</div>
+          <div class="history-detail-chip"><strong>Clicks:</strong> ${e.click_count || 0} times</div>
+          ${e.error_msg ? `<div class="history-detail-chip" style="color:var(--rose);"><strong>Error:</strong> ${esc(e.error_msg)}</div>` : ""}
+        `;
+      }
+      setEl("history-modal-body", e.body || "(No message body)");
+    } catch (err) {
+      setEl("history-modal-body", `Error loading content: ${err}`);
+    }
+  }
+
+  on("btn-close-history-detail", "click", () => g("backdrop-history-detail")?.classList.remove("active"));
+  on("btn-dismiss-history-detail", "click", () => g("backdrop-history-detail")?.classList.remove("active"));
+  on("btn-refresh-history", "click", () => {
+    loadHistory();
+    showToast("Sent history updated", "info");
+  });
+
+  on("history-search-input", "input", debounce((e) => {
+    historySearchQuery = e.target.value.trim();
+    loadHistory();
+  }, 300));
+
+  on("history-mailbox-filter", "change", (e) => {
+    historyMailboxFilter = e.target.value;
+    loadHistory();
+  });
+
+  document.querySelectorAll("#history-status-tabs .stage-tab").forEach(tab => {
+    tab.addEventListener("click", () => {
+      document.querySelectorAll("#history-status-tabs .stage-tab").forEach(t => t.classList.remove("active"));
+      tab.classList.add("active");
+      currentHistoryFilter = tab.dataset.status;
+      loadHistory();
+    });
   });
 
   // ═══════════════════════════════════════════════════════

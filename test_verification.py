@@ -14,6 +14,9 @@ tests = [
     ('POST', '/api/leads/verify-all', {}),
     ('GET',  '/api/aliases/routing', None),
     ('POST', '/api/campaign/testsend', {'to_email': 'rajdep.f12x@gmail.com'}),
+    ('GET',  '/api/history', None),
+    ('GET',  '/api/webmail/threads?folder=sent', None),
+    ('GET',  '/api/cloudflare/zones', None),
     ('GET',  '/api/warmup/stats', None),
     ('POST', '/api/warmup/audit', {}),
     ('POST', '/api/score', {'subject': 'Quick idea, {{first_name}}', 'body': 'Hey {{first_name}}, loved your video on {{niche}}! Open to a quick call?'}),
@@ -27,7 +30,7 @@ tests = [
     ('POST', '/api/terminal', {'command': '/cleanleads'}),
     ('POST', '/api/unibox/check', {}),
     ('GET',  '/t/o/sample_lead_token.png', None),
-    ('GET',  '/u/sample_lead_token?email=test_lead@example.com', None),
+    ('GET',  '/u/sample_lead_token', None),
     ('POST', '/webhook/smartlead', {'type': 'email_opened', 'lead_email': 'alex@example.com'}),
     ('GET',  '/api/analytics', None),
 ]
@@ -53,6 +56,8 @@ for method, path, body in tests:
                 print(f"       Mailbox Pool: {d.get('active_available')} active | Capacity: {d.get('fleet_daily_capacity')}/day")
             if 'dead_bounced' in d:
                 print(f"       Zero-Bounce: {d.get('scanned')} scanned | {d.get('deliverable')} clean | {d.get('dead_bounced')} dead filtered")
+            if 'items' in d:
+                print(f"       Sent History: {len(d.get('items', []))} logged emails | Total: {d.get('total')}")
             if path == '/api/aliases/routing' and 'accounts' in d and len(d['accounts']) > 0:
                 sample = d['accounts'][0]
                 pw = sample.get('app_password') or sample.get('smtp_pass')

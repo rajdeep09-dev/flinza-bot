@@ -605,7 +605,7 @@ async def get_webmail_threads(folder: str = "inbox", search: Optional[str] = Non
     elif folder == "sent":
         query = """
             SELECT e.id, e.from_account as sender, e.to_email as recipient, e.subject, e.body,
-                   e.sent_at as timestamp, e.status, t.opened, t.clicked
+                   e.sent_at as timestamp, e.status, COALESCE(t.open_count, 0) as open_count, COALESCE(t.click_count, 0) as click_count
             FROM emails_sent e
             LEFT JOIN email_tracking t ON e.id = t.email_id
             WHERE e.status = 'sent'
@@ -619,9 +619,9 @@ async def get_webmail_threads(folder: str = "inbox", search: Optional[str] = Non
         rows = conn.execute(query, params).fetchall()
         for r in rows:
             tag = "Sent"
-            if r["clicked"]:
+            if (r["click_count"] or 0) > 0:
                 tag = "Clicked"
-            elif r["opened"]:
+            elif (r["open_count"] or 0) > 0:
                 tag = "Opened"
             threads.append({
                 "id": r["id"],
@@ -1021,16 +1021,53 @@ async def track_email_click(token: str, target: Optional[str] = Query(None), req
     return RedirectResponse(url=dest or target or "https://google.com")
 
 
+# ── Sent Emails History & Outbound Log ───────────────────────────
+@app.get("/api/history")
+async def get_history(
+    limit: int = 50,
+    offset: int = 0,
+    status: Optional[str] = "all",
+    search: Optional[str] = None,
+    from_account: Optional[str] = None
+):
+    """Returns outbound email dispatch history with sender, timestamp, and tracking metrics."""
+    result = db.get_sent_emails_history(
+        limit=min(limit, 200),
+        offset=offset,
+        status=status,
+        search=search,
+        from_account=from_account
+    )
+    return {"success": True, **result}
+
+
+@app.get("/api/history/{email_id}")
+async def get_history_detail(email_id: int):
+    """Returns the full email content, headers, and transmission log for a sent email."""
+    detail = db.get_sent_email_detail(email_id)
+    if not detail:
+        raise HTTPException(status_code=404, detail="Email record not found")
+    return {"success": True, "email": detail}
+
+
 # ── 1-Click Unsubscribe Handler (RFC 8058 Compliant) ──────────────
 @app.get("/u/{token}")
 @app.post("/u/{token}")
 async def one_click_unsubscribe(token: str, email: Optional[str] = Query(None)):
-    """Google & Yahoo RFC 8058 compliant 1-click unsubscribe handler."""
-    if email:
-        lead = db.get_lead_by_email(email)
+    """Google & Yahoo RFC 8058 compliant 1-click unsubscribe handler (token or email lookup)."""
+    unsub_email = email
+    if not unsub_email:
+        lead = db.get_lead_by_unsub_token(token)
         if lead:
+            unsub_email = lead.get("email")
             db.update_lead_stage(lead["id"], "opted_out")
-        db.add_to_blacklist(email, reason="1-Click Unsubscribe link")
+
+    if unsub_email:
+        lead_record = db.get_lead_by_email(unsub_email)
+        if lead_record:
+            db.update_lead_stage(lead_record["id"], "opted_out")
+        db.add_to_blacklist(unsub_email, reason="1-Click Unsubscribe link")
+
     html = """
     <!DOCTYPE html>
     <html>

@@ -279,6 +279,13 @@ class MailboxPoolRouter:
     def __init__(self):
         self._cooldowns: Dict[str, float] = {} # email -> timestamp until cooldown ends
         self._last_index: int = 0
+        try:
+            raw = db.get_setting("mailbox_cooldowns_json", "{}")
+            stored = json.loads(raw) if raw else {}
+            now = time.time()
+            self._cooldowns = {k: float(v) for k, v in stored.items() if float(v) > now}
+        except Exception:
+            pass
 
     def get_pool_status(self) -> Dict[str, Any]:
         """Returns aggregate fleet capacity and status."""
@@ -351,20 +358,37 @@ class MailboxPoolRouter:
             if not candidates:
                 return None
 
-        # Round-robin selection
+        # Health-weighted selection: prioritize higher health grades
+        try:
+            weights = [max(0.1, score_account_health(a)) for a in candidates]
+            total_w = sum(weights)
+            if total_w > 0:
+                return random.choices(candidates, weights=weights, k=1)[0]
+        except Exception:
+            pass
+
+        # Fallback to round-robin selection
         self._last_index = (self._last_index + 1) % len(candidates)
         return candidates[self._last_index]
 
     def trigger_cooldown(self, email: str, minutes: int = 15, reason: str = ""):
-        """Puts a mailbox in temporary cooldown after an SMTP error."""
+        """Puts a mailbox in temporary cooldown after an SMTP error and persists to SQLite."""
         cooldown_until = time.time() + (minutes * 60)
         self._cooldowns[email] = cooldown_until
+        try:
+            db.set_setting("mailbox_cooldowns_json", json.dumps({k: v for k, v in self._cooldowns.items() if v > time.time()}))
+        except Exception:
+            pass
         logger.warning(f"Mailbox {email} placed on {minutes}m cooldown. Reason: {reason}")
 
     def clear_cooldown(self, email: str):
         """Clears cooldown for a mailbox."""
         if email in self._cooldowns:
             del self._cooldowns[email]
+            try:
+                db.set_setting("mailbox_cooldowns_json", json.dumps({k: v for k, v in self._cooldowns.items() if v > time.time()}))
+            except Exception:
+                pass
 
 
 # Singleton instance
@@ -701,7 +725,7 @@ def launch_campaign(campaign_id: int = 1, dry_run: bool = False) -> Dict[str, An
             continue
 
         # Personalize with lead-specific seed (reproducible for that lead)
-        seed = hash(lead["email"]) % 10000
+        seed = int(hashlib.md5(lead["email"].encode()).hexdigest(), 16) % 10000
         subject, body = personalize(
             step_1.get("subject_a", ""),
             step_1.get("body_a", ""),
@@ -1130,6 +1154,25 @@ def cmd_resume(*_) -> str:
         return "▶️ Queue resumed."
     except Exception as e:
         return f"Error: {e}"
+
+
+def generate_unsubscribe_token(lead_email: str) -> str:
+    salt = os.environ.get("UNSUB_SALT", "flinza_unsub_salt_2026")
+    return hashlib.sha256(f"{lead_email.strip().lower()}:{salt}".encode()).hexdigest()[:24]
+
+
+def get_unsubscribe_headers(lead_email: str, base_url: str = "") -> dict:
+    """
+    Generates RFC 8058 compliant List-Unsubscribe headers.
+    Email address is NOT exposed in the unsubscribe URL.
+    """
+    clean_base = base_url.rstrip("/") or os.environ.get("APP_BASE_URL", "http://localhost:7880").rstrip("/")
+    token = generate_unsubscribe_token(lead_email)
+    unsub_url = f"{clean_base}/u/{token}"
+    return {
+        "List-Unsubscribe": f"<{unsub_url}>",
+        "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
+    }
 
 
 @register_cmd("score")

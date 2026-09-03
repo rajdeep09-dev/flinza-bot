@@ -12,7 +12,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@500;600;700;800;900&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/static/css/studio.css" />
+  <link rel="stylesheet" href="/static/css/studio.css?v=2.2" />
 </head>
 <body>
   <div class="app-container">
@@ -107,6 +107,11 @@
           <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 3H5a2 2 0 0 0-2 2v4m6-6h10a2 2 0 0 1 2 2v4M9 3v18m0 0h10a2 2 0 0 0 2-2V9M9 21H5a2 2 0 0 1-2-2V9m0 0h18"/></svg>
           A/B Lab
         </button>
+        <button class="nav-item" data-view="history">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+          Sent History
+          <span class="nav-badge cyan" id="badge-history-count">0</span>
+        </button>
         <button class="nav-item" data-view="analytics">
           <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
           Analytics
@@ -165,6 +170,8 @@
 
       <!-- VIEWS CONTAINER -->
       <div class="content-body">
+        <!-- Global Feedback & Action Alert Banner Container -->
+        <div id="global-alerts-container" class="alerts-container"></div>
 
         <!-- ══ WEBMAIL VIEW ══ -->
         <section class="view-section active" id="view-webmail">
@@ -830,6 +837,79 @@
           </div>
         </section>
 
+        <!-- ══ OUTBOUND SENT HISTORY VIEW ══ -->
+        <section class="view-section" id="view-history">
+          <div class="view-header-bar">
+            <div>
+              <h2 class="view-title">Outbound Sent History & Transmission Log</h2>
+              <p class="view-subtitle">Chronological record of all cold emails sent, sender mailbox address, delivery status, and lead engagement</p>
+            </div>
+            <div class="view-header-actions">
+              <div class="search-inline">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                <input type="text" id="history-search-input" placeholder="Search recipient or subject…" />
+              </div>
+              <select class="form-select-sm" id="history-mailbox-filter" style="width: auto;">
+                <option value="">All Mailboxes</option>
+              </select>
+              <button class="btn-ghost-sm" id="btn-refresh-history">↻ Refresh</button>
+            </div>
+          </div>
+
+          <!-- History Metrics HUD -->
+          <div class="ab-hud-grid">
+            <div class="ab-hud-card">
+              <span class="ab-hud-label">Dispatched Emails</span>
+              <div class="ab-hud-val" id="hist-stat-sent">0</div>
+              <span class="ab-hud-sub">Total tracked outbound sends</span>
+            </div>
+            <div class="ab-hud-card">
+              <span class="ab-hud-label">Delivery Success</span>
+              <div class="ab-hud-val emerald" id="hist-stat-delivered">100%</div>
+              <span class="ab-hud-sub">Accepted by recipient MX</span>
+            </div>
+            <div class="ab-hud-card">
+              <span class="ab-hud-label">Open Rate</span>
+              <div class="ab-hud-val cyan" id="hist-stat-opens">0%</div>
+              <span class="ab-hud-sub">Pixel loads logged</span>
+            </div>
+            <div class="ab-hud-card">
+              <span class="ab-hud-label">Click Rate</span>
+              <div class="ab-hud-val" id="hist-stat-clicks">0%</div>
+              <span class="ab-hud-sub">Redirect links clicked</span>
+            </div>
+          </div>
+
+          <!-- Status Filter Tabs -->
+          <div class="stage-tabs-row" id="history-status-tabs">
+            <button class="stage-tab active" data-status="all">All Logs</button>
+            <button class="stage-tab" data-status="sent">Delivered ✅</button>
+            <button class="stage-tab" data-status="opened">Opened 👁️</button>
+            <button class="stage-tab" data-status="clicked">Clicked 🔗</button>
+            <button class="stage-tab" data-status="failed">Failed / Bounced ⚠️</button>
+          </div>
+
+          <!-- Sent Emails Table -->
+          <div class="data-table-wrap">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th style="width: 140px;">Timestamp</th>
+                  <th>From Mailbox</th>
+                  <th>To Recipient</th>
+                  <th>Subject</th>
+                  <th>Type</th>
+                  <th>Status & Engagement</th>
+                  <th style="width: 70px;"></th>
+                </tr>
+              </thead>
+              <tbody id="history-tbody">
+                <tr><td colspan="7" class="table-empty">Loading sent email history…</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
       </div><!-- /content-body -->
     </main><!-- /main-content -->
   </div><!-- /app-container -->
@@ -918,6 +998,29 @@
     </div>
   </div>
 
-  <script src="/static/js/app.js"></script>
+  <!-- SENT EMAIL DETAIL MODAL -->
+  <div class="modal-overlay" id="backdrop-history-detail">
+    <div class="modal-box" style="max-width: 680px;">
+      <div class="modal-header">
+        <div>
+          <h3 id="history-modal-subject">Email Details</h3>
+          <span style="font-size: 11.5px; color: var(--text-dim);" id="history-modal-meta"></span>
+        </div>
+        <button class="icon-btn" id="btn-close-history-detail">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+      <div class="history-detail-hud" id="history-modal-badges"></div>
+      <div class="form-field" style="margin-top: 14px;">
+        <label>Message Content</label>
+        <div class="history-body-box" id="history-modal-body"></div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn-ghost" id="btn-dismiss-history-detail">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/js/app.js?v=2.2"></script>
 </body>
 </html>

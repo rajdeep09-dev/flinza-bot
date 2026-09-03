@@ -65,10 +65,12 @@ INBOUND_WEBHOOK_SECRET = os.environ.get("INBOUND_WEBHOOK_SECRET", "flinza_cf_inb
 # ─── Database ────────────────────────────────────────────────────
 DB_PATH = os.environ.get("DB_PATH", "flinza.db")
 
-# ─── Sending Defaults ────────────────────────────────────────────
-DEFAULT_DAILY_LIMIT          = 50
-DEFAULT_MIN_INTERVAL         = 120    # seconds min between sends
-DEFAULT_MAX_INTERVAL         = 420    # seconds max between sends
+# ─── Sending Defaults (High-Volume Deliverability Architecture) ───
+DEFAULT_DAILY_LIMIT          = 80     # Gmail safe maximum
+DEFAULT_SES_DAILY_LIMIT      = 500    # Amazon SES production limit
+DEFAULT_CF_DAILY_LIMIT       = 300    # Cloudflare email routing limit
+DEFAULT_MIN_INTERVAL         = 30     # seconds min between sends (fast with jitter)
+DEFAULT_MAX_INTERVAL         = 120    # seconds max between sends
 DEFAULT_FOLLOWUP_DAYS        = [3, 2] # FU1 after 3d, FU2 after 2 more days
 DEFAULT_MAX_FOLLOWUPS        = 3
 DEFAULT_REPLY_CHECK_MINUTES  = 5

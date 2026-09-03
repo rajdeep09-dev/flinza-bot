@@ -175,6 +175,11 @@ def send_email_now(to_email: str, subject: str, body: str, account: dict, tracki
         except Exception:
             pass
 
+        # Attach deliverability & marketing headers
+        msg["Feedback-ID"] = f"flinza:{domain}"
+        msg["X-Precedence"] = "newsletter"
+        msg["X-Mailer"] = "Flinza Outreach OS v2.2"
+
         # Plain text and HTML parts
         msg.attach(MIMEText(body, "plain", "utf-8"))
         msg.attach(MIMEText(html_body, "html", "utf-8"))
@@ -276,9 +281,16 @@ def send_test_email(to_email: str, from_account_email: str = None, target_accoun
         f"— Flinza Engine"
     )
 
-    result = send_email_now(to_email, subject, body, account)
+    email_id = db.log_email(None, account["from_email"], to_email, subject, body, "quick_test", "queued")
+    tracking_token = db.create_tracking_token(email_id)
+    result = send_email_now(to_email, subject, body, account, tracking_token=tracking_token)
     elapsed = round((time.time() - start_t) * 1000, 1)
     result["elapsed_ms"] = elapsed
+    if result.get("success"):
+        db.mark_email_sent(email_id, result.get("message_id"), account["from_email"])
+        db.log_activity("test_email_sent", f"To: {to_email} | From: {account['from_email']}")
+    else:
+        db.mark_email_failed(email_id, result.get("error", "Test send error"))
     return result
 
 

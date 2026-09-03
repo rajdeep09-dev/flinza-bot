@@ -929,7 +929,96 @@ def retry_failed_emails():
     conn.commit()
     count = cur.rowcount
     conn.close()
-    return count
+def get_sent_emails_history(limit=50, offset=0, status=None, search=None, from_account=None):
+    """
+    Returns paginated history of sent/failed/queued emails with lead info and tracking engagement.
+    """
+    conn = get_db()
+    query = """
+        SELECT e.id, e.lead_id, e.from_account, e.to_email, e.subject, e.body,
+               e.message_type, e.status, e.sent_at, e.queued_at, e.error_msg,
+               e.message_id, e.campaign_id,
+               l.name as lead_name, l.company as lead_company, l.stage as lead_stage,
+               t.open_count, t.opened_at, t.click_count, t.clicked_at, t.tracking_token
+        FROM emails_sent e
+        LEFT JOIN leads l ON e.lead_id = l.id
+        LEFT JOIN email_tracking t ON e.id = t.email_id
+        WHERE 1=1
+    """
+    params = []
+    if status and status != "all":
+        if status == "opened":
+            query += " AND t.open_count > 0"
+        elif status == "clicked":
+            query += " AND t.click_count > 0"
+        else:
+            query += " AND e.status = ?"
+            params.append(status)
+
+    if from_account:
+        query += " AND e.from_account = ?"
+        params.append(from_account)
+
+    if search:
+        query += " AND (e.to_email LIKE ? OR e.subject LIKE ? OR l.name LIKE ? OR l.company LIKE ?)"
+        s = f"%{search}%"
+        params.extend([s, s, s, s])
+
+    query += " ORDER BY COALESCE(e.sent_at, e.queued_at) DESC LIMIT ? OFFSET ?"
+    params.extend([limit, offset])
+
+    rows = conn.execute(query, params).fetchall()
+
+    count_query = "SELECT COUNT(*) as c FROM emails_sent e LEFT JOIN email_tracking t ON e.id = t.email_id WHERE 1=1"
+    count_params = []
+    if status and status != "all":
+        if status == "opened":
+            count_query += " AND t.open_count > 0"
+        elif status == "clicked":
+            count_query += " AND t.click_count > 0"
+        else:
+            count_query += " AND e.status = ?"
+            count_params.append(status)
+
+    if search:
+        count_query += " AND (e.to_email LIKE ? OR e.subject LIKE ?)"
+        s = f"%{search}%"
+        count_params.extend([s, s])
+
+    total_count = conn.execute(count_query, count_params).fetchone()["c"]
+    conn.close()
+    return {"items": [dict(r) for r in rows], "total": total_count}
+
+
+def get_sent_email_detail(email_id: int):
+    """Fetches complete details and body of a single sent email."""
+    conn = get_db()
+    row = conn.execute("""
+        SELECT e.*, l.name as lead_name, l.company as lead_company, l.stage as lead_stage,
+               t.open_count, t.opened_at, t.click_count, t.clicked_at, t.last_user_agent, t.last_ip
+        FROM emails_sent e
+        LEFT JOIN leads l ON e.lead_id = l.id
+        LEFT JOIN email_tracking t ON e.id = t.email_id
+        WHERE e.id = ?
+    """, (email_id,)).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def get_lead_by_unsub_token(token: str):
+    """Finds lead associated with an unsubscribe token without exposing email in URL."""
+    conn = get_db()
+    import os
+    salt = os.environ.get("UNSUB_SALT", "flinza_unsub_salt_2026")
+    rows = conn.execute("SELECT id, email, name, company, stage FROM leads WHERE unsubscribed = 0").fetchall()
+    for r in rows:
+        lead_d = dict(r)
+        h = hashlib.sha256(f"{lead_d['email']}:{salt}".encode()).hexdigest()[:24]
+        if h == token:
+            conn.close()
+            return lead_d
+    conn.close()
+    return None
 
 
 def get_stats():
