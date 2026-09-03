@@ -11,7 +11,7 @@
 **Scale your agency cold email outreach to thousands of verified leads with zero monthly subscription fees.**  
 *Operate everything 100% remotely from Telegram or the Mailflare-inspired Webmail Mini App.*
 
-[🚀 Quick Start](#-beginner-quick-start-3-minutes) • [✨ Superpowers](#-what-makes-flinza-so-insanely-powerful) • [🔀 Outbound Routing](#-the-3-tier-outbound-dispatch-architecture) • [📖 Telegram Commands](#-telegram-bot-command-cheat-sheet) • [🌐 Free Cloudflare Hosting](#-100-free-hosting-on-cloudflare)
+[🚀 Quick Start](#-beginner-quick-start-3-minutes) • [🌐 ₹100 VPS & Custom Domain Guide](HOSTING_GUIDE.md) • [✨ Superpowers](#-what-makes-flinza-so-insanely-powerful) • [🔀 Outbound Routing](#-the-3-tier-outbound-dispatch-architecture) • [📖 Telegram Commands](#-telegram-bot-command-cheat-sheet)
 
 </div>
 
