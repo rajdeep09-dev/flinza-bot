@@ -505,6 +505,79 @@
                 <textarea id="set-system-prompt" rows="5" placeholder="You are an expert cold email copywriter for an SMMA agency…"></textarea>
               </div>
             </div>
+
+            <!-- ══ LUXURY GLASSMORHPISM HTML SIGNATURE & SES STEALTH DISGUISE STUDIO ══ -->
+            <div class="settings-card" style="grid-column:1/-1;">
+              <div class="settings-card-title" style="display:flex; align-items:center; justify-content:space-between;">
+                <span>✨ Luxury Glassmorphic HTML Signature & Stealth Newsletter Disguise</span>
+                <span class="badge-verified">SES Safe & Deliverability Optimized</span>
+              </div>
+              <p class="settings-note" style="margin-bottom:16px;">
+                Disguises Amazon SES & custom SMTP cold outreach as an executive B2B growth newsletter with 1-click unsubscribe, CAN-SPAM address footer, and branded glassmorphism buttons.
+              </p>
+
+              <div class="form-row-2">
+                <div class="form-field">
+                  <label>Sender Full Name</label>
+                  <input type="text" id="sig-input-name" placeholder="Alex Vance" />
+                </div>
+                <div class="form-field">
+                  <label>Professional Title / Role</label>
+                  <input type="text" id="sig-input-title" placeholder="Growth Partner & Acquisition Architect" />
+                </div>
+              </div>
+
+              <div class="form-row-2">
+                <div class="form-field">
+                  <label>Agency / Company Name</label>
+                  <input type="text" id="sig-input-company" placeholder="Flinza Agency" />
+                </div>
+                <div class="form-field">
+                  <label>Agency Website URL</label>
+                  <input type="text" id="sig-input-website" placeholder="https://flinza.io" />
+                </div>
+              </div>
+
+              <div class="form-row-2">
+                <div class="form-field">
+                  <label>Rounded CTA Button Text</label>
+                  <input type="text" id="sig-input-cta-text" placeholder="⚡ Book a 10-Min Growth Audit →" />
+                </div>
+                <div class="form-field">
+                  <label>CTA Target URL (Calendly / Cal.com / Booking)</label>
+                  <input type="text" id="sig-input-cta-url" placeholder="https://flinza.io/audit" />
+                </div>
+              </div>
+
+              <div class="form-field">
+                <label>Physical Agency Address (CAN-SPAM & SES Compliance)</label>
+                <input type="text" id="sig-input-address" placeholder="548 Market St, Suite 402, San Francisco, CA 94104" />
+              </div>
+
+              <div style="display:flex; flex-direction:column; gap:10px; margin: 14px 0 18px 0; padding:12px 16px; background:var(--bg-card-2); border:1px solid var(--border); border-radius:var(--radius-md);">
+                <label style="display:flex; align-items:center; gap:10px; cursor:pointer; font-size:13px; font-weight:600; color:#fff;">
+                  <input type="checkbox" id="sig-toggle-enabled" checked />
+                  Attach Luxury Glassmorphic Signature to all Outbound Emails
+                </label>
+                <label style="display:flex; align-items:center; gap:10px; cursor:pointer; font-size:13px; font-weight:600; color:#fff;">
+                  <input type="checkbox" id="sig-toggle-stealth" checked />
+                  Stealth Executive Teardown Wrapper (Disguises SES High-Volume Outreach as Market Briefing)
+                </label>
+              </div>
+
+              <!-- Live Signature Preview Container -->
+              <div class="form-field">
+                <label style="margin-bottom:8px; display:block;">Live Glassmorphic Signature Preview (100% Email Client Fidelity)</label>
+                <div id="sig-live-preview-box" style="padding: 16px; background: #08090f; border: 1px solid var(--border); border-radius: var(--radius-lg); overflow-x: auto;">
+                  <!-- Dynamically rendered -->
+                </div>
+              </div>
+
+              <div style="display:flex; gap:10px; margin-top:16px;">
+                <button class="btn-primary-sm" id="btn-save-signature">Save Signature Configuration</button>
+                <button class="btn-ghost-sm" id="btn-test-signature">✉️ Send Live Test Preview to My Email</button>
+              </div>
+            </div>
           </div>
         </section>
 
@@ -973,26 +1046,113 @@
           <label>Display Name</label>
           <input type="text" id="alias-in-display" placeholder="Alex from Flinza" />
         </div>
-        <div class="form-row-2">
+        <!-- Dispatch Mode Selector -->
+        <div class="form-field">
+          <label>Dispatch Route / Mailbox Provider</label>
+          <select class="form-select" id="alias-in-mode">
+            <option value="gmail_send_as">✉️ Gmail Send-As (Free via Google SMTP)</option>
+            <option value="amazon_ses">🚀 Amazon SES (Dedicated EC2 / IAM High Volume)</option>
+            <option value="namecheap_smtp">💼 Namecheap Private Email / Custom SMTP</option>
+            <option value="cloudflare_api">⚡ Cloudflare Email Routing API ($5/mo)</option>
+          </select>
+        </div>
+
+        <!-- Mode 1: Gmail Send-As Panel -->
+        <div id="panel-mode-gmail" class="alias-mode-panel">
           <div class="form-field">
-            <label>Dispatch Route</label>
-            <select class="form-select" id="alias-in-mode">
-              <option value="gmail_send_as">✉️ Gmail Send-As (Free)</option>
-              <option value="cloudflare_api">⚡ Cloudflare API ($5/mo)</option>
-              <option value="external_smtp">🚀 Amazon SES / SMTP</option>
-            </select>
-          </div>
-          <div class="form-field">
-            <label>Master Gmail Account</label>
+            <label>Master Gmail Account (App Password Relay)</label>
             <select class="form-select" id="alias-in-master"></select>
           </div>
+          <div class="alias-checkbox-card">
+            <label style="display:flex; align-items:center; gap:8px; cursor:pointer; font-size:12.5px; color:#fff; font-weight:600;">
+              <input type="checkbox" id="alias-in-gmail-verified" checked />
+              Verified in Gmail (I already added this alias and verified the Google confirmation code)
+            </label>
+            <p style="font-size:11.5px; color:var(--text-dim); margin-top:4px;">
+              Google sends with <code>From: alias@yourdomain.com</code> and transparently routes via your master mailbox.
+            </p>
+          </div>
         </div>
-        <div class="form-field">
-          <label>Forward Replies To (optional)</label>
-          <input type="email" id="alias-in-forward" placeholder="your.email@gmail.com" />
+
+        <!-- Mode 2: Amazon SES Panel -->
+        <div id="panel-mode-ses" class="alias-mode-panel" style="display:none;">
+          <div class="form-row-2">
+            <div class="form-field">
+              <label>SES SMTP Host</label>
+              <input type="text" id="alias-in-ses-host" placeholder="email-smtp.us-east-1.amazonaws.com" value="email-smtp.us-east-1.amazonaws.com" />
+            </div>
+            <div class="form-field">
+              <label>Port</label>
+              <select class="form-select" id="alias-in-ses-port">
+                <option value="587" selected>587 (STARTTLS)</option>
+                <option value="465">465 (Direct SSL)</option>
+                <option value="2525">2525 (Alternative)</option>
+              </select>
+            </div>
+          </div>
+          <div class="form-row-2">
+            <div class="form-field">
+              <label>SES SMTP User / Access Key</label>
+              <input type="text" id="alias-in-ses-user" placeholder="AKIA..." autocomplete="off" />
+            </div>
+            <div class="form-field">
+              <label>SES SMTP Password / Secret</label>
+              <input type="password" id="alias-in-ses-pass" placeholder="••••••••••••" autocomplete="off" />
+            </div>
+          </div>
+          <div class="alias-checkbox-card">
+            <label style="display:flex; align-items:center; gap:8px; cursor:pointer; font-size:12px; color:var(--cyan); font-weight:600;">
+              <input type="checkbox" id="alias-in-ses-remember" checked />
+              Remember SES settings for this domain & set as default for future aliases
+            </label>
+          </div>
         </div>
-        <div class="modal-footer">
-          <button type="submit" class="btn-send-reply" id="btn-submit-create-alias">Create Alias</button>
+
+        <!-- Mode 3: Namecheap / Custom SMTP Panel -->
+        <div id="panel-mode-namecheap" class="alias-mode-panel" style="display:none;">
+          <div class="form-row-2">
+            <div class="form-field">
+              <label>SMTP Host</label>
+              <input type="text" id="alias-in-nc-host" placeholder="mail.privateemail.com" value="mail.privateemail.com" />
+            </div>
+            <div class="form-field">
+              <label>Port</label>
+              <select class="form-select" id="alias-in-nc-port">
+                <option value="465" selected>465 (SSL / Private Email)</option>
+                <option value="587">587 (TLS)</option>
+              </select>
+            </div>
+          </div>
+          <div class="form-row-2">
+            <div class="form-field">
+              <label>SMTP User / Email</label>
+              <input type="text" id="alias-in-nc-user" placeholder="alex@yourdomain.com" autocomplete="off" />
+            </div>
+            <div class="form-field">
+              <label>SMTP Password</label>
+              <input type="password" id="alias-in-nc-pass" placeholder="••••••••••••" autocomplete="off" />
+            </div>
+          </div>
+          <div class="alias-checkbox-card">
+            <label style="display:flex; align-items:center; gap:8px; cursor:pointer; font-size:12px; color:var(--cyan); font-weight:600;">
+              <input type="checkbox" id="alias-in-nc-remember" checked />
+              Remember SMTP settings for this domain
+            </label>
+          </div>
+        </div>
+
+        <!-- Mode 4: Cloudflare Email Routing Panel -->
+        <div id="panel-mode-cf" class="alias-mode-panel" style="display:none;">
+          <div class="form-field">
+            <label>Forward Inbound Replies To</label>
+            <input type="email" id="alias-in-forward" placeholder="your.master.inbox@gmail.com" />
+          </div>
+          <p class="settings-note">Cloudflare automatically creates the forwarder rule and preserves original SPF/DKIM.</p>
+        </div>
+
+        <div class="modal-footer" style="margin-top:18px;">
+          <button type="button" class="btn-ghost" id="btn-cancel-create-alias">Cancel</button>
+          <button type="submit" class="btn-send-reply" id="btn-submit-create-alias">Create Alias & Save Route</button>
         </div>
       </form>
     </div>

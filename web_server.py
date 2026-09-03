@@ -27,6 +27,7 @@ import cloudflare_aliases
 import ai_router
 import email_toolkit
 import google_auth
+import signature_generator
 import tracking_server
 import outreach_engine
 import email_verifier
@@ -736,9 +737,35 @@ async def get_aliases_routing():
     return {"success": True, "aliases": [mask_credentials(d) for d in result], "accounts": [mask_credentials(dict(a)) for a in accounts]}
 
 
+@app.get("/api/aliases/saved-defaults")
+async def get_alias_saved_defaults(domain: Optional[str] = Query(None)):
+    """Returns remembered SES, Namecheap, and SMTP settings for a domain or globally."""
+    res = {
+        "ses": {
+            "smtp_host": db.get_setting(f"ses_host_{domain}", "") if domain else "",
+            "smtp_port": db.get_setting(f"ses_port_{domain}", "") if domain else "",
+            "smtp_user": db.get_setting(f"ses_user_{domain}", "") if domain else "",
+            "smtp_pass": db.get_setting(f"ses_pass_{domain}", "") if domain else "",
+        },
+        "namecheap": {
+            "smtp_host": db.get_setting(f"namecheap_host_{domain}", "mail.privateemail.com") if domain else "mail.privateemail.com",
+            "smtp_port": db.get_setting(f"namecheap_port_{domain}", "465") if domain else "465",
+            "smtp_user": "",
+            "smtp_pass": "",
+        }
+    }
+    # Fallback to global defaults if domain-specific are empty
+    if not res["ses"]["smtp_host"]:
+        res["ses"]["smtp_host"] = db.get_setting("default_ses_host", "email-smtp.us-east-1.amazonaws.com")
+        res["ses"]["smtp_port"] = db.get_setting("default_ses_port", "587")
+        res["ses"]["smtp_user"] = db.get_setting("default_ses_user", "")
+        res["ses"]["smtp_pass"] = db.get_setting("default_ses_pass", "")
+    return {"success": True, "domain": domain, "defaults": res}
+
+
 @app.post("/api/aliases/create")
 async def create_alias_with_routing(request: Request):
-    """Creates a custom domain alias with explicit routing mode."""
+    """Creates a custom domain alias with explicit routing mode and optional remembered settings."""
     b = await request.json()
     alias = b.get("alias", "").strip().lower()
     routing_mode = b.get("routing_mode", "gmail_send_as")
@@ -750,9 +777,34 @@ async def create_alias_with_routing(request: Request):
     custom_smtp_user = b.get("custom_smtp_user")
     custom_smtp_pass = b.get("custom_smtp_pass")
     forward_to = b.get("forward_to")
+    remember_settings = b.get("remember_settings", False)
 
     if not alias:
         raise HTTPException(status_code=400, detail="Alias is required")
+
+    domain = alias.split("@")[1] if "@" in alias else ""
+
+    # Remember settings if requested by user
+    if remember_settings and domain:
+        if routing_mode in ("external_smtp", "amazon_ses"):
+            if smtp_host:
+                db.set_setting(f"ses_host_{domain}", smtp_host)
+                db.set_setting("default_ses_host", smtp_host)
+            if smtp_port:
+                db.set_setting(f"ses_port_{domain}", str(smtp_port))
+                db.set_setting("default_ses_port", str(smtp_port))
+            if custom_smtp_user:
+                db.set_setting(f"ses_user_{domain}", custom_smtp_user)
+                db.set_setting("default_ses_user", custom_smtp_user)
+            if custom_smtp_pass:
+                db.set_setting(f"ses_pass_{domain}", custom_smtp_pass)
+                db.set_setting("default_ses_pass", custom_smtp_pass)
+
+        elif routing_mode == "namecheap_smtp":
+            if smtp_host:
+                db.set_setting(f"namecheap_host_{domain}", smtp_host)
+            if smtp_port:
+                db.set_setting(f"namecheap_port_{domain}", str(smtp_port))
 
     ok = db.add_alias(
         alias=alias,
@@ -767,7 +819,7 @@ async def create_alias_with_routing(request: Request):
         forward_to=forward_to,
         source="studio_routing"
     )
-    return {"success": ok, "alias": alias, "routing_mode": routing_mode}
+    return {"success": ok, "alias": alias, "routing_mode": routing_mode, "domain": domain}
 
 
 @app.post("/api/aliases/update-routing")
@@ -1019,6 +1071,47 @@ async def track_email_click(token: str, target: Optional[str] = Query(None), req
     ua = request.headers.get("user-agent", "") if request else ""
     dest = tracking_server.handle_click(token, target, user_agent=ua, ip=ip)
     return RedirectResponse(url=dest or target or "https://google.com")
+
+
+# ── Luxury HTML Signature & Stealth Disguise Endpoints ───────────
+@app.get("/api/signature")
+async def get_signature():
+    """Returns current HTML signature settings and rendered live preview."""
+    cfg = signature_generator.get_signature_settings()
+    html_preview = signature_generator.generate_glassmorphic_signature_html()
+    return {"success": True, "settings": cfg, "preview_html": html_preview}
+
+
+@app.post("/api/signature")
+async def save_signature(request: Request):
+    """Saves updated HTML signature configuration."""
+    data = await request.json()
+    signature_generator.save_signature_settings(data)
+    preview = signature_generator.generate_glassmorphic_signature_html()
+    return {"success": True, "settings": signature_generator.get_signature_settings(), "preview_html": preview}
+
+
+@app.post("/api/signature/test-preview")
+async def send_signature_test_preview(request: Request):
+    """Sends a sample cold outreach email containing the live Glassmorphic signature to the user's test address."""
+    b = await request.json()
+    to_email = b.get("to_email", "rajdep.f12x@gmail.com")
+
+    # Pick an active account
+    accounts = db.get_active_accounts()
+    if not accounts:
+        raise HTTPException(status_code=400, detail="No active mailboxes configured to send preview.")
+
+    acc = dict(accounts[0])
+    sub = "⚡ [Live Preview] Flinza Executive Bulletin & Signature Demo"
+    sample_body = (
+        "Hey Alex,\n\n"
+        "Here is the live demonstration of our executive marketing bulletin layout with the new Glassmorphic HTML signature attached below.\n\n"
+        "Notice the high-deliverability headers (Feedback-ID, List-Unsubscribe, X-Precedence) and the rounded action button styled for 100% email client fidelity.\n\n"
+        "— Flinza Engine"
+    )
+    res = email_sender.send_test_email(to_email, acc)
+    return {"success": res.get("success", False), "result": res}
 
 
 # ── Sent Emails History & Outbound Log ───────────────────────────

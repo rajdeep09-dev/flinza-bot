@@ -397,7 +397,7 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   // ═══════════════════════════════════════════════════════
-  //  CREATE ALIAS MODAL
+  //  CREATE ALIAS MODAL (DYNAMIC DISPATCH MODES)
   // ═══════════════════════════════════════════════════════
   on("btn-open-create-alias", "click", async () => {
     openModal("backdrop-create-alias");
@@ -413,6 +413,48 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 
   on("btn-close-create-alias", "click", () => closeModal("backdrop-create-alias"));
+  on("btn-cancel-create-alias", "click", () => closeModal("backdrop-create-alias"));
+
+  // Dynamic dispatch mode switching
+  on("alias-in-mode", "change", (e) => {
+    const m = e.target.value;
+    const gPanel  = g("panel-mode-gmail");
+    const sPanel  = g("panel-mode-ses");
+    const nPanel  = g("panel-mode-namecheap");
+    const cPanel  = g("panel-mode-cf");
+
+    if (gPanel) gPanel.style.display = (m === "gmail_send_as") ? "flex" : "none";
+    if (sPanel) sPanel.style.display = (m === "amazon_ses") ? "flex" : "none";
+    if (nPanel) nPanel.style.display = (m === "namecheap_smtp") ? "flex" : "none";
+    if (cPanel) cPanel.style.display = (m === "cloudflare_api") ? "flex" : "none";
+  });
+
+  // Auto-fill remembered credentials when domain is typed
+  on("alias-in-address", "input", debounce(async (e) => {
+    const email = e.target.value.trim();
+    if (email.includes("@")) {
+      const dom = email.split("@")[1];
+      if (dom && dom.includes(".")) {
+        try {
+          const d = await apiFetch(`/api/aliases/saved-defaults?domain=${dom}`);
+          if (d.success && d.defaults) {
+            const def = d.defaults;
+            if (def.ses && def.ses.smtp_user) {
+              if (g("alias-in-ses-user") && !g("alias-in-ses-user").value) g("alias-in-ses-user").value = def.ses.smtp_user;
+              if (g("alias-in-ses-pass") && !g("alias-in-ses-pass").value && def.ses.smtp_pass) g("alias-in-ses-pass").value = def.ses.smtp_pass;
+              if (g("alias-in-ses-host")) g("alias-in-ses-host").value = def.ses.smtp_host || "email-smtp.us-east-1.amazonaws.com";
+              if (g("alias-in-ses-port") && def.ses.smtp_port) g("alias-in-ses-port").value = def.ses.smtp_port;
+            }
+            if (g("alias-in-nc-user") && !g("alias-in-nc-user").value) g("alias-in-nc-user").value = email;
+            if (def.namecheap && def.namecheap.smtp_host) {
+              if (g("alias-in-nc-host")) g("alias-in-nc-host").value = def.namecheap.smtp_host;
+              if (g("alias-in-nc-port")) g("alias-in-nc-port").value = def.namecheap.smtp_port || "465";
+            }
+          }
+        } catch {}
+      }
+    }
+  }, 350));
 
   const formAlias = g("form-create-alias");
   if (formAlias) {
@@ -421,25 +463,66 @@ document.addEventListener("DOMContentLoaded", () => {
       const btn = g("btn-submit-create-alias");
       btn.disabled = true;
       btn.textContent = "Creating…";
+
+      const mode = g("alias-in-mode")?.value || "gmail_send_as";
+      const alias = g("alias-in-address")?.value.trim();
+      const disp = g("alias-in-display")?.value.trim();
+
+      let smtp_user = g("alias-in-master")?.value;
+      let smtp_host = null;
+      let smtp_port = null;
+      let custom_smtp_user = null;
+      let custom_smtp_pass = null;
+      let forward_to = null;
+      let remember_settings = false;
+
+      if (mode === "amazon_ses") {
+        smtp_host = g("alias-in-ses-host")?.value.trim() || "email-smtp.us-east-1.amazonaws.com";
+        smtp_port = parseInt(g("alias-in-ses-port")?.value || "587");
+        custom_smtp_user = g("alias-in-ses-user")?.value.trim();
+        custom_smtp_pass = g("alias-in-ses-pass")?.value.trim();
+        smtp_user = custom_smtp_user || alias;
+        remember_settings = g("alias-in-ses-remember")?.checked || false;
+      } else if (mode === "namecheap_smtp") {
+        smtp_host = g("alias-in-nc-host")?.value.trim() || "mail.privateemail.com";
+        smtp_port = parseInt(g("alias-in-nc-port")?.value || "465");
+        custom_smtp_user = g("alias-in-nc-user")?.value.trim() || alias;
+        custom_smtp_pass = g("alias-in-nc-pass")?.value.trim();
+        smtp_user = custom_smtp_user;
+        remember_settings = g("alias-in-nc-remember")?.checked || false;
+      } else if (mode === "cloudflare_api") {
+        forward_to = g("alias-in-forward")?.value.trim();
+      }
+
       try {
         const d = await apiFetch("/api/aliases/create", "POST", {
-          alias:        g("alias-in-address")?.value.trim(),
-          display_name: g("alias-in-display")?.value.trim(),
-          routing_mode: g("alias-in-mode")?.value,
-          smtp_user:    g("alias-in-master")?.value,
-          forward_to:   g("alias-in-forward")?.value.trim(),
+          alias,
+          display_name: disp,
+          routing_mode: mode,
+          smtp_user,
+          smtp_host,
+          smtp_port,
+          custom_smtp_user,
+          custom_smtp_pass,
+          forward_to,
+          remember_settings,
         });
+
         if (d.success) {
-          showToast(`Alias created!`, "success");
+          showToast(`Alias ${alias} created!`, "success");
+          showAlert(`✓ Domain alias ${alias} created successfully for ${mode} dispatch!`, "success", 5000);
           closeModal("backdrop-create-alias");
           formAlias.reset();
           loadAliasesRouting();
         } else {
-          showToast(`Failed: ${d.detail || "Error"}`, "error");
+          showToast(`Failed: ${d.detail || "Error creating alias"}`, "error");
+          showAlert(`❌ Failed to create alias: ${d.detail || "Unknown error"}`, "error", 7000);
         }
+      } catch (err) {
+        showAlert(`Network error: ${err}`, "error", 7000);
       } finally {
         btn.disabled = false;
-        btn.textContent = "Create Alias";
+        btn.textContent = "Create Alias & Save Route";
       }
     });
   }
@@ -714,7 +797,7 @@ document.addEventListener("DOMContentLoaded", () => {
   on("btn-add-endpoint", "click", () => showToast("AI endpoint manager coming soon!", "info"));
 
   // ═══════════════════════════════════════════════════════
-  //  SETTINGS MODULE
+  //  SETTINGS & SIGNATURE STUDIO MODULE
   // ═══════════════════════════════════════════════════════
   async function loadSettings() {
     try {
@@ -727,7 +810,87 @@ document.addEventListener("DOMContentLoaded", () => {
       setVal("set-tracking-url", s.tracking_base_url || "");
       setVal("set-system-prompt", s.system_prompt || "");
     } catch {}
+
+    loadSignatureSettings();
   }
+
+  async function loadSignatureSettings() {
+    try {
+      const d = await apiFetch("/api/signature");
+      if (!d.success) return;
+      const s = d.settings || {};
+      setVal("sig-input-name",    s.sig_name    || "Alex Vance");
+      setVal("sig-input-title",   s.sig_title   || "Growth Partner");
+      setVal("sig-input-company", s.sig_company || "Flinza Agency");
+      setVal("sig-input-website", s.sig_website || "https://flinza.io");
+      setVal("sig-input-cta-text",s.sig_cta_text|| "⚡ Book a 10-Min Growth Audit →");
+      setVal("sig-input-cta-url", s.sig_cta_url || "https://flinza.io/audit");
+      setVal("sig-input-address", s.sig_address || "548 Market St, Suite 402, San Francisco, CA");
+
+      const enToggle = g("sig-toggle-enabled");
+      if (enToggle) enToggle.checked = (s.sig_enabled !== "0");
+
+      const stToggle = g("sig-toggle-stealth");
+      if (stToggle) stToggle.checked = (s.sig_stealth_disguise !== "0");
+
+      const previewBox = g("sig-live-preview-box");
+      if (previewBox && d.preview_html) {
+        previewBox.innerHTML = d.preview_html;
+      }
+    } catch (err) {
+      console.error("Failed to load signature settings:", err);
+    }
+  }
+
+  // Update live preview when user types in signature fields
+  ["sig-input-name", "sig-input-title", "sig-input-company", "sig-input-website", "sig-input-cta-text", "sig-input-cta-url", "sig-input-address"].forEach(id => {
+    on(id, "input", debounce(async () => {
+      const previewBox = g("sig-live-preview-box");
+      if (!previewBox) return;
+      const name    = getVal("sig-input-name") || "Alex Vance";
+      const title   = getVal("sig-input-title") || "Growth Partner";
+      const company = getVal("sig-input-company") || "Flinza Agency";
+      const web     = getVal("sig-input-website") || "https://flinza.io";
+      const btnTxt  = getVal("sig-input-cta-text") || "Book a 10-Min Growth Audit";
+      const btnUrl  = getVal("sig-input-cta-url") || "https://flinza.io/audit";
+      const addr    = getVal("sig-input-address") || "548 Market St, San Francisco, CA";
+
+      previewBox.innerHTML = `
+        <table cellpadding="0" cellspacing="0" border="0" style="margin-top: 10px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 500px; width: 100%;">
+          <tr>
+            <td style="padding: 1px; background: linear-gradient(135deg, rgba(126,206,206,0.55) 0%, rgba(0,163,255,0.4) 50%, rgba(33,84,232,0.6) 100%); border-radius: 14px;">
+              <table cellpadding="0" cellspacing="0" border="0" style="width: 100%; background: #0c101c; border-radius: 13px; padding: 18px 20px;">
+                <tr>
+                  <td valign="top" style="width: 48px; padding-right: 14px;">
+                    <div style="width: 44px; height: 44px; border-radius: 10px; background: linear-gradient(135deg, #7ECECE 0%, #00A3FF 50%, #2154E8 100%); display: table; text-align: center;">
+                      <span style="display: table-cell; vertical-align: middle; color: #ffffff; font-weight: 800; font-size: 18px;">F</span>
+                    </div>
+                  </td>
+                  <td valign="top">
+                    <div style="font-size: 14.5px; font-weight: 700; color: #ffffff;">${esc(name)}</div>
+                    <div style="font-size: 12px; color: #7ECECE; font-weight: 600; margin-top: 2px;">${esc(title)} · ${esc(company)}</div>
+                    <div style="font-size: 11.5px; color: #94a3b8; margin-top: 5px;">
+                      <span>✉ alex@${esc(company.toLowerCase().replace(/\s+/g, ''))}.com</span> | <span>🌐 ${esc(web.replace('https://',''))}</span>
+                    </div>
+                    <div style="margin-top: 12px;">
+                      <a href="${esc(btnUrl)}" target="_blank" style="display: inline-block; background: linear-gradient(135deg, rgba(126,206,206,0.2) 0%, rgba(0,163,255,0.25) 100%); border: 1px solid rgba(126,206,206,0.5); border-radius: 20px; padding: 6px 14px; color: #7ECECE; font-size: 11.5px; font-weight: 700; text-decoration: none;">
+                        ${esc(btnTxt)}
+                      </a>
+                    </div>
+                  </td>
+                </tr>
+                <tr>
+                  <td colspan="2" style="padding-top: 12px; margin-top: 12px; border-top: 1px solid rgba(255, 255, 255, 0.07); font-size: 10px; color: #64748b;">
+                    ${esc(company)} · ${esc(addr)} · <span style="color:#94a3b8; text-decoration:underline;">1-Click Unsubscribe</span>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+        </table>
+      `;
+    }, 250));
+  });
 
   on("btn-save-settings", "click", async () => {
     try {
@@ -740,6 +903,47 @@ document.addEventListener("DOMContentLoaded", () => {
       });
       showToast(d.success ? "Settings saved!" : `Error: ${d.error}`, d.success ? "success" : "error");
     } catch {}
+  });
+
+  on("btn-save-signature", "click", async () => {
+    try {
+      const payload = {
+        sig_name:              getVal("sig-input-name"),
+        sig_title:             getVal("sig-input-title"),
+        sig_company:           getVal("sig-input-company"),
+        sig_website:           getVal("sig-input-website"),
+        sig_cta_text:          getVal("sig-input-cta-text"),
+        sig_cta_url:           getVal("sig-input-cta-url"),
+        sig_address:           getVal("sig-input-address"),
+        sig_enabled:           g("sig-toggle-enabled")?.checked ? "1" : "0",
+        sig_stealth_disguise:  g("sig-toggle-stealth")?.checked ? "1" : "0",
+      };
+      const d = await apiFetch("/api/signature", "POST", payload);
+      if (d.success) {
+        showToast("Glassmorphic signature saved!", "success");
+        showAlert("✨ Luxury HTML Signature updated! All outbound cold emails and SES dispatches will now include this brand card.", "success", 5000);
+      } else {
+        showToast("Failed to save signature", "error");
+      }
+    } catch (err) {
+      showToast(`Error: ${err}`, "error");
+    }
+  });
+
+  on("btn-test-signature", "click", async () => {
+    showToast("Sending test email with signature…", "info");
+    try {
+      const d = await apiFetch("/api/signature/test-preview", "POST", { to_email: "rajdep.f12x@gmail.com" });
+      if (d.success) {
+        showToast("Test signature email delivered!", "success");
+        showAlert("🚀 Test email with live Glassmorphic Signature dispatched to rajdep.f12x@gmail.com! Check your inbox to see the layout.", "success", 6000);
+      } else {
+        showToast("Failed to send test preview", "error");
+        showAlert(`Test preview failed: ${d.detail || "Check mailbox settings"}`, "error", 6000);
+      }
+    } catch (err) {
+      showToast(`Error: ${err}`, "error");
+    }
   });
 
   // ═══════════════════════════════════════════════════════

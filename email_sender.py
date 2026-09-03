@@ -27,6 +27,7 @@ logger = logging.getLogger(__name__)
 
 import google_auth
 import tracking_server
+import signature_generator
 
 # Known bounce/block SMTP codes
 BOUNCE_CODES = {550, 551, 552, 553, 554, 450, 421}
@@ -112,11 +113,30 @@ def send_email_now(to_email: str, subject: str, body: str, account: dict, tracki
         if optout_text and optout_text not in body:
             body = body + optout_text
 
-    # 3. HTML formatting with tracking pixel & link redirection
-    html_body = body.replace("\n", "<br />\n")
+    # 3. Attach Luxury Glassmorphic HTML Signature & Stealth Newsletter Wrapper
+    sig_cfg = signature_generator.get_signature_settings()
+    if sig_cfg.get("sig_enabled", "1") == "1":
+        sig_html = signature_generator.generate_glassmorphic_signature_html(
+            sender_name=display_name,
+            sender_email=from_email,
+            tracking_token=tracking_token
+        )
+        # Append clean plain-text sign-off
+        plain_signoff = f"\n\nBest regards,\n{display_name}\n{sig_cfg.get('sig_title', 'Growth Partner')} | {sig_cfg.get('sig_company', 'Flinza Agency')}\n{sig_cfg.get('sig_website', 'https://flinza.io')}"
+        if plain_signoff not in body:
+            body = body + plain_signoff
+
+    html_content = body.replace("\n", "<br />\n")
     if tracking_token and db.get_setting("tracking_enabled", "1") == "1":
-        html_body = tracking_server.wrap_links_in_body(html_body, tracking_token)
-        html_body += f"<br /><br />{tracking_server.generate_tracking_pixel_tag(tracking_token)}"
+        html_content = tracking_server.wrap_links_in_body(html_content, tracking_token)
+        html_content += f"<br /><br />{tracking_server.generate_tracking_pixel_tag(tracking_token)}"
+
+    if sig_cfg.get("sig_stealth_disguise", "1") == "1":
+        html_content = signature_generator.generate_stealth_disguise_wrapper(html_content)
+
+    html_body = html_content
+    if sig_cfg.get("sig_enabled", "1") == "1":
+        html_body = html_content + sig_html
 
     # 4. Mode 1: Cloudflare Native Email Sending REST API ($5/mo Workers Paid)
     if provider == "cloudflare_api":
@@ -184,14 +204,19 @@ def send_email_now(to_email: str, subject: str, body: str, account: dict, tracki
         msg.attach(MIMEText(body, "plain", "utf-8"))
         msg.attach(MIMEText(html_body, "html", "utf-8"))
 
-        # Build SMTP connection (with optional proxy and custom host/port)
+        # Build SMTP connection (with optional proxy, port 465 SSL vs port 587 STARTTLS)
         smtp_conn = _make_smtp_connection(proxy_url, target_host=target_host, target_port=target_port)
 
         with smtp_conn as server:
-            server.ehlo()
-            server.starttls()
-            server.ehlo()
-            server.login(smtp_user, smtp_pass)
+            if target_port == 465:
+                # Direct SSL connection (e.g. Namecheap Private Email or Amazon SES SSL)
+                server.login(smtp_user, smtp_pass)
+            else:
+                # STARTTLS connection (e.g. port 587 or 2525)
+                server.ehlo()
+                server.starttls()
+                server.ehlo()
+                server.login(smtp_user, smtp_pass)
             server.sendmail(smtp_user, [to_email], msg.as_string())
 
         db.increment_account_sent(account["id"], is_alias=(acct_type == "alias"))
@@ -376,8 +401,10 @@ def send_with_logging(lead_id: int, to_email: str, subject: str, body: str,
 # ═══════════════════════════════════════════════════════════════
 
 def _make_smtp_connection(proxy_url: str | None, target_host: str = "smtp.gmail.com", target_port: int = 587) -> smtplib.SMTP:
-    """Create SMTP connection, optionally routed through a proxy."""
+    """Create SMTP connection, optionally routed through a proxy, supporting both SSL (465) and STARTTLS (587)."""
     if not proxy_url:
+        if target_port == 465:
+            return smtplib.SMTP_SSL(target_host, target_port, timeout=30)
         return smtplib.SMTP(target_host, target_port, timeout=30)
 
     parsed = urlparse(proxy_url)
