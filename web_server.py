@@ -8,6 +8,8 @@ import os
 import json
 import logging
 import threading
+import csv
+import io
 from pathlib import Path
 from typing import Optional
 from fastapi import FastAPI, Request, Response, Query, Form, UploadFile, File, BackgroundTasks, HTTPException
@@ -229,6 +231,163 @@ async def export_leads():
         media_type="text/csv",
         headers={"Content-Disposition": "attachment; filename=flinza_leads.csv"},
     )
+
+
+@app.get("/api/leads/sample-csv")
+async def download_sample_leads_csv():
+    """Returns a perfectly formatted sample CSV file with high-converting AI personalization headers."""
+    sample_rows = [
+        ["first_name", "last_name", "email", "company", "niche", "website", "linkedin", "custom_hook"],
+        ["Sarah", "Connor", "sarah@apexmedia.co", "Apex Media", "E-Commerce", "https://apexmedia.co", "https://linkedin.com/in/sarahconnor", "Loved your recent TikTok series on DTC ad scaling"],
+        ["Marcus", "Vance", "marcus@hypergrowth.io", "HyperGrowth", "B2B SaaS", "https://hypergrowth.io", "https://linkedin.com/in/marcusvance", "Saw your Product Hunt #1 launch last Tuesday"],
+        ["Elena", "Rostova", "elena@fitlabpro.com", "FitLab Pro", "Fitness App", "https://fitlabpro.com", "https://linkedin.com/in/elenarostova", "Your IG reels retention is great but missing short-form hook variations"],
+        ["David", "Chen", "david@nexustech.ai", "Nexus Tech", "AI Software", "https://nexustech.ai", "https://linkedin.com/in/davidchen", "Noticed your founder teardown video on LinkedIn last week"],
+        ["Olivia", "Taylor", "olivia@voguehaven.shop", "Vogue Haven", "Fashion DTC", "https://voguehaven.shop", "https://linkedin.com/in/oliviataylor", "Your Meta creative could easily 3x with creator whitelisting"],
+    ]
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerows(sample_rows)
+    csv_content = output.getvalue()
+
+    return Response(
+        content=csv_content,
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=flinza_sample_leads_template.csv"}
+    )
+
+
+@app.post("/api/leads/upload-csv")
+async def upload_leads_csv(request: Request, file: Optional[UploadFile] = File(None)):
+    """Imports leads from CSV with support for custom_hook and linkedin columns for AI hyper-personalization."""
+    csv_text = ""
+    if file:
+        content = await file.read()
+        csv_text = content.decode("utf-8", errors="replace")
+    else:
+        try:
+            body_json = await request.json()
+            csv_text = body_json.get("csv_text", "")
+        except Exception:
+            pass
+
+    if not csv_text.strip():
+        raise HTTPException(status_code=400, detail="Empty CSV content provided")
+
+    reader = csv.DictReader(io.StringIO(csv_text))
+    imported_count = 0
+    updated_count = 0
+    imported_leads = []
+
+    for row in reader:
+        # Normalize keys (strip whitespace, lowercase)
+        norm_row = {k.strip().lower(): v.strip() for k, v in row.items() if k}
+        email = norm_row.get("email", "")
+        if not email or "@" not in email:
+            continue
+
+        # Extract name
+        first_name = norm_row.get("first_name", "")
+        last_name = norm_row.get("last_name", "")
+        name = norm_row.get("name", "")
+        if not name and (first_name or last_name):
+            name = f"{first_name} {last_name}".strip()
+
+        company = norm_row.get("company") or norm_row.get("brand") or norm_row.get("organization") or ""
+        niche = norm_row.get("niche") or norm_row.get("industry") or norm_row.get("category") or "General B2B"
+        website = norm_row.get("website") or norm_row.get("url") or ""
+        linkedin = norm_row.get("linkedin") or norm_row.get("linkedin_url") or ""
+        custom_hook = norm_row.get("custom_hook") or norm_row.get("hook") or norm_row.get("icebreaker") or norm_row.get("notes") or ""
+
+        lead_id = db.add_or_update_lead(
+            name=name or "Founder",
+            email=email,
+            company=company,
+            niche=niche,
+            website=website,
+            linkedin=linkedin,
+            custom_hook=custom_hook,
+            stage="new"
+        )
+        imported_count += 1
+        imported_leads.append({"id": lead_id, "name": name, "email": email, "company": company, "custom_hook": custom_hook})
+
+    return {"success": True, "imported_count": imported_count, "leads": imported_leads}
+
+
+@app.post("/api/leads/{lead_id}/ai-draft")
+async def generate_lead_ai_draft(lead_id: int):
+    """Generates a 100% unique AI hyper-personalized cold outreach subject & body for this specific lead."""
+    lead = db.get_lead_by_id(lead_id)
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead not found")
+
+    opener = ai_router.generate_opener(lead)
+    sub = opener.get("subject", f"Quick idea for {lead.get('company', 'your team')}")
+    body = opener.get("body", "")
+
+    db.update_lead_ai_draft(lead_id, sub, body)
+    return {"success": True, "lead_id": lead_id, "ai_subject": sub, "ai_draft": body, "used_fallback": opener.get("used_fallback", False)}
+
+
+@app.post("/api/leads/generate-ai-batch")
+async def generate_ai_drafts_batch():
+    """Generates hyper-personalized AI drafts for all new leads that lack custom drafts."""
+    leads = db.get_leads(stage="new", limit=100)
+    generated = 0
+    for l in leads:
+        lead = dict(l)
+        if not lead.get("ai_draft"):
+            opener = ai_router.generate_opener(lead)
+            db.update_lead_ai_draft(lead["id"], opener.get("subject"), opener.get("body"))
+            generated += 1
+    return {"success": True, "generated_count": generated, "total_leads": len(leads)}
+
+
+@app.post("/api/leads/{lead_id}/verify-deep")
+async def verify_single_lead_deep(lead_id: int):
+    """Executes a deep Zero-Bounce deliverability check on a single lead (MX, Catch-All, Disposable, Syntax)."""
+    lead = db.get_lead_by_id(lead_id)
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead not found")
+
+    result = email_verifier.verify_lead_deliverability(lead["email"], deep_smtp=True)
+    db.update_lead_deliverability(
+        lead_id=lead_id,
+        status=result["status"],
+        score=result["score"],
+        details_json=json.dumps(result)
+    )
+    return {"success": True, "lead_id": lead_id, "audit": result}
+
+
+@app.post("/api/leads/verify-all-deep")
+async def verify_all_leads_deep():
+    """Runs full Zero-Bounce MX & Catch-All audit on all new leads, updating badges and filtering dead mailboxes."""
+    leads = db.get_leads(stage="new", limit=300)
+    clean_cnt = 0
+    catchall_cnt = 0
+    dead_cnt = 0
+
+    for l in leads:
+        ld = dict(l)
+        res = email_verifier.verify_lead_deliverability(ld["email"], deep_smtp=False)
+        db.update_lead_deliverability(ld["id"], res["status"], res["score"], json.dumps(res))
+        if not res["valid"]:
+            db.update_lead_stage(ld["id"], "bounced")
+            dead_cnt += 1
+        elif res["is_catch_all"]:
+            catchall_cnt += 1
+            clean_cnt += 1
+        else:
+            clean_cnt += 1
+
+    return {
+        "success": True,
+        "scanned": len(leads),
+        "clean_count": clean_cnt,
+        "catchall_count": catchall_cnt,
+        "dead_count": dead_cnt
+    }
 
 
 @app.get("/api/accounts")
@@ -1098,7 +1257,7 @@ async def send_signature_test_preview(request: Request):
     to_email = b.get("to_email", "rajdep.f12x@gmail.com")
 
     # Pick an active account
-    accounts = db.get_active_accounts()
+    accounts = db.get_all_accounts(active_only=True) or db.get_all_accounts()
     if not accounts:
         raise HTTPException(status_code=400, detail="No active mailboxes configured to send preview.")
 

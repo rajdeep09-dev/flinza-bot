@@ -312,6 +312,21 @@ def init_db():
         except sqlite3.OperationalError:
             pass
 
+    # Migrations for leads: AI hyper-personalization & deep deliverability checks
+    for col, col_type in [
+        ("custom_hook", "TEXT"),
+        ("linkedin", "TEXT"),
+        ("ai_subject", "TEXT"),
+        ("ai_draft", "TEXT"),
+        ("deliverability_status", "TEXT DEFAULT 'unverified'"),
+        ("deliverability_score", "INTEGER DEFAULT 100"),
+        ("last_audit_details", "TEXT"),
+    ]:
+        try:
+            conn.execute(f"ALTER TABLE leads ADD COLUMN {col} {col_type}")
+        except sqlite3.OperationalError:
+            pass
+
     conn.commit()
     _init_default_settings(conn)
     conn.close()
@@ -765,6 +780,62 @@ def get_leads(stage=None, blacklisted=False, unsubscribed=False, limit=None, sea
     rows = conn.execute(query, params).fetchall()
     conn.close()
     return rows
+
+
+def get_lead_by_id(lead_id: int):
+    conn = get_db()
+    row = conn.execute("SELECT * FROM leads WHERE id=?", (lead_id,)).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def update_lead_ai_draft(lead_id: int, ai_subject: str, ai_draft: str):
+    conn = get_db()
+    conn.execute(
+        "UPDATE leads SET ai_subject=?, ai_draft=? WHERE id=?",
+        (ai_subject, ai_draft, lead_id)
+    )
+    conn.commit()
+    conn.close()
+
+
+def update_lead_deliverability(lead_id: int, status: str, score: int, details_json: str):
+    conn = get_db()
+    conn.execute(
+        "UPDATE leads SET deliverability_status=?, deliverability_score=?, last_audit_details=? WHERE id=?",
+        (status, score, details_json, lead_id)
+    )
+    conn.commit()
+    conn.close()
+
+
+def add_or_update_lead(name: str, email: str, company: str = None, niche: str = None, website: str = None, linkedin: str = None, custom_hook: str = None, stage: str = "new"):
+    conn = get_db()
+    email = email.strip().lower()
+    existing = conn.execute("SELECT id FROM leads WHERE email=?", (email,)).fetchone()
+    if existing:
+        conn.execute(
+            """UPDATE leads
+               SET name=COALESCE(?, name),
+                   company=COALESCE(?, company),
+                   niche=COALESCE(?, niche),
+                   website=COALESCE(?, website),
+                   linkedin=COALESCE(?, linkedin),
+                   custom_hook=COALESCE(?, custom_hook)
+               WHERE id=?""",
+            (name, company, niche, website, linkedin, custom_hook, existing["id"])
+        )
+        lead_id = existing["id"]
+    else:
+        cur = conn.execute(
+            """INSERT INTO leads (name, email, company, niche, website, linkedin, custom_hook, stage)
+               VALUES (?,?,?,?,?,?,?,?)""",
+            (name, email, company, niche, website, linkedin, custom_hook, stage or "new")
+        )
+        lead_id = cur.lastrowid
+    conn.commit()
+    conn.close()
+    return lead_id
 
 
 def update_lead_stage(lead_id: int, stage: str):

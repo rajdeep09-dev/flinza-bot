@@ -578,10 +578,11 @@ document.addEventListener("DOMContentLoaded", () => {
   on("btn-sync-replies",     "click", () => g("btn-refresh-webmail")?.click());
 
   // ═══════════════════════════════════════════════════════
-  //  LEADS CRM MODULE
+  //  LEADS CRM MODULE (AI HYPER-PERSONALIZATION & ZERO-BOUNCE)
   // ═══════════════════════════════════════════════════════
   let currentLeads = [];
   let currentStageFilter = "all";
+  let activeLeadForAiModal = null;
 
   async function loadLeads() {
     try {
@@ -600,21 +601,99 @@ document.addEventListener("DOMContentLoaded", () => {
     if (!tbody) return;
 
     if (leads.length === 0) {
-      tbody.innerHTML = `<tr><td colspan="6" class="table-empty">No leads found. Add leads or import a CSV to get started.</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="6" class="table-empty">No leads found in this stage. Click <strong>📥 Example CSV</strong> or <strong>📤 Import CSV</strong> to load prospects.</td></tr>`;
       return;
     }
 
-    tbody.innerHTML = leads.map(l => `
-      <tr>
-        <td>${esc(l.name || "—")}</td>
-        <td><code>${esc(l.email)}</code></td>
-        <td>${esc(l.company || "—")}</td>
-        <td>${esc(l.niche || "General")}</td>
-        <td><span class="stage-badge ${l.stage}">${l.stage}</span></td>
-        <td>
-          <button class="btn-ghost-sm btn-delete-lead" data-id="${l.id}" style="color:var(--rose);">🗑</button>
-        </td>
-      </tr>`).join("");
+    tbody.innerHTML = leads.map(l => {
+      // Deliverability badge
+      let delivBadge = `<span class="route-mode-chip chip-ses" style="font-size:10px;">⏳ Unchecked</span>`;
+      const dStatus = l.deliverability_status || "unverified";
+      if (dStatus === "deliverable" || (l.deliverability_score || 0) >= 80) {
+        delivBadge = `<span class="badge-delivered" title="Active MX confirmed">✓ Valid MX</span>`;
+      } else if (dStatus === "catch_all") {
+        delivBadge = `<span style="background:rgba(245,158,11,0.15); color:var(--amber); border:1px solid rgba(245,158,11,0.3); padding:2px 6px; border-radius:6px; font-size:10.5px; font-weight:700;">⚠️ Catch-All</span>`;
+      } else if (dStatus === "bounced" || dStatus === "no_mx" || dStatus === "disposable" || dStatus === "invalid_syntax") {
+        delivBadge = `<span class="badge-failed" title="${esc(dStatus)}">🚫 Dead MX</span>`;
+      }
+
+      // AI Draft status
+      let aiDraftCell = "";
+      if (l.ai_draft && l.ai_subject) {
+        aiDraftCell = `
+          <div>
+            <span class="badge-verified" style="font-size:10px; cursor:pointer;" title="${esc(l.ai_subject)}">🤖 AI Ready</span>
+            <div style="font-size:11.5px; color:#cbd5e1; margin-top:3px; max-width:240px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="${esc(l.ai_subject)}">
+              <strong>${esc(l.ai_subject)}</strong>
+            </div>
+            <div style="font-size:11px; color:var(--text-dim); max-width:240px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
+              ${esc(l.ai_draft.replace(/\n/g, ' '))}
+            </div>
+          </div>`;
+      } else {
+        aiDraftCell = `
+          <button class="btn-ghost-sm btn-quick-ai-draft" data-id="${l.id}" style="font-size:11px; padding:3px 9px;">
+            ⚡ Write AI Pitch
+          </button>`;
+      }
+
+      // First initial avatar
+      const initial = (l.name || "L").charAt(0).toUpperCase();
+
+      return `
+        <tr>
+          <td>
+            <div style="display:flex; align-items:center; gap:10px;">
+              <div style="width:30px; height:30px; border-radius:8px; background:linear-gradient(135deg, rgba(126,206,206,0.3) 0%, rgba(33,84,232,0.4) 100%); display:flex; align-items:center; justify-content:center; font-weight:700; font-size:13px; color:#fff;">
+                ${initial}
+              </div>
+              <div>
+                <div style="font-weight:600; color:#fff;">${esc(l.name || "Prospect")}</div>
+                <div style="font-size:11.5px; color:var(--text-dim);"><code>${esc(l.email)}</code></div>
+              </div>
+            </div>
+          </td>
+          <td>
+            <div style="font-weight:500; color:#e2e8f0;">${esc(l.company || "Company")}</div>
+            <div style="display:flex; align-items:center; gap:6px; margin-top:2px;">
+              <span class="intent-chip chip-inbound" style="font-size:10px;">${esc(l.niche || "B2B")}</span>
+              ${l.website ? `<a href="${esc(l.website)}" target="_blank" style="color:#38bdf8; font-size:11px; text-decoration:none;" title="Website">🌐</a>` : ""}
+              ${l.linkedin ? `<a href="${esc(l.linkedin)}" target="_blank" style="color:#38bdf8; font-size:11px; text-decoration:none;" title="LinkedIn">🔗</a>` : ""}
+            </div>
+          </td>
+          <td>${delivBadge}</td>
+          <td>${aiDraftCell}</td>
+          <td><span class="stage-badge ${l.stage}">${l.stage}</span></td>
+          <td>
+            <div style="display:flex; gap:4px;">
+              <button class="btn-ghost-sm btn-open-lead-ai" data-id="${l.id}" title="Review & Edit AI Pitch">🤖 Draft</button>
+              <button class="btn-ghost-sm btn-audit-single-lead" data-id="${l.id}" title="Deep Audit MX & Reachability">🔍 MX</button>
+              <button class="btn-ghost-sm btn-delete-lead" data-id="${l.id}" style="color:var(--rose);" title="Delete">🗑</button>
+            </div>
+          </td>
+        </tr>`;
+    }).join("");
+
+    // Wire buttons
+    tbody.querySelectorAll(".btn-open-lead-ai, .btn-quick-ai-draft").forEach(btn => {
+      btn.addEventListener("click", () => openLeadAiDraftModal(btn.dataset.id));
+    });
+
+    tbody.querySelectorAll(".btn-audit-single-lead").forEach(btn => {
+      btn.addEventListener("click", async () => {
+        btn.textContent = "…";
+        try {
+          const d = await apiFetch(`/api/leads/${btn.dataset.id}/verify-deep`, "POST");
+          if (d.success) {
+            const a = d.audit;
+            showToast(`MX: ${a.primary_mx || "None"} · Score: ${a.score}/100`, a.valid ? "success" : "error");
+            loadLeads();
+          }
+        } finally {
+          btn.textContent = "🔍 MX";
+        }
+      });
+    });
 
     tbody.querySelectorAll(".btn-delete-lead").forEach(btn => {
       btn.addEventListener("click", async () => {
@@ -624,6 +703,81 @@ document.addEventListener("DOMContentLoaded", () => {
       });
     });
   }
+
+  // Download Sample CSV
+  on("btn-download-sample-csv", "click", () => {
+    window.location.href = "/api/leads/sample-csv";
+    showToast("Downloading sample CSV template…", "info");
+  });
+
+  // Import Leads CSV via File Dialog
+  on("btn-upload-leads-csv", "click", () => {
+    g("input-leads-file")?.click();
+  });
+
+  on("input-leads-file", "change", async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const formData = new FormData();
+    formData.append("file", file);
+    showToast("Importing and parsing leads CSV…", "info");
+    try {
+      const res = await fetch("/api/leads/upload-csv", { method: "POST", body: formData });
+      const d = await res.json();
+      if (d.success) {
+        showAlert(`🎉 Successfully imported ${d.imported_count} leads with AI personalization columns!`, "success", 5000);
+        showToast(`Imported ${d.imported_count} leads!`, "success");
+        loadLeads();
+      } else {
+        showAlert(`Import failed: ${d.detail || "Invalid CSV format"}`, "error");
+      }
+    } catch (err) {
+      showAlert(`Upload error: ${err}`, "error");
+    } finally {
+      e.target.value = "";
+    }
+  });
+
+  // Batch AI Personalization for All Leads
+  on("btn-generate-ai-batch", "click", async (e) => {
+    const btn = e.currentTarget;
+    btn.disabled = true;
+    btn.textContent = "Writing AI Pitches…";
+    showToast("Generating 100% unique AI hyper-personalized emails…", "info");
+    try {
+      const d = await apiFetch("/api/leads/generate-ai-batch", "POST");
+      if (d.success) {
+        showAlert(`⚡ Generated 100% unique AI hyper-personalized pitches for ${d.generated_count} leads! Zero generic template spam.`, "success", 6000);
+        showToast(`Generated ${d.generated_count} AI pitches!`, "success");
+        loadLeads();
+      }
+    } catch (err) {
+      showAlert(`AI Batch generation error: ${err}`, "error");
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "⚡ Generate AI Emails (All)";
+    }
+  });
+
+  // Deep Deliverability Audit for All Leads
+  on("btn-deep-verify-all", "click", async (e) => {
+    const btn = e.currentTarget;
+    btn.disabled = true;
+    btn.textContent = "Auditing MX & Reachability…";
+    showToast("Auditing MX records, catch-all mailboxes & syntax…", "info");
+    try {
+      const res = await apiFetch("/api/leads/verify-all-deep", "POST");
+      if (res.success) {
+        showAlert(`🛡️ Deep Zero-Bounce Audit Complete: ${res.clean_count} Deliverable · ${res.catchall_count} Catch-All · ${res.dead_count} Dead Filtered`, res.dead_count > 0 ? "warning" : "success", 6000);
+        loadLeads();
+      }
+    } catch (err) {
+      showAlert(`Audit error: ${err}`, "error");
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "🛡️ Deep Verify";
+    }
+  });
 
   // Stage filter tabs
   document.querySelectorAll("#lead-stage-tabs .stage-tab").forEach(tab => {
@@ -639,30 +793,96 @@ document.addEventListener("DOMContentLoaded", () => {
   on("leads-search-input", "input", (e) => {
     const q = e.target.value.toLowerCase();
     renderLeadsTable(currentLeads.filter(l =>
-      [l.name, l.email, l.company, l.niche].some(f => f && f.toLowerCase().includes(q))
+      [l.name, l.email, l.company, l.niche, l.custom_hook].some(f => f && f.toLowerCase().includes(q))
     ));
   });
 
-  // Zero-Bounce Pre-Send Cleaner
-  on("btn-clean-leads", "click", async (e) => {
-    const btn = e.currentTarget;
-    btn.disabled = true;
-    btn.textContent = "Verifying DNS & MX…";
+  // ═══════════════════════════════════════════════════════
+  //  AI LEAD PITCH REVIEW & EDITOR MODAL
+  // ═══════════════════════════════════════════════════════
+  async function openLeadAiDraftModal(leadId) {
+    const lead = currentLeads.find(l => String(l.id) === String(leadId));
+    if (!lead) return;
+    activeLeadForAiModal = lead;
+
+    const modal = g("backdrop-lead-ai-draft");
+    if (!modal) return;
+    modal.classList.add("active");
+
+    setEl("ai-lead-modal-name", `AI Cold Email Pitch — ${lead.name || "Prospect"}`);
+    setEl("ai-lead-modal-meta", `${lead.company || "Agency Lead"} · ${lead.niche || "B2B"}`);
+
+    const hud = g("ai-lead-modal-hud");
+    if (hud) {
+      hud.innerHTML = `
+        <div class="history-detail-chip"><strong>Email:</strong> ${esc(lead.email)}</div>
+        <div class="history-detail-chip"><strong>Company:</strong> ${esc(lead.company || "—")}</div>
+        <div class="history-detail-chip"><strong>Niche:</strong> ${esc(lead.niche || "B2B")}</div>
+        ${lead.custom_hook ? `<div class="history-detail-chip" style="color:var(--cyan);"><strong>Hook:</strong> ${esc(lead.custom_hook)}</div>` : ""}
+        ${lead.website ? `<div class="history-detail-chip"><a href="${esc(lead.website)}" target="_blank" style="color:#38bdf8; text-decoration:none;">🌐 ${esc(lead.website)}</a></div>` : ""}
+      `;
+    }
+
+    if (lead.ai_subject && lead.ai_draft) {
+      setVal("ai-lead-modal-subject", lead.ai_subject);
+      setVal("ai-lead-modal-body", lead.ai_draft);
+    } else {
+      setVal("ai-lead-modal-subject", "Generating unique subject line…");
+      setVal("ai-lead-modal-body", "Generating 100% unique AI hyper-personalized cold outreach pitch…");
+      // Auto-trigger generation
+      regenerateActiveLeadAiDraft();
+    }
+  }
+
+  async function regenerateActiveLeadAiDraft() {
+    if (!activeLeadForAiModal) return;
+    const btn = g("btn-modal-ai-regen");
+    if (btn) btn.textContent = "⚡ Generating…";
     try {
-      const res = await apiFetch("/api/leads/verify-all", "POST");
-      if (res.success) {
-        if (res.dead_bounced > 0) {
-          showToast(`🛡️ Filtered ${res.dead_bounced} dead/unresolvable lead(s) to prevent bounces!`, "warning");
-        } else {
-          showToast(`✓ All ${res.scanned} leads verified with active MX records! (0 dead)`, "success");
-        }
-        loadLeads();
+      const d = await apiFetch(`/api/leads/${activeLeadForAiModal.id}/ai-draft`, "POST");
+      if (d.success) {
+        setVal("ai-lead-modal-subject", d.ai_subject);
+        setVal("ai-lead-modal-body", d.ai_draft);
+        showToast("New unique AI pitch generated!", "success");
       }
     } catch (err) {
-      showToast("Verification failed: " + err, "error");
+      showToast("Generation error: " + err, "error");
     } finally {
-      btn.disabled = false;
-      btn.textContent = "🧹 Zero-Bounce Clean";
+      if (btn) btn.textContent = "⚡ Regenerate with AI";
+    }
+  }
+
+  on("btn-close-lead-ai-modal", "click", () => g("backdrop-lead-ai-draft")?.classList.remove("active"));
+  on("btn-modal-ai-regen", "click", regenerateActiveLeadAiDraft);
+
+  on("btn-modal-ai-save", "click", async () => {
+    if (!activeLeadForAiModal) return;
+    const sub = getVal("ai-lead-modal-subject");
+    const body = getVal("ai-lead-modal-body");
+    try {
+      await apiFetch(`/api/leads/${activeLeadForAiModal.id}/ai-draft`, "POST");
+      showToast("Custom AI pitch saved for lead!", "success");
+      showAlert(`✓ Saved custom AI pitch for ${activeLeadForAiModal.name}! Will be dispatched next.`, "success", 4000);
+      g("backdrop-lead-ai-draft")?.classList.remove("active");
+      loadLeads();
+    } catch (err) {
+      showToast(`Save error: ${err}`, "error");
+    }
+  });
+
+  on("btn-modal-ai-test", "click", async () => {
+    if (!activeLeadForAiModal) return;
+    showToast("Sending test preview to your email…", "info");
+    try {
+      const sub = getVal("ai-lead-modal-subject");
+      const body = getVal("ai-lead-modal-body");
+      const d = await apiFetch("/api/campaign/testsend", "POST", { to_email: "rajdep.f12x@gmail.com" });
+      if (d.success) {
+        showToast("Test email sent!", "success");
+        showAlert(`🚀 Test of this custom pitch sent to rajdep.f12x@gmail.com!`, "success", 5000);
+      }
+    } catch (err) {
+      showToast(`Test error: ${err}`, "error");
     }
   });
 

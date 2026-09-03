@@ -18,7 +18,7 @@ import dns.resolver
 
 logger = logging.getLogger(__name__)
 
-# Common disposable / temporary email domains
+# Common disposable / temporary email domains (expanded with internet repositories)
 DISPOSABLE_DOMAINS = {
     "mailinator.com", "tempmail.com", "10minutemail.com", "guerrillamail.com",
     "sharklasers.com", "dispostable.com", "getairmail.com", "throwawaymail.com",
@@ -27,7 +27,15 @@ DISPOSABLE_DOMAINS = {
     "generator.email", "inboxkitten.com", "trashmail.net", "emailondeck.com",
     "tempr.email", "discard.email", "spambox.us", "maildrop.cc", "zillamail.com",
     "mail.com", "bk.ru", "list.ru", "inbox.ru", "rambler.ru", "pm.me", "tutanota.com",
-    "duck.com", "anonaddy.me", "simplelogin.com"
+    "duck.com", "anonaddy.me", "simplelogin.com", "relay.firefox.com", "spam4.me",
+    "tempinbox.com", "trashmail.org", "fakeinbox.com", "bouncr.com", "mintemail.com"
+}
+
+# Free / Consumer Webmail Domains
+FREE_WEBMAIL_DOMAINS = {
+    "gmail.com", "googlemail.com", "yahoo.com", "ymail.com", "hotmail.com",
+    "outlook.com", "live.com", "msn.com", "icloud.com", "me.com", "mac.com",
+    "aol.com", "zoho.com", "proton.me", "protonmail.com", "gmx.com", "mail.com"
 }
 
 SAFE_PROBE_DOMAINS = {
@@ -201,3 +209,112 @@ def clean_lead_batch(leads: List[Dict[str, Any]]) -> Dict[str, Any]:
             results["clean_count"] += 1
 
     return results
+
+
+def check_catch_all(domain: str, mx_hosts: List[str]) -> bool:
+    """
+    Probes whether a domain is configured as Catch-All / Accept-All.
+    Pings a non-existent randomized address; if accepted, flags domain as catch-all.
+    """
+    if not mx_hosts:
+        return False
+    # If safe probe domain, ping randomized probe
+    is_safe = any(d in mx_hosts[0].lower() for d in SAFE_PROBE_DOMAINS)
+    if not is_safe:
+        return False
+    fake_email = f"_flinza_probe_catchall_99812@{domain}"
+    probe = ping_smtp_mailbox(mx_hosts[0], fake_email)
+    return probe.get("valid", False) and probe.get("code") == 250
+
+
+def verify_lead_deliverability(email: str, deep_smtp: bool = True) -> Dict[str, Any]:
+    """
+    Enterprise-grade Zero-Bounce Deliverability Audit:
+    1. RFC 5322 Syntax Regex
+    2. Disposable & Burner Domain Blacklist
+    3. Live DNS MX Exchange Resolution
+    4. Free/Consumer vs Corporate B2B Domain Classifier
+    5. Catch-All / Accept-All Mail Server Detection
+    6. Deliverability Health Score (0-100)
+    """
+    clean_email = (email or "").strip().lower()
+
+    if not clean_email or "@" not in clean_email:
+        return {
+            "email": clean_email,
+            "valid": False,
+            "status": "invalid_syntax",
+            "score": 0,
+            "is_business": False,
+            "is_catch_all": False,
+            "reason": "Malformed or missing @ in email address",
+            "mx_hosts": []
+        }
+
+    domain = clean_email.split("@")[1]
+    is_business = domain not in FREE_WEBMAIL_DOMAINS
+
+    # 1. Syntax Check
+    if not verify_email_syntax(clean_email):
+        return {
+            "email": clean_email,
+            "valid": False,
+            "status": "invalid_syntax",
+            "score": 0,
+            "is_business": is_business,
+            "is_catch_all": False,
+            "reason": "Invalid RFC 5322 syntax characters",
+            "mx_hosts": []
+        }
+
+    # 2. Disposable Domain Check
+    if is_disposable(clean_email):
+        return {
+            "email": clean_email,
+            "valid": False,
+            "status": "disposable",
+            "score": 10,
+            "is_business": False,
+            "is_catch_all": False,
+            "reason": f"Domain '{domain}' is a known burner / disposable service",
+            "mx_hosts": []
+        }
+
+    # 3. DNS MX Resolution
+    mx_hosts = resolve_mx_hosts(domain)
+    if not mx_hosts:
+        return {
+            "email": clean_email,
+            "valid": False,
+            "status": "no_mx",
+            "score": 0,
+            "is_business": is_business,
+            "is_catch_all": False,
+            "reason": f"Domain '{domain}' has no active MX DNS records (unroutable)",
+            "mx_hosts": []
+        }
+
+    # 4. Catch-All & SMTP Handshake
+    is_catch_all = False
+    status = "deliverable"
+    score = 98 if is_business else 88
+    reason = f"Verified active MX ({mx_hosts[0]}) · {'B2B Corporate' if is_business else 'Consumer Webmail'}"
+
+    if deep_smtp:
+        is_catch_all = check_catch_all(domain, mx_hosts)
+        if is_catch_all:
+            status = "catch_all"
+            score = 75
+            reason = f"Catch-All Domain (accepts all addresses; moderate bounce risk) via {mx_hosts[0]}"
+
+    return {
+        "email": clean_email,
+        "valid": True,
+        "status": status,
+        "score": score,
+        "is_business": is_business,
+        "is_catch_all": is_catch_all,
+        "reason": reason,
+        "mx_hosts": mx_hosts,
+        "primary_mx": mx_hosts[0]
+    }

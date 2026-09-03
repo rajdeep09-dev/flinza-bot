@@ -724,15 +724,20 @@ def launch_campaign(campaign_id: int = 1, dry_run: bool = False) -> Dict[str, An
             skipped.append({"email": lead["email"], "reason": "no accounts with capacity"})
             continue
 
-        # Personalize with lead-specific seed (reproducible for that lead)
-        seed = int(hashlib.md5(lead["email"].encode()).hexdigest(), 16) % 10000
-        subject, body = personalize(
-            step_1.get("subject_a", ""),
-            step_1.get("body_a", ""),
-            lead=dict(lead),
-            sender_name=sender_name,
-            seed=seed,
-        )
+        # Check if lead has a 100% unique AI hyper-personalized draft!
+        if lead.get("ai_draft") and lead.get("ai_subject"):
+            subject = lead["ai_subject"]
+            body = lead["ai_draft"]
+        else:
+            # Personalize with lead-specific seed (reproducible for that lead)
+            seed = int(hashlib.md5(lead["email"].encode()).hexdigest(), 16) % 10000
+            subject, body = personalize(
+                step_1.get("subject_a", ""),
+                step_1.get("body_a", ""),
+                lead=dict(lead),
+                sender_name=sender_name,
+                seed=seed,
+            )
 
         # Score deliverability
         score_data = score_email_deliverability(subject, body)

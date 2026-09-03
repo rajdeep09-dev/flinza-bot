@@ -368,34 +368,39 @@
               <h2 class="view-title">Leads CRM</h2>
               <p class="view-subtitle">Your cold outreach prospect pipeline</p>
             </div>
-            <div class="view-header-actions">
+            <div class="view-header-actions" style="flex-wrap: wrap; gap: 8px;">
               <div class="search-inline">
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
                 <input type="text" id="leads-search-input" placeholder="Search leads…" />
               </div>
-              <button class="btn-ghost-sm" id="btn-clean-leads">🧹 Zero-Bounce Clean</button>
+              <button class="btn-ghost-sm" id="btn-download-sample-csv" title="Download template CSV with AI personalization columns">📥 Example CSV</button>
+              <button class="btn-ghost-sm" id="btn-upload-leads-csv" title="Upload leads CSV with custom hooks">📤 Import CSV</button>
+              <input type="file" id="input-leads-file" accept=".csv" style="display:none;" />
+              <button class="btn-ghost-sm" id="btn-generate-ai-batch" title="Generate 100% unique AI hyper-personalized emails for all leads">⚡ Generate AI Emails (All)</button>
+              <button class="btn-ghost-sm" id="btn-deep-verify-all" title="Full Zero-Bounce MX & Catch-All audit">🛡️ Deep Verify</button>
               <button class="btn-primary-sm" id="btn-open-add-lead">+ Add Lead</button>
             </div>
           </div>
           <!-- Stage Filter Tabs -->
           <div class="stage-tabs-row" id="lead-stage-tabs">
-            <button class="stage-tab active" data-stage="all">All</button>
+            <button class="stage-tab active" data-stage="all">All Leads</button>
             <button class="stage-tab" data-stage="new">New</button>
             <button class="stage-tab" data-stage="contacted">Contacted</button>
             <button class="stage-tab" data-stage="opened">Opened</button>
             <button class="stage-tab" data-stage="replied">Replied</button>
+            <button class="stage-tab" data-stage="bounced">Bounced / Dead</button>
           </div>
           <!-- Table -->
           <div class="data-table-wrap">
             <table class="data-table">
               <thead>
                 <tr>
-                  <th>Name</th>
-                  <th>Email</th>
-                  <th>Company</th>
-                  <th>Niche</th>
+                  <th>Prospect & Contact</th>
+                  <th>Company & Niche</th>
+                  <th>Deliverability Health</th>
+                  <th>AI Personalized Pitch</th>
                   <th>Stage</th>
-                  <th></th>
+                  <th style="width: 110px;">Actions</th>
                 </tr>
               </thead>
               <tbody id="leads-tbody">
@@ -1177,6 +1182,42 @@
       </div>
       <div class="modal-footer">
         <button type="button" class="btn-ghost" id="btn-dismiss-history-detail">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- AI LEAD PERSONALIZATION REVIEW & EDITOR MODAL -->
+  <div class="modal-overlay" id="backdrop-lead-ai-draft">
+    <div class="modal-box" style="max-width: 660px;">
+      <div class="modal-header">
+        <div>
+          <h3 id="ai-lead-modal-name">AI Hyper-Personalized Pitch</h3>
+          <span style="font-size: 11.5px; color: var(--text-dim);" id="ai-lead-modal-meta">100% Unique Cold Email Draft</span>
+        </div>
+        <button class="icon-btn" id="btn-close-lead-ai-modal">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+
+      <!-- Lead Summary HUD -->
+      <div class="history-detail-hud" id="ai-lead-modal-hud"></div>
+
+      <div class="form-field" style="margin-top: 14px;">
+        <label>Personalized Subject Line (Zero Template Fingerprint)</label>
+        <input type="text" id="ai-lead-modal-subject" placeholder="Unique subject tailored to this prospect…" />
+      </div>
+
+      <div class="form-field">
+        <label>100% AI Personalized Pitch Copy</label>
+        <textarea id="ai-lead-modal-body" rows="7" placeholder="Unique pitch generated based on lead niche, video hooks, and company insights…"></textarea>
+      </div>
+
+      <div class="modal-footer" style="justify-content: space-between;">
+        <button type="button" class="btn-ghost" id="btn-modal-ai-regen">⚡ Regenerate with AI</button>
+        <div style="display: flex; gap: 8px;">
+          <button type="button" class="btn-ghost" id="btn-modal-ai-test">✉️ Test Send</button>
+          <button type="button" class="btn-primary-sm" id="btn-modal-ai-save">Save Pitch</button>
+        </div>
       </div>
     </div>
   </div>
