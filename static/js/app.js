@@ -1151,12 +1151,12 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 
   on("btn-test-signature", "click", async () => {
-    showToast("Sending test email with signature…", "info");
+    showToast("Sending test email with signature to f12x.studio@gmail.com…", "info");
     try {
-      const d = await apiFetch("/api/signature/test-preview", "POST", { to_email: "rajdep.f12x@gmail.com" });
+      const d = await apiFetch("/api/signature/test-preview", "POST", { to_email: "f12x.studio@gmail.com" });
       if (d.success) {
         showToast("Test signature email delivered!", "success");
-        showAlert("🚀 Test email with live Glassmorphic Signature dispatched to rajdep.f12x@gmail.com! Check your inbox to see the layout.", "success", 6000);
+        showAlert("🚀 Test email with Apple-minimal Signature dispatched to f12x.studio@gmail.com! Check your inbox on mobile and desktop.", "success", 6000);
       } else {
         showToast("Failed to send test preview", "error");
         showAlert(`Test preview failed: ${d.detail || "Check mailbox settings"}`, "error", 6000);

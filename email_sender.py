@@ -113,20 +113,10 @@ def send_email_now(to_email: str, subject: str, body: str, account: dict, tracki
         if optout_text and optout_text not in body:
             body = body + optout_text
 
-    # 3. Attach Luxury Glassmorphic HTML Signature & Stealth Newsletter Wrapper
+    # 3. Attach Apple-Minimal Glassmorphic HTML Signature & Stealth Wrapper
     sig_cfg = signature_generator.get_signature_settings()
-    if sig_cfg.get("sig_enabled", "1") == "1":
-        sig_html = signature_generator.generate_glassmorphic_signature_html(
-            sender_name=display_name,
-            sender_email=from_email,
-            tracking_token=tracking_token
-        )
-        # Append clean plain-text sign-off
-        plain_signoff = f"\n\nBest regards,\n{display_name}\n{sig_cfg.get('sig_title', 'Growth Partner')} | {sig_cfg.get('sig_company', 'Flinza Agency')}\n{sig_cfg.get('sig_website', 'https://flinza.io')}"
-        if plain_signoff not in body:
-            body = body + plain_signoff
-
     html_content = body.replace("\n", "<br />\n")
+
     if tracking_token and db.get_setting("tracking_enabled", "1") == "1":
         html_content = tracking_server.wrap_links_in_body(html_content, tracking_token)
         html_content += f"<br /><br />{tracking_server.generate_tracking_pixel_tag(tracking_token)}"
@@ -135,8 +125,19 @@ def send_email_now(to_email: str, subject: str, body: str, account: dict, tracki
         html_content = signature_generator.generate_stealth_disguise_wrapper(html_content)
 
     html_body = html_content
+
     if sig_cfg.get("sig_enabled", "1") == "1":
+        sig_html = signature_generator.generate_glassmorphic_signature_html(
+            sender_name=display_name,
+            sender_email=from_email,
+            tracking_token=tracking_token
+        )
         html_body = html_content + sig_html
+
+        # Append clean sign-off ONLY to plain-text fallback
+        plain_signoff = f"\n\nBest regards,\n{display_name}\n{sig_cfg.get('sig_title', 'Growth Partner')} | {sig_cfg.get('sig_company', 'Flinza Agency')}\n{sig_cfg.get('sig_website', 'https://flinza.io')}"
+        if plain_signoff not in body:
+            body = body + plain_signoff
 
     # 4. Mode 1: Cloudflare Native Email Sending REST API ($5/mo Workers Paid)
     if provider == "cloudflare_api":

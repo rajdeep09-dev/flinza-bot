@@ -1253,23 +1253,17 @@ async def save_signature(request: Request):
 @app.post("/api/signature/test-preview")
 async def send_signature_test_preview(request: Request):
     """Sends a sample cold outreach email containing the live Glassmorphic signature to the user's test address."""
-    b = await request.json()
-    to_email = b.get("to_email", "rajdep.f12x@gmail.com")
+    b = await request.json() if request.headers.get("content-type") == "application/json" else {}
+    to_email = b.get("to_email", "f12x.studio@gmail.com")
 
     # Pick an active account
-    accounts = db.get_all_accounts(active_only=True) or db.get_all_accounts()
+    raw_accs = [dict(a) for a in db.get_all_accounts()]
+    accounts = [a for a in raw_accs if a.get("active", 1)] or raw_accs
     if not accounts:
         raise HTTPException(status_code=400, detail="No active mailboxes configured to send preview.")
 
     acc = dict(accounts[0])
-    sub = "⚡ [Live Preview] Flinza Executive Bulletin & Signature Demo"
-    sample_body = (
-        "Hey Alex,\n\n"
-        "Here is the live demonstration of our executive marketing bulletin layout with the new Glassmorphic HTML signature attached below.\n\n"
-        "Notice the high-deliverability headers (Feedback-ID, List-Unsubscribe, X-Precedence) and the rounded action button styled for 100% email client fidelity.\n\n"
-        "— Flinza Engine"
-    )
-    res = email_sender.send_test_email(to_email, acc)
+    res = email_sender.send_test_email(to_email, target_account=acc["email"])
     return {"success": res.get("success", False), "result": res}
 
 

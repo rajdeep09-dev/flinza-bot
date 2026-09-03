@@ -81,53 +81,61 @@ def generate_glassmorphic_signature_html(
     unsub_link = unsubscribe_url or "#"
 
     html = f"""
-<!-- ════════════ FLINZA GLASSMORHPISM SIGNATURE ════════════ -->
-<table cellpadding="0" cellspacing="0" border="0" style="margin-top: 28px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 520px; width: 100%; border-collapse: separate;">
+<!-- ════════════ FLINZA APPLE-MINIMAL GLASS SIGNATURE ════════════ -->
+<table cellpadding="0" cellspacing="0" border="0" style="margin-top: 24px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 500px; width: 100%; border-collapse: separate; mso-table-lspace: 0pt; mso-table-rspace: 0pt;">
   <tr>
-    <td style="padding: 1px; background: linear-gradient(135deg, rgba(126,206,206,0.55) 0%, rgba(0,163,255,0.4) 50%, rgba(33,84,232,0.6) 100%); border-radius: 16px; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);">
-      <table cellpadding="0" cellspacing="0" border="0" style="width: 100%; background: #0c101c; border-radius: 15px; padding: 20px 22px;">
+    <!-- Left Gradient Accent Bar -->
+    <td valign="top" style="width: 3px; background: linear-gradient(180deg, #7ECECE 0%, #00A3FF 50%, #2154E8 100%); border-radius: 3px; font-size: 1px; line-height: 1px;">&nbsp;</td>
+    
+    <!-- Signature Content Body -->
+    <td valign="top" style="padding-left: 16px;">
+      <table cellpadding="0" cellspacing="0" border="0" style="width: 100%;">
         <tr>
-          <!-- Logo & Monogram Column -->
-          <td valign="top" style="width: 50px; padding-right: 18px;">
-            <div style="width: 48px; height: 48px; border-radius: 12px; background: linear-gradient(135deg, #7ECECE 0%, #00A3FF 50%, #2154E8 100%); display: table; text-align: center; box-shadow: 0 4px 14px rgba(0, 163, 255, 0.4);">
-              <span style="display: table-cell; vertical-align: middle; color: #ffffff; font-weight: 800; font-size: 20px; letter-spacing: -0.5px; font-family: 'Outfit', sans-serif;">F</span>
+          <!-- Brand Logo Monogram -->
+          <td valign="top" style="width: 44px; padding-right: 14px;">
+            <div style="width: 40px; height: 40px; border-radius: 10px; background: linear-gradient(135deg, #7ECECE 0%, #00A3FF 50%, #2154E8 100%); display: table; text-align: center; box-shadow: 0 4px 12px rgba(0, 163, 255, 0.3);">
+              <span style="display: table-cell; vertical-align: middle; color: #ffffff; font-weight: 800; font-size: 18px; letter-spacing: -0.5px; font-family: -apple-system, BlinkMacSystemFont, sans-serif;">F</span>
             </div>
           </td>
-          <!-- User & Agency Details Column -->
+
+          <!-- Contact & Identity Details -->
           <td valign="top">
-            <div style="font-size: 15px; font-weight: 700; color: #ffffff; letter-spacing: -0.2px; line-height: 1.2;">
+            <div style="font-size: 14.5px; font-weight: 700; color: #0f172a; letter-spacing: -0.2px; line-height: 1.25;">
               {name}
             </div>
-            <div style="font-size: 12.5px; color: #7ECECE; font-weight: 600; margin-top: 3px; line-height: 1.3;">
-              {title} <span style="color: #38bdf8;">·</span> {company}
+            <div style="font-size: 12px; color: #0284c7; font-weight: 600; margin-top: 3px; line-height: 1.3;">
+              {title} <span style="color: #94a3b8; font-weight: 400;">&bull;</span> {company}
             </div>
-            <div style="font-size: 12px; color: #94a3b8; margin-top: 6px; line-height: 1.5;">
-              <span style="color: #cbd5e1;">✉</span> <a href="mailto:{email}" style="color: #94a3b8; text-decoration: none;">{email}</a> &nbsp;|&nbsp; 
-              <span style="color: #cbd5e1;">🌐</span> <a href="{web}" target="_blank" style="color: #38bdf8; text-decoration: none; font-weight: 500;">{web.replace('https://', '').replace('http://', '')}</a>
-            </div>
-
-            <!-- Rounded Glass CTA Button -->
-            <div style="margin-top: 14px;">
-              <a href="{btn_url}" target="_blank" style="display: inline-block; background: linear-gradient(135deg, rgba(126,206,206,0.18) 0%, rgba(0,163,255,0.22) 100%); border: 1px solid rgba(126,206,206,0.5); border-radius: 22px; padding: 7px 16px; color: #7ECECE; font-size: 12px; font-weight: 700; text-decoration: none; letter-spacing: 0.2px; box-shadow: 0 2px 8px rgba(0,0,0,0.3);">
-                ⚡ {btn_txt} &rarr;
-              </a>
+            <div style="font-size: 11.5px; color: #64748b; margin-top: 5px; line-height: 1.45;">
+              <span>🌐</span> <a href="{web}" target="_blank" style="color: #0284c7; text-decoration: none; font-weight: 500;">{web.replace('https://', '').replace('http://', '')}</a>
+              &nbsp;<span style="color: #cbd5e1;">|</span>&nbsp;
+              <span>✉</span> <a href="mailto:{email}" style="color: #64748b; text-decoration: none;">{email}</a>
             </div>
           </td>
         </tr>
 
-        <!-- Compliance & Unsubscribe Micro Footer -->
+        <!-- Apple-like Frosted Glass Rounded CTA Button -->
         <tr>
-          <td colspan="2" style="padding-top: 16px; margin-top: 14px; border-top: 1px solid rgba(255, 255, 255, 0.07); font-size: 10.5px; color: #64748b; line-height: 1.5;">
-            <span>{company} · {addr}</span>
+          <td colspan="2" style="padding-top: 12px;">
+            <a href="{btn_url}" target="_blank" style="display: inline-block; background: #f0f9ff; background: linear-gradient(135deg, rgba(126,206,206,0.12) 0%, rgba(0,163,255,0.16) 100%); border: 1px solid rgba(0, 163, 255, 0.4); border-radius: 24px; padding: 6px 15px; color: #0284c7; font-size: 11.5px; font-weight: 600; text-decoration: none; letter-spacing: 0.15px; box-shadow: 0 2px 6px rgba(0, 163, 255, 0.12);">
+              ⚡ {btn_txt} &rarr;
+            </a>
+          </td>
+        </tr>
+
+        <!-- Super-Minimalist Opt-out & Compliance Line -->
+        <tr>
+          <td colspan="2" style="padding-top: 14px; margin-top: 10px; border-top: 1px solid #f1f5f9; font-size: 10.5px; color: #94a3b8; line-height: 1.5;">
+            <span>{company} &bull; {addr}</span>
             <br />
-            <span>To opt out of future market bulletins: <a href="{unsub_link}" style="color: #94a3b8; text-decoration: underline;">1-Click Unsubscribe</a></span>
+            <span>Opt out anytime: <a href="{unsub_link}" style="color: #64748b; text-decoration: underline; font-weight: 500;">1-Click Unsubscribe</a></span>
           </td>
         </tr>
       </table>
     </td>
   </tr>
 </table>
-<!-- ════════════ /FLINZA SIGNATURE ════════════ -->
+<!-- ════════════ /FLINZA APPLE-MINIMAL GLASS SIGNATURE ════════════ -->
 """
     return html
 
@@ -139,8 +147,8 @@ def generate_stealth_disguise_wrapper(body_content: str, niche: str = "B2B", com
     keeping bounce and complaint rates at near 0.00%.
     """
     return f"""
-<div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 14px; line-height: 1.65; color: #e2e8f0; max-width: 580px;">
-  <div style="border-left: 2px solid #7ECECE; padding-left: 10px; margin-bottom: 16px; font-size: 11px; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.5px;">
+<div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 14px; line-height: 1.6; color: #1e293b; max-width: 580px;">
+  <div style="border-left: 2px solid #7ECECE; padding-left: 10px; margin-bottom: 16px; font-size: 11px; color: #64748b; text-transform: uppercase; letter-spacing: 0.5px;">
     <strong>Flinza Growth Teardown</strong> &bull; Exclusive Executive Briefing
   </div>
 
