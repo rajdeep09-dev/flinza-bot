@@ -1,170 +1,205 @@
 <!DOCTYPE html>
-<html lang="en" data-theme="light">
+<html lang="en">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Mail — Flinza Enterprise Outreach Suite</title>
+  <title>Flinza — Outreach Command Center</title>
+  <meta name="description" content="AI-powered cold email outreach studio for elite SMMA agencies. Multi-inbox routing, autonomous reply handling, and Mailflare webmail.">
+  <!-- Favicon -->
+  <link rel="icon" type="image/png" href="/static/img/flinza-logo.png">
+  <link rel="apple-touch-icon" href="/static/img/flinza-logo.png">
+  <!-- Fonts -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@500;600;700;800&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@500;600;700;800;900&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/static/css/studio.css" />
 </head>
 <body>
   <div class="app-container">
-    <!-- SIDEBAR -->
+
+    <!-- ════════════════════════════════════
+         SIDEBAR
+    ════════════════════════════════════ -->
     <aside class="sidebar">
+      <!-- Brand -->
       <div class="brand">
-        <div class="brand-icon">✉️</div>
+        <img src="/static/img/flinza-logo.png" alt="Flinza" class="brand-logo" />
         <div class="brand-text">
-          <h2>Mail</h2>
-          <span>Flinza Suite</span>
+          <h2>Flinza</h2>
+          <span>Outreach OS</span>
         </div>
       </div>
 
-      <!-- MAILFLARE PILL COMPOSE BUTTON -->
+      <!-- Compose Button -->
       <button class="btn-compose-pill" id="btn-open-compose">
-        <span class="icon">✉️</span>
-        <span>Compose</span>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+        Compose
       </button>
 
+      <!-- Nav -->
       <nav class="nav-menu">
-        <div class="nav-section-label">EMAIL WORKSPACE</div>
+        <div class="nav-section-label">Inbox</div>
         <button class="nav-item active" data-view="webmail-inbox">
-          <span class="icon">📥</span> Inbox
-          <span class="badge badge-primary" id="badge-webmail-inbox">0</span>
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
+          Inbox
+          <span class="nav-badge" id="badge-webmail-inbox">0</span>
         </button>
         <button class="nav-item" data-view="webmail-sent">
-          <span class="icon">📤</span> Sent
-          <span class="badge" id="badge-webmail-sent">0</span>
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+          Sent
+          <span class="nav-badge dim" id="badge-webmail-sent">0</span>
         </button>
         <button class="nav-item" data-view="webmail-drafts">
-          <span class="icon">📝</span> Drafts
-          <span class="badge badge-warning" id="badge-webmail-drafts">0</span>
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+          Drafts
+          <span class="nav-badge amber" id="badge-webmail-drafts">0</span>
         </button>
         <button class="nav-item" data-view="aliases-routing">
-          <span class="icon">⚡</span> Aliases & Routing
-          <span class="badge badge-accent" id="badge-routing-aliases">10</span>
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+          Routing
+          <span class="nav-badge cyan" id="badge-routing-aliases">0</span>
         </button>
         <button class="nav-item" data-view="webmail-spam">
-          <span class="icon">🛡️</span> Spam
-          <span class="badge" id="badge-webmail-spam">0</span>
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></svg>
+          Spam
+          <span class="nav-badge dim" id="badge-webmail-spam">0</span>
         </button>
 
-        <div class="nav-section-label">OUTREACH ENGINE</div>
+        <div class="nav-section-label" style="margin-top:12px;">Engine</div>
         <button class="nav-item" data-view="dashboard">
-          <span class="icon">📊</span> Overview
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+          Overview
         </button>
         <button class="nav-item" data-view="leads">
-          <span class="icon">👥</span> Leads CRM
-          <span class="badge" id="badge-leads">0</span>
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+          Leads CRM
+          <span class="nav-badge dim" id="badge-leads">0</span>
         </button>
         <button class="nav-item" data-view="mailboxes">
-          <span class="icon">📬</span> Mailbox Fleet
-          <span class="badge" id="badge-inboxes">0</span>
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 12 19.79 19.79 0 0 1 1.61 3.38 2 2 0 0 1 3.6 1h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L7.91 8.69a16 16 0 0 0 6 6l.91-.91a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 21.73 16a2 2 0 0 1 .27.92z"/></svg>
+          Mailboxes
+          <span class="nav-badge dim" id="badge-inboxes">0</span>
         </button>
         <button class="nav-item" data-view="cloudflare">
-          <span class="icon">☁️</span> Cloudflare Studio
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"/></svg>
+          Cloudflare
         </button>
         <button class="nav-item" data-view="sequences">
-          <span class="icon">🎯</span> Sequence Architect
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+          Sequences
         </button>
         <button class="nav-item" data-view="endpoints">
-          <span class="icon">⚡</span> Universal AI Hub
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 4.93a10 10 0 0 0 0 14.14"/></svg>
+          AI Models
         </button>
         <button class="nav-item" data-view="settings">
-          <span class="icon">⚙️</span> Settings
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+          Settings
         </button>
       </nav>
 
+      <!-- User Footer -->
       <div class="sidebar-footer">
         <div class="user-pill">
-          <div class="avatar">FW</div>
+          <div class="avatar-gradient">F</div>
           <div class="user-meta">
             <span class="user-title">Flinza Agency</span>
             <span class="user-role">SMMA Edition</span>
           </div>
+          <div class="online-dot"></div>
         </div>
       </div>
     </aside>
 
-    <!-- MAIN CONTENT -->
+    <!-- ════════════════════════════════════
+         MAIN CONTENT
+    ════════════════════════════════════ -->
     <main class="main-content">
       <!-- TOPBAR -->
       <header class="topbar">
-        <div class="topbar-left">
-          <div class="mailflare-search-bar">
-            <span class="search-icon">🔍</span>
-            <input type="text" id="global-mail-search" placeholder="Search mail..." />
-          </div>
+        <div class="topbar-search">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          <input type="text" id="global-mail-search" placeholder="Search prospects, emails, aliases…" autocomplete="off" />
+          <kbd>⌘K</kbd>
         </div>
         <div class="topbar-right">
-          <button class="btn btn-theme-toggle" id="btn-toggle-theme" title="Toggle Light/Dark Theme">
-            <span id="theme-toggle-icon">🌙</span> <span id="theme-toggle-text">Dark Mode</span>
-          </button>
-          <div class="status-pill" id="pill-queue">
-            <span class="pulse-dot"></span> <span id="queue-status-text">Queue: Idle</span>
+          <div class="status-chip" id="pill-queue">
+            <span class="status-dot" id="queue-dot"></span>
+            <span id="queue-status-text">Queue: Idle</span>
           </div>
-          <button class="btn btn-outline" id="btn-quick-test">⚡ Instant Test Send</button>
-          <button class="btn btn-primary" id="btn-launch-outreach">▶️ Launch Outreach</button>
+          <button class="btn-icon-pill" id="btn-quick-test" title="Instant Test Send">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+            Test Send
+          </button>
+          <button class="btn-launch" id="btn-launch-outreach">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+            Launch Campaign
+          </button>
         </div>
       </header>
 
-      <!-- BODY SECTIONS -->
+      <!-- VIEWS CONTAINER -->
       <div class="content-body">
-        
-        <!-- 1. MAILFLARE WEBMAIL CLIENT (PRIORITY INBOX / SENT / DRAFTS / SPAM) -->
+
+        <!-- ══ WEBMAIL VIEW ══ -->
         <section class="view-section active" id="view-webmail">
-          <div class="webmail-wrapper">
-            <div class="webmail-main-card">
-              <div class="priority-inbox-header">
-                <div class="inbox-title-wrap">
-                  <h2 id="webmail-folder-title">Priority inbox</h2>
-                  <span class="count-pill" id="webmail-thread-counter">0</span>
+          <div class="webmail-layout">
+            <!-- Thread List -->
+            <div class="thread-list-panel">
+              <div class="thread-list-header">
+                <div class="thread-list-title">
+                  <h2 id="webmail-folder-title">Inbox</h2>
+                  <span class="thread-count-badge" id="webmail-thread-counter">0</span>
                 </div>
-                <div class="inbox-meta-wrap">
-                  <span class="updated-time" id="webmail-updated-time">Updated just now</span>
-                  <button class="btn-icon-refresh" id="btn-refresh-webmail" title="Refresh Inboxes">🔄</button>
-                </div>
+                <button class="icon-btn" id="btn-refresh-webmail" title="Sync inboxes">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+                </button>
               </div>
-
-              <!-- Mail rows list -->
-              <div class="mail-rows-container" id="mail-rows-list">
-                <!-- Rows injected dynamically via JS matching screenshot -->
+              <div class="thread-rows" id="mail-rows-list">
+                <div class="inbox-empty-state">
+                  <div class="empty-icon">
+                    <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2" opacity="0.3"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
+                  </div>
+                  <p>Loading messages…</p>
+                </div>
               </div>
             </div>
 
-            <!-- Reading Drawer / Detail Pane -->
-            <div class="webmail-reading-pane" id="webmail-reading-pane" style="display: none;">
-              <div class="reading-header">
-                <div class="reading-header-meta">
-                  <div class="reading-subject-line">
-                    <h3 id="read-subject">(No Subject)</h3>
-                    <span class="mail-tag" id="read-tag">Inbound</span>
+            <!-- Reading Pane -->
+            <div class="reading-pane" id="webmail-reading-pane" style="display:none;">
+              <div class="reading-pane-header">
+                <div class="reading-meta">
+                  <div class="reading-subject-row">
+                    <h3 id="read-subject">Subject</h3>
+                    <span class="intent-chip" id="read-tag">Inbound</span>
                   </div>
-                  <div class="reading-participants">
-                    <span class="read-from" id="read-sender">sender@example.com</span>
-                    <span class="read-sep">→</span>
-                    <span class="read-to" id="read-recipient">you</span>
-                    <span class="read-time" id="read-time">Just now</span>
+                  <div class="reading-participants-row">
+                    <span class="rp-from" id="read-sender">sender@example.com</span>
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" opacity="0.4"><polyline points="9 18 15 12 9 6"/></svg>
+                    <span class="rp-to" id="read-recipient">you</span>
+                    <span class="rp-time" id="read-time">Just now</span>
                   </div>
                 </div>
-                <button class="btn-close-reading" id="btn-close-reading" title="Close">✕</button>
+                <button class="icon-btn close-btn" id="btn-close-reading">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                </button>
               </div>
-
-              <div class="reading-body-scroll">
-                <div class="reading-body-content" id="read-body">
-                  <!-- Email message text -->
-                </div>
-
-                <div class="reading-ai-composer" id="read-ai-composer">
-                  <div class="ai-composer-header">
-                    <span>🤖 <strong>AI Negotiation Reply Draft</strong></span>
-                    <span class="ai-status-pill">1-Click Dispatch Ready</span>
+              <div class="reading-body-area">
+                <div class="email-body-card" id="read-body"></div>
+                <!-- AI Reply Composer -->
+                <div class="ai-reply-composer" id="read-ai-composer">
+                  <div class="ai-composer-label">
+                    <span class="ai-badge">✦ AI</span>
+                    <strong>Negotiation Draft Ready</strong>
+                    <span class="dispatch-ready-chip">1-Click Dispatch</span>
                   </div>
-                  <textarea id="read-ai-draft-text" rows="5" placeholder="AI reply content..."></textarea>
-                  <div class="ai-composer-actions">
-                    <button class="btn btn-primary" id="btn-send-read-draft">🚀 Send This Reply</button>
-                    <button class="btn btn-outline" id="btn-discard-draft">Dismiss</button>
+                  <textarea id="read-ai-draft-text" rows="6" placeholder="AI-crafted reply will appear here…"></textarea>
+                  <div class="ai-actions-row">
+                    <button class="btn-send-reply" id="btn-send-read-draft">
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+                      Send Reply
+                    </button>
+                    <button class="btn-ghost" id="btn-discard-draft">Discard</button>
                   </div>
                 </div>
               </div>
@@ -172,585 +207,359 @@
           </div>
         </section>
 
-        <!-- 2. CUSTOM ALIASES & ROUTING ARCHITECTURE VIEW -->
+        <!-- ══ ALIASES & ROUTING VIEW ══ -->
         <section class="view-section" id="view-aliases-routing">
-          <div class="section-toolbar">
+          <div class="view-header-bar">
             <div>
-              <h2>Custom Domain Aliases & Dispatch Routing</h2>
-              <p>Configure how each alias sends emails: <b>Gmail Send-As Relay</b>, native <b>Cloudflare REST API ($5/mo)</b>, or high-volume <b>Amazon SES / SMTP</b>.</p>
+              <h2 class="view-title">Dispatch Routing</h2>
+              <p class="view-subtitle">Configure how each alias routes outbound emails — Gmail Relay, Cloudflare API, or Amazon SES</p>
             </div>
-            <div class="toolbar-actions">
-              <button class="btn btn-outline btn-sm" id="btn-cf-gen5-routing">⚡ Auto-Generate 5 CF Aliases</button>
-              <button class="btn btn-primary btn-sm" id="btn-open-create-alias">➕ Add Domain Alias & Route</button>
-            </div>
-          </div>
-
-          <div class="routing-architecture-banner">
-            <div class="arch-card">
-              <div class="arch-icon">✉️</div>
-              <div class="arch-title">Gmail Send-As Relay</div>
-              <div class="arch-desc">Routes via connected Gmail account using <code>Sender</code> headers. Free & simple.</div>
-            </div>
-            <div class="arch-card">
-              <div class="arch-icon">⚡</div>
-              <div class="arch-title">Cloudflare Native API ($5/mo)</div>
-              <div class="arch-desc">Sends directly via Cloudflare's edge REST API. Zero SMTP credentials needed.</div>
-            </div>
-            <div class="arch-card">
-              <div class="arch-icon">🚀</div>
-              <div class="arch-title">Amazon SES / Dedicated SMTP</div>
-              <div class="arch-desc">Domain-level DKIM verification. Any alias sends instantly at $0.10 / 1,000 emails.</div>
+            <div class="view-header-actions">
+              <button class="btn-ghost-sm" id="btn-cf-gen5-routing">⚡ Generate 5 CF Aliases</button>
+              <button class="btn-primary-sm" id="btn-open-create-alias">+ Add Alias</button>
             </div>
           </div>
-
-          <div class="aliases-routing-grid" id="aliases-routing-grid">
-            <!-- Injected dynamically via JS -->
+          <!-- Route Mode Architecture -->
+          <div class="arch-grid">
+            <div class="arch-tile arch-gmail">
+              <div class="arch-tile-icon">✉️</div>
+              <strong>Gmail Send-As Relay</strong>
+              <p>Routes via master Gmail using verified <code>Sender:</code> headers. Zero extra cost.</p>
+            </div>
+            <div class="arch-tile arch-cf">
+              <div class="arch-tile-icon">⚡</div>
+              <strong>Cloudflare Workers API</strong>
+              <p>Direct edge REST dispatch, no SMTP credentials. Just $5/mo flat.</p>
+            </div>
+            <div class="arch-tile arch-ses">
+              <div class="arch-tile-icon">🚀</div>
+              <strong>Amazon SES / SMTP</strong>
+              <p>Domain-level DKIM verification. $0.10 / 1,000 emails at agency scale.</p>
+            </div>
+          </div>
+          <!-- Alias Cards Grid -->
+          <div class="alias-cards-grid" id="aliases-routing-grid">
+            <div class="skeleton-card"></div>
+            <div class="skeleton-card"></div>
+            <div class="skeleton-card"></div>
           </div>
         </section>
 
-        <!-- 3. OVERVIEW DASHBOARD VIEW -->
+        <!-- ══ DASHBOARD VIEW ══ -->
         <section class="view-section" id="view-dashboard">
-          <div class="metrics-grid">
-            <div class="metric-card">
-              <div class="metric-header">
-                <span class="metric-title">Sent Today / Cap</span>
-                <span class="metric-icon">🚀</span>
-              </div>
-              <div class="metric-value"><span id="stat-sent-today">0</span> <small>/ <span id="stat-cap">0</span></small></div>
-              <div class="metric-footer text-success">🟢 Inboxes Ready</div>
-            </div>
-
-            <div class="metric-card">
-              <div class="metric-header">
-                <span class="metric-title">Open Rate</span>
-                <span class="metric-icon">👁️</span>
-              </div>
-              <div class="metric-value"><span id="stat-open-rate">0.0%</span></div>
-              <div class="metric-footer"><span id="stat-opened-count">0</span> tracked opens</div>
-            </div>
-
-            <div class="metric-card">
-              <div class="metric-header">
-                <span class="metric-title">Click Rate</span>
-                <span class="metric-icon">🔗</span>
-              </div>
-              <div class="metric-value"><span id="stat-click-rate">0.0%</span></div>
-              <div class="metric-footer"><span id="stat-clicked-count">0</span> tracked clicks</div>
-            </div>
-
-            <div class="metric-card">
-              <div class="metric-header">
-                <span class="metric-title">Total Replies</span>
-                <span class="metric-icon">💬</span>
-              </div>
-              <div class="metric-value"><span id="stat-replies">0</span></div>
-              <div class="metric-footer text-warning"><span id="stat-unhandled">0</span> unhandled</div>
+          <div class="view-header-bar">
+            <div>
+              <h2 class="view-title">Overview</h2>
+              <p class="view-subtitle">Real-time outreach metrics and campaign health</p>
             </div>
           </div>
-
-          <div class="dashboard-grid">
-            <div class="panel">
-              <div class="panel-header">
-                <h3>Lead Pipeline Breakdown</h3>
+          <!-- Metrics Row -->
+          <div class="metrics-row">
+            <div class="metric-card">
+              <div class="metric-top">
+                <span class="metric-label">Sent Today</span>
+                <div class="metric-icon-box cyan"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg></div>
               </div>
-              <div class="pipeline-list" id="pipeline-breakdown">
-                <!-- Pipeline items injected via JS -->
-              </div>
+              <div class="metric-value" id="stat-sent-today">—</div>
+              <div class="metric-sub">of <span id="stat-cap">—</span> daily cap</div>
             </div>
-
-            <div class="panel">
-              <div class="panel-header">
-                <h3>Quick Outreach Controls</h3>
+            <div class="metric-card">
+              <div class="metric-top">
+                <span class="metric-label">Open Rate</span>
+                <div class="metric-icon-box emerald"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></div>
               </div>
-              <div class="quick-controls">
-                <div class="control-item">
+              <div class="metric-value" id="stat-open-rate">—</div>
+              <div class="metric-sub"><span id="stat-opened-count">0</span> unique opens</div>
+            </div>
+            <div class="metric-card">
+              <div class="metric-top">
+                <span class="metric-label">Click Rate</span>
+                <div class="metric-icon-box violet"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg></div>
+              </div>
+              <div class="metric-value" id="stat-click-rate">—</div>
+              <div class="metric-sub"><span id="stat-clicked-count">0</span> link clicks</div>
+            </div>
+            <div class="metric-card">
+              <div class="metric-top">
+                <span class="metric-label">Replies</span>
+                <div class="metric-icon-box amber"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></div>
+              </div>
+              <div class="metric-value" id="stat-replies">—</div>
+              <div class="metric-sub"><span id="stat-unhandled">0</span> need action</div>
+            </div>
+          </div>
+          <!-- Dashboard Panels -->
+          <div class="dashboard-panels">
+            <div class="panel-card">
+              <div class="panel-title">Campaign Pipeline</div>
+              <div class="pipeline-funnel" id="pipeline-breakdown"></div>
+            </div>
+            <div class="panel-card">
+              <div class="panel-title">Quick Controls</div>
+              <div class="quick-controls-list">
+                <div class="qc-row">
                   <div>
-                    <strong>Sending Queue</strong>
-                    <p>Process queued emails with smart intervals and human jitter.</p>
+                    <div class="qc-name">Sending Queue</div>
+                    <div class="qc-desc">Start or pause automated outreach</div>
                   </div>
-                  <div class="btn-group">
-                    <button class="btn btn-sm btn-primary" id="btn-start-queue">Start</button>
-                    <button class="btn btn-sm btn-outline" id="btn-pause-queue">Pause</button>
-                    <button class="btn btn-sm btn-danger" id="btn-stop-queue">Stop</button>
+                  <div class="qc-actions">
+                    <button class="btn-primary-sm" id="btn-launch-outreach2">▶ Launch</button>
                   </div>
                 </div>
-
-                <div class="control-item">
+                <div class="qc-row">
                   <div>
-                    <strong>Google Workspace / Gmail OAuth</strong>
-                    <p>Connect your master Gmail account directly without manual App Passwords.</p>
+                    <div class="qc-name">Test Delivery</div>
+                    <div class="qc-desc">Verify all routes end-to-end</div>
                   </div>
-                  <a href="/auth/google/login" class="btn btn-sm btn-google">
-                    <span class="g-icon">G</span> Sign in with Google
-                  </a>
+                  <div class="qc-actions">
+                    <button class="btn-ghost-sm" id="btn-quick-test2">⚡ Test</button>
+                  </div>
                 </div>
-
-                <div class="control-item">
+                <div class="qc-row">
                   <div>
-                    <strong>Mailbox Warmup Cycle</strong>
-                    <p>Ramp up sending volume progressively to protect domain reputation.</p>
+                    <div class="qc-name">Sync Replies</div>
+                    <div class="qc-desc">Poll all inboxes for new responses</div>
                   </div>
-                  <button class="btn btn-sm btn-outline" id="btn-warmup-status">Warmup Status</button>
+                  <div class="qc-actions">
+                    <button class="btn-ghost-sm" id="btn-sync-replies">↻ Sync</button>
+                  </div>
                 </div>
               </div>
             </div>
           </div>
         </section>
 
-        <!-- 4. LEADS CRM VIEW -->
+        <!-- ══ LEADS CRM VIEW ══ -->
         <section class="view-section" id="view-leads">
-          <div class="section-toolbar">
-            <div class="search-box">
-              <input type="text" id="leads-search-input" placeholder="Search by name, company, email, or niche..." />
+          <div class="view-header-bar">
+            <div>
+              <h2 class="view-title">Leads CRM</h2>
+              <p class="view-subtitle">Your cold outreach prospect pipeline</p>
             </div>
-            <div class="toolbar-actions">
-              <div class="stage-tabs" id="lead-stage-tabs">
-                <button class="tab-btn active" data-stage="all">All</button>
-                <button class="tab-btn" data-stage="new">New</button>
-                <button class="tab-btn" data-stage="contacted">Contacted</button>
-                <button class="tab-btn" data-stage="opened">Opened</button>
-                <button class="tab-btn" data-stage="replied">Replied</button>
+            <div class="view-header-actions">
+              <div class="search-inline">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                <input type="text" id="leads-search-input" placeholder="Search leads…" />
               </div>
-              <button class="btn btn-outline btn-sm" id="btn-export-leads">📤 Export CSV</button>
-              <label class="btn btn-outline btn-sm" for="csv-upload-input" style="cursor: pointer;">📥 Import CSV</label>
-              <input type="file" id="csv-upload-input" accept=".csv" style="display: none;" />
-              <button class="btn btn-primary btn-sm" id="btn-add-lead-modal">➕ Add Lead</button>
+              <button class="btn-primary-sm" id="btn-open-add-lead">+ Add Lead</button>
             </div>
           </div>
-
-          <div class="table-container">
-            <table class="data-table" id="leads-table">
+          <!-- Stage Filter Tabs -->
+          <div class="stage-tabs-row" id="lead-stage-tabs">
+            <button class="stage-tab active" data-stage="all">All</button>
+            <button class="stage-tab" data-stage="new">New</button>
+            <button class="stage-tab" data-stage="contacted">Contacted</button>
+            <button class="stage-tab" data-stage="opened">Opened</button>
+            <button class="stage-tab" data-stage="replied">Replied</button>
+          </div>
+          <!-- Table -->
+          <div class="data-table-wrap">
+            <table class="data-table">
               <thead>
                 <tr>
-                  <th>Contact Name</th>
+                  <th>Name</th>
                   <th>Email</th>
                   <th>Company</th>
-                  <th>Industry / Niche</th>
+                  <th>Niche</th>
                   <th>Stage</th>
-                  <th>Actions</th>
+                  <th></th>
                 </tr>
               </thead>
               <tbody id="leads-tbody">
-                <!-- Injected via JS -->
+                <tr><td colspan="6" class="table-empty">Loading leads…</td></tr>
               </tbody>
             </table>
           </div>
         </section>
 
-        <!-- 5. MAILBOX FLEET VIEW -->
+        <!-- ══ MAILBOXES VIEW ══ -->
         <section class="view-section" id="view-mailboxes">
-          <div class="section-toolbar">
+          <div class="view-header-bar">
             <div>
-              <h2>Active Mailboxes & Outbound Providers</h2>
-              <p>Manage Gmail master inboxes, Cloudflare Native Sending API ($5/mo), Amazon SES SMTP, and warmup curves.</p>
+              <h2 class="view-title">Mailbox Fleet</h2>
+              <p class="view-subtitle">Connected Gmail accounts and SMTP outbound relays</p>
             </div>
-            <div class="toolbar-actions">
-              <button class="btn btn-outline btn-sm" id="btn-open-worker-modal">⚡ Free Inbound Routing Worker</button>
-              <button class="btn btn-outline btn-sm" id="btn-test-inboxes">🧪 Test Inboxes</button>
-              <button class="btn btn-primary btn-sm" id="btn-add-account-modal">➕ Add Mailbox / Provider</button>
+            <div class="view-header-actions">
+              <a href="/auth/google" class="btn-google-connect" id="btn-connect-google">
+                <span class="g-icon">G</span> Connect Gmail
+              </a>
             </div>
           </div>
-
-          <h3 class="subsection-title">Master Outbound Inboxes (SMTP, Cloudflare API, Amazon SES, OAuth2)</h3>
           <div class="mailboxes-grid" id="accounts-grid">
-            <!-- Injected via JS -->
+            <div class="skeleton-card"></div>
           </div>
         </section>
 
-        <!-- 6. CLOUDFLARE STUDIO VIEW -->
+        <!-- ══ CLOUDFLARE VIEW ══ -->
         <section class="view-section" id="view-cloudflare">
-          <div class="section-toolbar">
+          <div class="view-header-bar">
             <div>
-              <h2>Cloudflare Domain Studio & Deliverability</h2>
-              <p>Verify SPF, DKIM, DMARC, and MX records, and manage Email Routing rules.</p>
+              <h2 class="view-title">Cloudflare Studio</h2>
+              <p class="view-subtitle">DNS deliverability, SPF/DKIM/DMARC health, and alias generation</p>
             </div>
-            <div class="toolbar-actions">
-              <button class="btn btn-primary btn-sm" id="btn-cf-audit-dns">🔍 Deep DNS Audit</button>
-              <button class="btn btn-outline btn-sm" id="btn-cf-gen5">⚡ Generate 5 Agency Aliases</button>
-            </div>
+            <button class="btn-primary-sm" id="btn-cf-audit">Run DNS Audit</button>
           </div>
-
-          <div class="panel">
-            <div class="panel-header">
-              <h3>Active Cloudflare Zones</h3>
-            </div>
-            <div class="cf-zones-list" id="cf-zones-container">
-              <p class="text-dim">Discovering zones on your Cloudflare account...</p>
-            </div>
-          </div>
-
-          <div class="panel" id="dns-audit-panel" style="display: none; margin-top: 20px;">
-            <h3>DNS Health Audit Report</h3>
-            <div class="audit-grid">
-              <div class="audit-card" id="audit-spf">
-                <span class="audit-title">SPF Record</span>
-                <span class="audit-status" id="spf-val">-</span>
-              </div>
-              <div class="audit-card" id="audit-dmarc">
-                <span class="audit-title">DMARC Policy</span>
-                <span class="audit-status" id="dmarc-val">-</span>
-              </div>
-              <div class="audit-card" id="audit-dkim">
-                <span class="audit-title">DKIM Alignment</span>
-                <span class="audit-status" id="dkim-val">-</span>
-              </div>
-              <div class="audit-card" id="audit-mx">
-                <span class="audit-title">MX Records</span>
-                <span class="audit-status" id="mx-val">-</span>
-              </div>
-            </div>
+          <div class="audit-results" id="cf-zones-container">
+            <p class="info-text">Click "Run DNS Audit" to inspect your Cloudflare zones.</p>
           </div>
         </section>
 
-        <!-- 7. SEQUENCE ARCHITECT VIEW -->
+        <!-- ══ SEQUENCES VIEW ══ -->
         <section class="view-section" id="view-sequences">
-          <div class="section-toolbar">
+          <div class="view-header-bar">
             <div>
-              <h2>Multi-Touch Sequence Architect</h2>
-              <p>Design branching cold outreach sequences with A/B split-testing and Spintax personalization.</p>
+              <h2 class="view-title">Sequence Architect</h2>
+              <p class="view-subtitle">Automated multi-step drip sequences with AI personalization</p>
             </div>
-            <button class="btn btn-primary btn-sm" id="btn-add-sequence-step">➕ Add Sequence Step</button>
           </div>
-
-          <div class="sequence-timeline" id="sequence-steps-container">
-            <!-- Steps injected via JS -->
+          <div id="sequence-steps-container">
+            <p class="info-text">Loading sequences…</p>
           </div>
         </section>
 
-        <!-- 8. UNIVERSAL AI HUB VIEW -->
+        <!-- ══ AI MODELS VIEW ══ -->
         <section class="view-section" id="view-endpoints">
-          <div class="section-toolbar">
+          <div class="view-header-bar">
             <div>
-              <h2>Universal AI & Custom Endpoints Hub</h2>
-              <p>Connect any OpenAI-compatible API (Ollama, vLLM, DeepSeek, LocalAI, or private reverse proxies) with custom model names and parameters.</p>
+              <h2 class="view-title">Universal AI Hub</h2>
+              <p class="view-subtitle">Custom OpenAI-compatible endpoints — Gemini, Groq, Mistral, Ollama, DeepSeek</p>
             </div>
-            <button class="btn btn-primary btn-sm" id="btn-add-endpoint-modal">➕ Add Custom Endpoint</button>
+            <button class="btn-primary-sm" id="btn-add-endpoint">+ Add Endpoint</button>
           </div>
-
-          <div class="endpoints-grid" id="endpoints-grid">
-            <!-- Injected via JS -->
+          <div class="mailboxes-grid" id="endpoints-grid">
+            <p class="info-text">No AI endpoints configured yet.</p>
           </div>
         </section>
 
-        <!-- 9. SETTINGS VIEW -->
+        <!-- ══ SETTINGS VIEW ══ -->
         <section class="view-section" id="view-settings">
-          <div class="panel max-w-700">
-            <div class="panel-header">
-              <h3>Outreach & Agency Configuration</h3>
+          <div class="view-header-bar">
+            <div>
+              <h2 class="view-title">Settings</h2>
+              <p class="view-subtitle">Agency profile, sending limits, and humanized delay configuration</p>
             </div>
-            <form id="settings-form" class="settings-form">
-              <div class="form-group">
-                <label>Agency Sender Name</label>
-                <input type="text" id="set-sender-name" placeholder="e.g. Flinza Partnerships" />
-                <small>The human sign-off name used in email signatures.</small>
+          </div>
+          <div class="settings-grid">
+            <div class="settings-card">
+              <div class="settings-card-title">Sender Identity</div>
+              <div class="form-field">
+                <label>Sender Display Name</label>
+                <input type="text" id="set-sender-name" placeholder="e.g. Alex from Flinza" />
               </div>
-
-              <div class="form-row">
-                <div class="form-group">
-                  <label>Min Interval (seconds)</label>
-                  <input type="number" id="set-min-interval" min="30" max="600" />
+              <div class="form-field">
+                <label>Tracking Base URL (for open/click tracking)</label>
+                <input type="text" id="set-tracking-url" placeholder="https://studio.yourdomain.com" />
+              </div>
+              <button class="btn-primary-sm" id="btn-save-settings">Save Changes</button>
+            </div>
+            <div class="settings-card">
+              <div class="settings-card-title">Sending Delays (Human Jitter)</div>
+              <div class="form-row-2">
+                <div class="form-field">
+                  <label>Min Delay (seconds)</label>
+                  <input type="number" id="set-min-interval" value="120" />
                 </div>
-                <div class="form-group">
-                  <label>Max Interval (seconds)</label>
-                  <input type="number" id="set-max-interval" min="60" max="1200" />
+                <div class="form-field">
+                  <label>Max Delay (seconds)</label>
+                  <input type="number" id="set-max-interval" value="420" />
                 </div>
               </div>
-
-              <div class="form-group">
-                <label>Tracking Base URL</label>
-                <input type="text" id="set-tracking-url" placeholder="http://localhost:8000" />
-                <small>Public URL or Cloudflare Tunnel address used for open tracking pixels and click redirects.</small>
+              <p class="settings-note">⚡ Randomized delay between each send to perfectly mimic human behavior and avoid spam detection.</p>
+            </div>
+            <div class="settings-card" style="grid-column:1/-1;">
+              <div class="settings-card-title">AI Personalization Prompt</div>
+              <div class="form-field">
+                <textarea id="set-system-prompt" rows="5" placeholder="You are an expert cold email copywriter for an SMMA agency…"></textarea>
               </div>
-
-              <div class="form-group">
-                <label>System Persona & Outbound Instructions</label>
-                <textarea id="set-system-prompt" rows="5"></textarea>
-                <small>Governs how AI crafts personalization hooks for leads.</small>
-              </div>
-
-              <button type="submit" class="btn btn-primary">Save Settings</button>
-            </form>
+            </div>
           </div>
         </section>
 
-      </div>
-    </main>
-  </div>
+      </div><!-- /content-body -->
+    </main><!-- /main-content -->
+  </div><!-- /app-container -->
 
-  <!-- ═══════════════════════════════════════════════════════════════ -->
-  <!--                           MODALS                                -->
-  <!-- ═══════════════════════════════════════════════════════════════ -->
+  <!-- ════════════════════════════════════
+       MODALS
+  ════════════════════════════════════ -->
 
-  <!-- Compose Email Modal (Mailflare Style) -->
-  <div class="modal-backdrop" id="backdrop-compose">
-    <div class="modal" id="modal-compose" style="max-width: 620px;">
+  <!-- COMPOSE MODAL -->
+  <div class="modal-overlay" id="backdrop-compose">
+    <div class="modal-box">
       <div class="modal-header">
-        <h3>✉️ New Message</h3>
-        <button class="modal-close" id="btn-close-compose">&times;</button>
+        <h3>New Message</h3>
+        <button class="icon-btn" id="btn-close-compose">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
       </div>
-      <div class="modal-body">
-        <form id="form-compose-email">
-          <div class="form-group">
-            <label>From Mailbox / Verified Alias *</label>
-            <select id="compose-from-select" class="form-select" required></select>
-          </div>
-          <div class="form-group">
-            <label>To Recipient Email *</label>
-            <input type="email" id="compose-to" placeholder="founder@targetbrand.com" required />
-          </div>
-          <div class="form-group">
-            <label>Subject *</label>
-            <input type="text" id="compose-subject" placeholder="Quick question regarding your growth" required />
-          </div>
-          <div class="form-group">
-            <label>Email Body</label>
-            <textarea id="compose-body" rows="7" placeholder="Hi {{name}}, saw your brand on..." required></textarea>
-          </div>
-          <div class="modal-actions-bar">
-            <button type="button" class="btn btn-outline" id="btn-cancel-compose">Discard</button>
-            <button type="submit" class="btn btn-primary" id="btn-send-compose">🚀 Send Message</button>
-          </div>
-        </form>
-      </div>
+      <form id="form-compose-email">
+        <div class="form-field">
+          <label>From</label>
+          <select class="form-select" id="compose-from-select"></select>
+        </div>
+        <div class="form-field">
+          <label>To</label>
+          <input type="email" id="compose-to" placeholder="recipient@example.com" required />
+        </div>
+        <div class="form-field">
+          <label>Subject</label>
+          <input type="text" id="compose-subject" placeholder="Subject line…" required />
+        </div>
+        <div class="form-field">
+          <label>Message</label>
+          <textarea id="compose-body" rows="6" placeholder="Write your email…" required></textarea>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn-ghost" id="btn-cancel-compose">Cancel</button>
+          <button type="submit" class="btn-send-reply" id="btn-send-compose">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+            Send
+          </button>
+        </div>
+      </form>
     </div>
   </div>
 
-  <!-- Create Domain Alias & Route Modal -->
-  <div class="modal-backdrop" id="backdrop-create-alias">
-    <div class="modal" id="modal-create-alias" style="max-width: 540px;">
+  <!-- CREATE ALIAS MODAL -->
+  <div class="modal-overlay" id="backdrop-create-alias">
+    <div class="modal-box">
       <div class="modal-header">
-        <h3>➕ Add Custom Domain Alias & Route</h3>
-        <button class="modal-close" id="btn-close-create-alias">&times;</button>
+        <h3>Add Domain Alias & Route</h3>
+        <button class="icon-btn" id="btn-close-create-alias">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
       </div>
-      <div class="modal-body">
-        <form id="form-create-alias">
-          <div class="form-group">
-            <label>Alias Address *</label>
-            <input type="email" id="alias-in-address" placeholder="alex@yourdomain.com" required />
-          </div>
-          <div class="form-group">
-            <label>Display Name</label>
-            <input type="text" id="alias-in-display" placeholder="Alex (Flinza Works)" />
-          </div>
-          <div class="form-group">
-            <label>Dispatch Routing Mode *</label>
-            <select id="alias-in-mode" class="form-select" required>
-              <option value="gmail_send_as">✉️ Gmail Send-As Relay (Route via Google)</option>
-              <option value="cloudflare_api">⚡ Cloudflare Native API ($5/mo Workers Paid)</option>
-              <option value="external_smtp">🚀 Amazon SES / Custom Dedicated SMTP</option>
+      <form id="form-create-alias">
+        <div class="form-field">
+          <label>Alias Email Address</label>
+          <input type="email" id="alias-in-address" placeholder="alex@yourdomain.com" required />
+        </div>
+        <div class="form-field">
+          <label>Display Name</label>
+          <input type="text" id="alias-in-display" placeholder="Alex from Flinza" />
+        </div>
+        <div class="form-row-2">
+          <div class="form-field">
+            <label>Dispatch Route</label>
+            <select class="form-select" id="alias-in-mode">
+              <option value="gmail_send_as">✉️ Gmail Send-As (Free)</option>
+              <option value="cloudflare_api">⚡ Cloudflare API ($5/mo)</option>
+              <option value="external_smtp">🚀 Amazon SES / SMTP</option>
             </select>
           </div>
-          <div class="form-group" id="alias-group-master">
-            <label>Master Outbound Account</label>
-            <select id="alias-in-master" class="form-select"></select>
+          <div class="form-field">
+            <label>Master Gmail Account</label>
+            <select class="form-select" id="alias-in-master"></select>
           </div>
-          <div class="form-group">
-            <label>Forward Replies To</label>
-            <input type="email" id="alias-in-forward" placeholder="rajdep.f12x@gmail.com" />
-          </div>
-          <button type="submit" class="btn btn-primary w-100">Create & Bind Alias</button>
-        </form>
-      </div>
-    </div>
-  </div>
-
-  <!-- Add Business Lead Modal -->
-  <div class="modal-backdrop" id="backdrop-add-lead">
-    <div class="modal" id="modal-add-lead">
-      <div class="modal-header">
-        <h3>Add Business Lead</h3>
-        <button class="modal-close">&times;</button>
-      </div>
-      <div class="modal-body">
-        <form id="form-add-lead">
-          <div class="form-group">
-            <label>Work Email *</label>
-            <input type="email" id="lead-in-email" required />
-          </div>
-          <div class="form-group">
-            <label>Contact Name</label>
-            <input type="text" id="lead-in-name" placeholder="e.g. Sarah Jenkins" />
-          </div>
-          <div class="form-group">
-            <label>Company / Brand</label>
-            <input type="text" id="lead-in-company" placeholder="e.g. Apex Health Co" />
-          </div>
-          <div class="form-group">
-            <label>Niche / Industry</label>
-            <input type="text" id="lead-in-niche" placeholder="e.g. E-Commerce, Dental, Fitness" />
-          </div>
-          <button type="submit" class="btn btn-primary w-100">Save Lead</button>
-        </form>
-      </div>
-    </div>
-  </div>
-
-  <!-- Add Account / Outbound Provider Modal -->
-  <div class="modal-backdrop" id="backdrop-add-account">
-    <div class="modal" id="modal-add-account" style="max-width: 540px;">
-      <div class="modal-header">
-        <h3>Add Outbound Mailbox / Provider</h3>
-        <button class="modal-close">&times;</button>
-      </div>
-      <div class="modal-body">
-        <div class="stage-tabs" style="margin-bottom: 18px;">
-          <button class="tab-btn active" id="tab-btn-gmail" type="button">Gmail / Google</button>
-          <button class="tab-btn" id="tab-btn-cf-sending" type="button">Cloudflare API ($5/mo)</button>
-          <button class="tab-btn" id="tab-btn-amazon-ses" type="button">Amazon SES / SMTP</button>
         </div>
-
-        <!-- Tab 1: Gmail -->
-        <div id="tab-content-gmail">
-          <div class="oauth-quick-connect">
-            <p>Google OAuth 2.0 Direct API (Recommended):</p>
-            <a href="/auth/google/login" class="btn btn-google w-100">
-              <span class="g-icon">G</span> Connect with Google OAuth
-            </a>
-          </div>
-          <div class="divider"><span>OR ADD VIA APP PASSWORD</span></div>
-          <form id="form-add-account">
-            <div class="form-group">
-              <label>Gmail Address</label>
-              <input type="email" id="acct-in-email" placeholder="you@gmail.com" required />
-            </div>
-            <div class="form-group">
-              <label>16-Char Google App Password</label>
-              <input type="password" id="acct-in-pass" placeholder="xxxx xxxx xxxx xxxx" required />
-            </div>
-            <div class="form-group">
-              <label>Daily Limit</label>
-              <input type="number" id="acct-in-limit" value="50" />
-            </div>
-            <button type="submit" class="btn btn-primary w-100">Add Gmail Mailbox</button>
-          </form>
+        <div class="form-field">
+          <label>Forward Replies To (optional)</label>
+          <input type="email" id="alias-in-forward" placeholder="your.email@gmail.com" />
         </div>
-
-        <!-- Tab 2: Cloudflare Native Email Sending -->
-        <div id="tab-content-cf-sending" style="display: none;">
-          <div style="background: rgba(99, 102, 241, 0.1); border: 1px solid rgba(99, 102, 241, 0.25); border-radius: 8px; padding: 12px; margin-bottom: 16px; font-size: 12.5px;">
-            ⚡ <strong>Cloudflare Native Email Sending</strong> (Workers Paid $5/mo)<br />
-            Sends directly from your custom domain without any third-party SMTP server or Gmail credentials.
-          </div>
-          <form id="form-add-cf-sending">
-            <div class="form-group">
-              <label>From Custom Domain Address *</label>
-              <input type="email" id="cf-send-email" placeholder="alex@yourdomain.com" required />
-            </div>
-            <div class="form-group">
-              <label>Display Label</label>
-              <input type="text" id="cf-send-label" placeholder="Cloudflare Native Outreach" value="Cloudflare Native API" />
-            </div>
-            <div class="form-group">
-              <label>Daily Sending Limit</label>
-              <input type="number" id="cf-send-limit" value="100" />
-            </div>
-            <button type="submit" class="btn btn-primary w-100">Add Cloudflare Sender</button>
-          </form>
+        <div class="modal-footer">
+          <button type="submit" class="btn-send-reply" id="btn-submit-create-alias">Create Alias</button>
         </div>
-
-        <!-- Tab 3: Amazon SES -->
-        <div id="tab-content-amazon-ses" style="display: none;">
-          <div style="background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.25); border-radius: 8px; padding: 12px; margin-bottom: 16px; font-size: 12.5px;">
-            🚀 <strong>Amazon SES / Custom High-Volume SMTP</strong><br />
-            Ultra-low cost ($0.10 per 1,000 emails) or 62,000 free emails/month on AWS EC2.
-          </div>
-          <form id="form-add-ses">
-            <div class="form-group">
-              <label>From Verified Sender Email *</label>
-              <input type="email" id="ses-in-email" placeholder="outreach@yourdomain.com" required />
-            </div>
-            <div class="form-row">
-              <div class="form-group">
-                <label>SES SMTP Username *</label>
-                <input type="text" id="ses-in-user" placeholder="AKIA..." required />
-              </div>
-              <div class="form-group">
-                <label>SES SMTP Password *</label>
-                <input type="password" id="ses-in-pass" placeholder="Password from AWS IAM" required />
-              </div>
-            </div>
-            <div class="form-row">
-              <div class="form-group">
-                <label>SMTP Host</label>
-                <input type="text" id="ses-in-host" value="email-smtp.us-east-1.amazonaws.com" />
-              </div>
-              <div class="form-group">
-                <label>SMTP Port</label>
-                <input type="number" id="ses-in-port" value="587" />
-              </div>
-            </div>
-            <div class="form-group">
-              <label>Daily Limit</label>
-              <input type="number" id="ses-in-limit" value="250" />
-            </div>
-            <button type="submit" class="btn btn-primary w-100">Add Amazon SES Mailbox</button>
-          </form>
-        </div>
-
-      </div>
-    </div>
-  </div>
-
-  <!-- Free Inbound Cloudflare Routing Worker Setup Modal -->
-  <div class="modal-backdrop" id="backdrop-cf-worker">
-    <div class="modal" id="modal-cf-worker-setup" style="max-width: 680px;">
-      <div class="modal-header">
-        <h3>⚡ 100% Free Cloudflare Inbound Email Worker</h3>
-        <button class="modal-close">&times;</button>
-      </div>
-      <div class="modal-body">
-        <p style="color: var(--text-muted); font-size: 13px; margin-bottom: 14px;">
-          This Worker runs on Cloudflare's <strong>100% Free Tier</strong> (100,000 requests/day). Whenever a prospect replies to any of your custom domain email aliases (e.g. <code>alex@magicfitpartners.com</code>), Cloudflare triggers this script, captures the reply, and instantly forwards it to Flinza for AI analysis and Telegram alerts!
-        </p>
-
-        <div style="background: rgba(0,0,0,0.3); border: 1px solid var(--border-glass); border-radius: 10px; padding: 14px; margin-bottom: 14px;">
-          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-            <strong>Worker Script: <code>cloudflare_email_worker.js</code></strong>
-            <button class="btn btn-outline btn-sm" id="btn-copy-worker-code">📋 Copy Code</button>
-          </div>
-          <pre id="worker-code-box" style="max-height: 180px; overflow-y: auto; font-size: 11.5px; color: #a5b4fc; background: transparent;"></pre>
-        </div>
-
-        <div style="font-size: 12.5px; color: var(--text-muted); line-height: 1.6;">
-          <strong>Setup in 3 Steps:</strong>
-          <ol style="padding-left: 20px; margin-top: 6px;">
-            <li>Go to <strong>Cloudflare Dashboard → Workers & Pages → Create Application → Create Worker</strong>.</li>
-            <li>Paste the code above into the Worker editor. Set Environment Variable <code>FLINZA_WEBHOOK_URL</code> to your Flinza URL (e.g. <code>https://your-domain.com/api/webhooks/inbound</code>).</li>
-            <li>Go to your domain in Cloudflare → <strong>Email Routing → Routing Rules</strong> → Catch-all rule → <strong>Send to a Worker</strong> → Select your Worker!</li>
-          </ol>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- Add Endpoint Modal -->
-  <div class="modal-backdrop" id="backdrop-add-endpoint">
-    <div class="modal" id="modal-add-endpoint">
-      <div class="modal-header">
-        <h3>Add Custom AI Endpoint</h3>
-        <button class="modal-close">&times;</button>
-      </div>
-      <div class="modal-body">
-        <form id="form-add-endpoint">
-          <div class="form-group">
-            <label>Friendly Name</label>
-            <input type="text" id="ep-in-name" placeholder="e.g. Ollama Local or DeepSeek" required />
-          </div>
-          <div class="form-group">
-            <label>Base URL</label>
-            <input type="text" id="ep-in-url" placeholder="http://localhost:11434/v1" required />
-          </div>
-          <div class="form-group">
-            <label>Model Name</label>
-            <input type="text" id="ep-in-model" placeholder="e.g. llama3:8b or deepseek-chat" required />
-          </div>
-          <div class="form-group">
-            <label>API Key (optional)</label>
-            <input type="password" id="ep-in-key" placeholder="Bearer key if required" />
-          </div>
-          <button type="submit" class="btn btn-primary w-100">Save Endpoint</button>
-        </form>
-      </div>
+      </form>
     </div>
   </div>
 

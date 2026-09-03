@@ -1,189 +1,133 @@
 /**
- * Flinza Works — Enterprise Outreach Studio SPA Engine
- * Mailflare Webmail Client, Aliases Routing Manager, and Dual Theme Controller.
+ * Flinza Outreach OS — SPA Engine v2.0
+ * Premium dark edition. Clean backend-driven frontend.
+ * All DOM renders updated for new CSS design system.
  */
 
 document.addEventListener("DOMContentLoaded", () => {
-  // ═══════════════════════════════════════════════════════════════
-  //                    THEME CONTROLLER
-  // ═══════════════════════════════════════════════════════════════
-  const themeToggleBtn = document.getElementById("btn-toggle-theme");
-  const themeToggleIcon = document.getElementById("theme-toggle-icon");
-  const themeToggleText = document.getElementById("theme-toggle-text");
 
-  function initTheme() {
-    const saved = localStorage.getItem("flinza_theme") || "light";
-    setTheme(saved);
-  }
-
-  function setTheme(theme) {
-    document.documentElement.setAttribute("data-theme", theme);
-    localStorage.setItem("flinza_theme", theme);
-    if (theme === "dark") {
-      themeToggleIcon.textContent = "☀️";
-      themeToggleText.textContent = "Light Mode";
-    } else {
-      themeToggleIcon.textContent = "🌙";
-      themeToggleText.textContent = "Dark Mode";
-    }
-  }
-
-  if (themeToggleBtn) {
-    themeToggleBtn.addEventListener("click", () => {
-      const current = document.documentElement.getAttribute("data-theme") || "light";
-      setTheme(current === "dark" ? "light" : "dark");
-    });
-  }
-
-  initTheme();
-
-  // ═══════════════════════════════════════════════════════════════
-  //                    NAVIGATION CONTROLLER
-  // ═══════════════════════════════════════════════════════════════
+  // ═══════════════════════════════════════════════════════
+  //  NAVIGATION CONTROLLER
+  // ═══════════════════════════════════════════════════════
   const navItems = document.querySelectorAll(".nav-item");
   const viewSections = document.querySelectorAll(".view-section");
   let currentFolder = "inbox";
   let activeSearchQuery = "";
 
   function switchView(viewName) {
-    navItems.forEach(item => {
-      item.classList.toggle("active", item.dataset.view === viewName);
-    });
+    navItems.forEach(el => el.classList.toggle("active", el.dataset.view === viewName));
 
-    // Check if it's a webmail folder view
     if (viewName.startsWith("webmail-")) {
       const folder = viewName.replace("webmail-", "");
       currentFolder = folder;
-      viewSections.forEach(section => {
-        section.classList.toggle("active", section.id === "view-webmail");
-      });
+      viewSections.forEach(s => s.classList.toggle("active", s.id === "view-webmail"));
+      // Update title
+      const folderTitles = { inbox: "Inbox", sent: "Sent", drafts: "Drafts", spam: "Spam" };
+      setEl("webmail-folder-title", folderTitles[folder] || "Inbox");
       loadWebmailThreads(folder, activeSearchQuery);
       return;
     }
 
-    viewSections.forEach(section => {
-      section.classList.toggle("active", section.id === `view-${viewName}`);
-    });
+    viewSections.forEach(s => s.classList.toggle("active", s.id === `view-${viewName}`));
 
-    if (viewName === "dashboard") loadDashboard();
-    else if (viewName === "aliases-routing") loadAliasesRouting();
-    else if (viewName === "leads") loadLeads();
-    else if (viewName === "mailboxes") loadMailboxes();
-    else if (viewName === "cloudflare") loadCloudflare();
-    else if (viewName === "sequences") loadSequences();
-    else if (viewName === "endpoints") loadEndpoints();
-    else if (viewName === "settings") loadSettings();
+    const loaders = {
+      dashboard:        loadDashboard,
+      "aliases-routing": loadAliasesRouting,
+      leads:            loadLeads,
+      mailboxes:        loadMailboxes,
+      cloudflare:       loadCloudflare,
+      sequences:        loadSequences,
+      endpoints:        loadEndpoints,
+      settings:         loadSettings,
+    };
+    if (loaders[viewName]) loaders[viewName]();
   }
 
-  navItems.forEach(item => {
-    item.addEventListener("click", () => switchView(item.dataset.view));
+  navItems.forEach(item => item.addEventListener("click", () => switchView(item.dataset.view)));
+
+  // Global search
+  on("global-mail-search", "input", debounce((e) => {
+    activeSearchQuery = e.target.value.trim();
+    const activeSection = document.querySelector(".view-section.active");
+    if (activeSection && activeSection.id !== "view-webmail") {
+      switchView("webmail-inbox");
+    } else {
+      loadWebmailThreads(currentFolder, activeSearchQuery);
+    }
+  }, 250));
+
+  // ⌘K / Ctrl+K focus search
+  document.addEventListener("keydown", (e) => {
+    if ((e.metaKey || e.ctrlKey) && e.key === "k") {
+      e.preventDefault();
+      document.getElementById("global-mail-search")?.focus();
+    }
+    if (e.key === "Escape") {
+      closeAllModals();
+    }
   });
 
-  // Global search bar
-  const globalSearchInput = document.getElementById("global-mail-search");
-  if (globalSearchInput) {
-    let debounceTimer;
-    globalSearchInput.addEventListener("input", (e) => {
-      clearTimeout(debounceTimer);
-      debounceTimer = setTimeout(() => {
-        activeSearchQuery = e.target.value.trim();
-        // Switch to webmail if in another view
-        const activeSection = document.querySelector(".view-section.active");
-        if (activeSection && activeSection.id !== "view-webmail") {
-          switchView("webmail-inbox");
-        } else {
-          loadWebmailThreads(currentFolder, activeSearchQuery);
-        }
-      }, 250);
-    });
-  }
-
-  // ═══════════════════════════════════════════════════════════════
-  //             MAILFLARE WEBMAIL CLIENT (PRIORITY INBOX)
-  // ═══════════════════════════════════════════════════════════════
+  // ═══════════════════════════════════════════════════════
+  //  WEBMAIL CLIENT
+  // ═══════════════════════════════════════════════════════
   let currentLoadedThreads = [];
   let selectedThreadId = null;
 
   async function loadWebmailThreads(folder = "inbox", search = "") {
-    const titleEl = document.getElementById("webmail-folder-title");
-    const countEl = document.getElementById("webmail-thread-counter");
-    const rowsList = document.getElementById("mail-rows-list");
-    const updatedTimeEl = document.getElementById("webmail-updated-time");
-
-    const folderTitles = {
-      inbox: "Priority inbox",
-      sent: "Sent outreach",
-      drafts: "Drafts & AI responses",
-      spam: "Spam & suppressed",
-    };
-    if (titleEl) titleEl.textContent = folderTitles[folder] || "Priority inbox";
+    const rowsList = g("mail-rows-list");
+    setEl("webmail-thread-counter", "…");
 
     try {
-      const res = await fetch(`/api/webmail/threads?folder=${folder}&search=${encodeURIComponent(search)}`);
-      const data = await res.json();
+      const data = await apiFetch(`/api/webmail/threads?folder=${folder}&search=${encodeURIComponent(search)}`);
       if (!data.success) return;
 
       currentLoadedThreads = data.threads || [];
-      if (countEl) countEl.textContent = currentLoadedThreads.length;
-      if (updatedTimeEl) updatedTimeEl.textContent = "Updated just now";
+      setEl("webmail-thread-counter", currentLoadedThreads.length);
 
-      // Update folder badges in sidebar
+      // Sidebar badge updates
       if (data.counts) {
-        const bInbox = document.getElementById("badge-webmail-inbox");
-        const bDrafts = document.getElementById("badge-webmail-drafts");
-        const bSent = document.getElementById("badge-webmail-sent");
-        const bSpam = document.getElementById("badge-webmail-spam");
-        if (bInbox) bInbox.textContent = data.counts.inbox || 0;
-        if (bDrafts) bDrafts.textContent = data.counts.drafts || 0;
-        if (bSent) bSent.textContent = data.counts.sent || 0;
-        if (bSpam) bSpam.textContent = data.counts.spam || 0;
+        setEl("badge-webmail-inbox", data.counts.inbox ?? 0);
+        setEl("badge-webmail-sent",  data.counts.sent  ?? 0);
+        setEl("badge-webmail-drafts",data.counts.drafts?? 0);
+        setEl("badge-webmail-spam",  data.counts.spam  ?? 0);
       }
+
+      if (!rowsList) return;
 
       if (currentLoadedThreads.length === 0) {
         rowsList.innerHTML = `
-          <div style="padding: 48px 24px; text-align: center; color: var(--text-dim);">
-            <div style="font-size: 32px; margin-bottom: 12px;">📭</div>
-            <h3 style="color: var(--text-main); font-size: 16px; margin-bottom: 4px;">No emails in ${folderTitles[folder] || folder}</h3>
-            <p style="font-size: 13px;">Incoming responses and messages will appear here automatically.</p>
-          </div>
-        `;
+          <div class="inbox-empty-state">
+            <div class="empty-icon">
+              <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2" opacity="0.3"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
+            </div>
+            <p>No emails in ${folder}. Incoming messages will show here automatically.</p>
+          </div>`;
         return;
       }
 
       rowsList.innerHTML = currentLoadedThreads.map(t => {
-        let tagClass = "tag-inbound";
-        const tagLower = (t.tag || "").toLowerCase();
-        if (tagLower.includes("sent")) tagClass = "tag-sent";
-        else if (tagLower.includes("interest")) tagClass = "tag-interested";
-        else if (tagLower.includes("draft")) tagClass = "tag-draft";
-        else if (tagLower.includes("hook")) tagClass = "tag-hook";
-        else if (tagLower.includes("admin")) tagClass = "tag-admin";
-
-        const senderDisplay = t.sender || "Unknown Sender";
-        const subjectDisplay = t.subject || "(No Subject)";
-        const snippetDisplay = t.snippet || "";
-
+        const initials = (t.sender || "?").slice(0, 2).toUpperCase();
+        const tag = t.tag || "Inbound";
+        const tagClass = tagToClass(tag);
+        const time = t.timestamp ? formatTime(t.timestamp) : "";
         return `
           <div class="mail-row ${selectedThreadId === t.id ? 'active' : ''}" data-id="${t.id}">
-            <div class="mail-icon-cell">✉️</div>
-            <div class="mail-sender-cell" title="${senderDisplay}">${senderDisplay}</div>
-            <div class="mail-snippet-cell">
-              <span class="mail-subject-bold">${escapeHtml(subjectDisplay)}</span>
-              ${snippetDisplay ? `<span class="mail-snippet-muted"> - ${escapeHtml(snippetDisplay)}</span>` : ''}
+            <div class="mail-row-avatar">${initials}</div>
+            <div class="mail-row-body">
+              <div class="mail-row-top">
+                <span class="mail-sender">${esc(t.sender || "Unknown")}</span>
+              </div>
+              <div class="mail-subject"><b>${esc(t.subject || "(No Subject)")}</b>${t.snippet ? ` — ${esc(t.snippet)}` : ""}</div>
             </div>
-            <div class="mail-tag-cell">
-              <span class="mail-tag ${tagClass}">${t.tag || 'Inbound'}</span>
+            <div class="mail-meta">
+              <span class="mail-time">${time}</span>
+              <span class="intent-chip ${tagClass}">${esc(tag)}</span>
             </div>
-          </div>
-        `;
+          </div>`;
       }).join("");
 
-      // Attach row click listeners
       rowsList.querySelectorAll(".mail-row").forEach(row => {
-        row.addEventListener("click", () => {
-          const id = parseInt(row.dataset.id);
-          openThreadDetail(id);
-        });
+        row.addEventListener("click", () => openThreadDetail(parseInt(row.dataset.id)));
       });
 
     } catch (err) {
@@ -196,212 +140,169 @@ document.addEventListener("DOMContentLoaded", () => {
     const thread = currentLoadedThreads.find(t => t.id === id);
     if (!thread) return;
 
-    // Highlight row
-    document.querySelectorAll(".mail-row").forEach(r => {
-      r.classList.toggle("active", parseInt(r.dataset.id) === id);
-    });
+    document.querySelectorAll(".mail-row").forEach(r =>
+      r.classList.toggle("active", parseInt(r.dataset.id) === id)
+    );
 
-    const readingPane = document.getElementById("webmail-reading-pane");
-    const readSubject = document.getElementById("read-subject");
-    const readTag = document.getElementById("read-tag");
-    const readSender = document.getElementById("read-sender");
-    const readRecipient = document.getElementById("read-recipient");
-    const readTime = document.getElementById("read-time");
-    const readBody = document.getElementById("read-body");
-    const aiComposer = document.getElementById("read-ai-composer");
-    const aiDraftText = document.getElementById("read-ai-draft-text");
+    const pane = g("webmail-reading-pane");
+    if (!pane) return;
 
-    readingPane.style.display = "flex";
-    readSubject.textContent = thread.subject || "(No Subject)";
-    readTag.textContent = thread.tag || "Inbound";
-    readSender.textContent = thread.sender || "unknown";
-    readRecipient.textContent = thread.recipient || "you";
-    readTime.textContent = thread.timestamp ? new Date(thread.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : "Recently";
-    readBody.textContent = thread.body || "No message content.";
+    pane.style.display = "flex";
+    setEl("read-subject", thread.subject || "(No Subject)");
+    const tag = thread.tag || "Inbound";
+    const tagEl = g("read-tag");
+    if (tagEl) { tagEl.textContent = tag; tagEl.className = `intent-chip ${tagToClass(tag)}`; }
+    setEl("read-sender", thread.sender || "unknown");
+    setEl("read-recipient", thread.recipient || "you");
+    setEl("read-time", thread.timestamp ? new Date(thread.timestamp).toLocaleString([], { month:"short", day:"numeric", hour:"2-digit", minute:"2-digit" }) : "Recently");
 
-    // If there is an AI draft or inbound message
+    const bodyEl = g("read-body");
+    if (bodyEl) bodyEl.textContent = thread.body || "No message content.";
+
+    const aiComposer = g("read-ai-composer");
+    const aiDraft = g("read-ai-draft-text");
     if (thread.ai_draft_body || thread.type === "inbound") {
-      aiComposer.style.display = "flex";
-      aiDraftText.value = thread.ai_draft_body || `Hi ${thread.lead_name || 'there'},\n\nThank you for getting back to us. We would love to walk you through our short-form organic growth workflow.\n\nBest,\nFlinza Team`;
+      if (aiComposer) aiComposer.style.display = "flex";
+      if (aiDraft) aiDraft.value = thread.ai_draft_body ||
+        `Hi ${thread.lead_name || "there"},\n\nThank you for getting back to us! We'd love to walk you through how we help businesses like yours scale with short-form content.\n\nWould you have 15 minutes this week for a quick call?\n\nBest,\nFlinza Team`;
     } else {
-      aiComposer.style.display = "none";
+      if (aiComposer) aiComposer.style.display = "none";
     }
   }
 
-  const btnCloseReading = document.getElementById("btn-close-reading");
-  if (btnCloseReading) {
-    btnCloseReading.addEventListener("click", () => {
-      document.getElementById("webmail-reading-pane").style.display = "none";
-      selectedThreadId = null;
-      document.querySelectorAll(".mail-row").forEach(r => r.classList.remove("active"));
-    });
-  }
+  on("btn-close-reading", "click", () => {
+    const pane = g("webmail-reading-pane");
+    if (pane) pane.style.display = "none";
+    selectedThreadId = null;
+    document.querySelectorAll(".mail-row").forEach(r => r.classList.remove("active"));
+  });
 
-  const btnSendReadDraft = document.getElementById("btn-send-read-draft");
-  if (btnSendReadDraft) {
-    btnSendReadDraft.addEventListener("click", async () => {
-      if (!selectedThreadId) return;
-      const customText = document.getElementById("read-ai-draft-text").value.trim();
-      btnSendReadDraft.disabled = true;
-      btnSendReadDraft.textContent = "🚀 Dispatching...";
-
-      try {
-        const res = await fetch("/api/unibox/reply", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ reply_id: selectedThreadId, body: customText })
-        });
-        const d = await res.json();
-        if (d.success) {
-          alert("✅ Reply successfully sent to prospect!");
-          document.getElementById("webmail-reading-pane").style.display = "none";
-          loadWebmailThreads(currentFolder, activeSearchQuery);
-        } else {
-          alert(`❌ Error sending reply: ${d.error || 'Failed'}`);
-        }
-      } catch (err) {
-        alert(`❌ Network error: ${err}`);
-      } finally {
-        btnSendReadDraft.disabled = false;
-        btnSendReadDraft.textContent = "🚀 Send This Reply";
-      }
-    });
-  }
-
-  const btnDiscardDraft = document.getElementById("btn-discard-draft");
-  if (btnDiscardDraft) {
-    btnDiscardDraft.addEventListener("click", () => {
-      document.getElementById("read-ai-composer").style.display = "none";
-    });
-  }
-
-  const btnRefreshWebmail = document.getElementById("btn-refresh-webmail");
-  if (btnRefreshWebmail) {
-    btnRefreshWebmail.addEventListener("click", async () => {
-      btnRefreshWebmail.style.transform = "rotate(360deg)";
-      try {
-        await fetch("/api/unibox/check", { method: "POST" });
-      } catch (e) {}
-      setTimeout(() => {
-        btnRefreshWebmail.style.transform = "rotate(0deg)";
+  on("btn-send-read-draft", "click", async (e) => {
+    if (!selectedThreadId) return;
+    const customText = g("read-ai-draft-text")?.value.trim();
+    const btn = e.currentTarget;
+    btn.disabled = true;
+    btn.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg> Sending…`;
+    try {
+      const d = await apiFetch("/api/unibox/reply", "POST", { reply_id: selectedThreadId, body: customText });
+      if (d.success) {
+        showToast("✓ Reply dispatched successfully!", "success");
+        g("webmail-reading-pane").style.display = "none";
         loadWebmailThreads(currentFolder, activeSearchQuery);
-      }, 400);
-    });
-  }
+      } else {
+        showToast(`Failed: ${d.error || "Unknown error"}`, "error");
+      }
+    } catch (err) {
+      showToast(`Network error: ${err}`, "error");
+    } finally {
+      btn.disabled = false;
+      btn.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg> Send Reply`;
+    }
+  });
 
-  // ═══════════════════════════════════════════════════════════════
-  //           CUSTOM ALIASES & ROUTING ARCHITECTURE MODULE
-  // ═══════════════════════════════════════════════════════════════
+  on("btn-discard-draft", "click", () => {
+    const c = g("read-ai-composer");
+    if (c) c.style.display = "none";
+  });
+
+  on("btn-refresh-webmail", "click", async (e) => {
+    const btn = e.currentTarget;
+    btn.style.animation = "spin 0.8s linear";
+    try {
+      await apiFetch("/api/unibox/check", "POST");
+    } catch {}
+    setTimeout(() => {
+      btn.style.animation = "";
+      loadWebmailThreads(currentFolder, activeSearchQuery);
+    }, 800);
+  });
+
+  // ═══════════════════════════════════════════════════════
+  //  ALIASES & ROUTING MODULE
+  // ═══════════════════════════════════════════════════════
   async function loadAliasesRouting() {
-    const grid = document.getElementById("aliases-routing-grid");
-    const badgeAliases = document.getElementById("badge-routing-aliases");
+    const grid = g("aliases-routing-grid");
+    const badge = g("badge-routing-aliases");
     if (!grid) return;
 
     try {
-      const res = await fetch("/api/aliases/routing");
-      const data = await res.json();
+      const data = await apiFetch("/api/aliases/routing");
       if (!data.success) return;
 
       const aliases = data.aliases || [];
-      const accounts = data.accounts || [];
-      if (badgeAliases) badgeAliases.textContent = aliases.length;
+      if (badge) badge.textContent = aliases.length;
 
       if (aliases.length === 0) {
         grid.innerHTML = `
-          <div style="grid-column: 1/-1; padding: 40px; text-align: center; color: var(--text-dim);">
-            <h3>No Custom Domain Aliases Registered</h3>
-            <p style="margin-top: 6px;">Click "Add Domain Alias & Route" or "Auto-Generate 5 CF Aliases" to begin.</p>
-          </div>
-        `;
+          <div style="grid-column:1/-1; text-align:center; padding:40px; color:var(--text-dim);">
+            <p style="font-size:14px; margin-bottom:8px;">No domain aliases configured yet.</p>
+            <p>Click <strong>+ Add Alias</strong> to create your first dispatch route.</p>
+          </div>`;
         return;
       }
 
       grid.innerHTML = aliases.map(a => {
         const mode = a.routing_mode || "gmail_send_as";
-        let modeBadge = `<span class="route-mode-badge route-mode-gmail">✉️ Gmail Send-As</span>`;
-        let pathDesc = `Routes via connected Gmail (<code>${a.smtp_user}</code>)`;
-
-        if (mode === "cloudflare_api") {
-          modeBadge = `<span class="route-mode-badge route-mode-cf">⚡ Cloudflare Native API ($5/mo)</span>`;
-          pathDesc = `Sends directly through Cloudflare Edge REST API`;
-        } else if (mode === "external_smtp") {
-          modeBadge = `<span class="route-mode-badge route-mode-ses">🚀 Amazon SES / Dedicated SMTP</span>`;
-          pathDesc = `Routes through AWS SES (<code>${a.smtp_host || 'email-smtp'}</code>)`;
-        }
-
+        const modeInfo = routeMode(mode, a);
         return `
-          <div class="alias-route-card" data-alias="${a.alias}">
+          <div class="alias-route-card" data-alias="${esc(a.alias)}">
             <div class="alias-card-top">
               <div>
-                <div class="alias-address-title">${a.alias}</div>
-                <div class="alias-display-subtitle">${a.display_name || 'Outreach Alias'} • Limit: ${a.daily_limit}/day</div>
+                <div class="alias-address">${esc(a.alias)}</div>
+                <div class="alias-subtext">${esc(a.display_name || "Outreach Alias")} · ${a.daily_limit || 50}/day</div>
               </div>
-              ${modeBadge}
+              <span class="route-mode-chip ${modeInfo.cls}">${modeInfo.label}</span>
             </div>
-
-            <div class="alias-route-path">
-              <span>🔀</span>
-              <div>${pathDesc}</div>
+            <div class="alias-route-info">
+              <span>→</span>
+              <span>${modeInfo.desc}</span>
             </div>
-
-            <div class="alias-route-selector">
-              <label>Switch Dispatch Route:</label>
-              <select class="form-select alias-route-select" data-alias="${a.alias}">
-                <option value="gmail_send_as" ${mode === 'gmail_send_as' ? 'selected' : ''}>✉️ Gmail Send-As Relay</option>
-                <option value="cloudflare_api" ${mode === 'cloudflare_api' ? 'selected' : ''}>⚡ Cloudflare Native API ($5/mo)</option>
-                <option value="external_smtp" ${mode === 'external_smtp' ? 'selected' : ''}>🚀 Amazon SES / Dedicated SMTP</option>
+            <div class="form-field" style="margin:0;">
+              <select class="form-select alias-route-select" data-alias="${esc(a.alias)}">
+                <option value="gmail_send_as" ${mode === "gmail_send_as" ? "selected" : ""}>✉️ Gmail Send-As (Free)</option>
+                <option value="cloudflare_api" ${mode === "cloudflare_api" ? "selected" : ""}>⚡ Cloudflare API ($5/mo)</option>
+                <option value="external_smtp" ${mode === "external_smtp" ? "selected" : ""}>🚀 Amazon SES / SMTP</option>
               </select>
             </div>
-
-            <div class="alias-card-actions">
-              <button class="btn btn-outline btn-sm btn-test-alias-route" data-alias="${a.alias}">⚡ Test Route</button>
-              <button class="btn btn-sm btn-danger btn-delete-alias" data-alias="${a.alias}">🗑️ Delete</button>
+            <div class="alias-card-footer">
+              <button class="btn-ghost-sm btn-test-alias-route" data-alias="${esc(a.alias)}">⚡ Test Route</button>
+              <button class="btn-ghost-sm btn-delete-alias" data-alias="${esc(a.alias)}" style="color:var(--rose);">Delete</button>
             </div>
-          </div>
-        `;
+          </div>`;
       }).join("");
 
-      // Route select change listener
+      // Route select change
       grid.querySelectorAll(".alias-route-select").forEach(sel => {
         sel.addEventListener("change", async (e) => {
           const alias = e.target.dataset.alias;
           const newMode = e.target.value;
           try {
-            const upd = await fetch("/api/aliases/update-routing", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ alias: alias, routing_mode: newMode })
-            });
-            const d = await upd.json();
+            const d = await apiFetch("/api/aliases/update-routing", "POST", { alias, routing_mode: newMode });
             if (d.success) {
+              showToast(`Route updated for ${alias}`, "success");
               loadAliasesRouting();
             }
           } catch (err) {
-            alert(`Failed to update routing: ${err}`);
+            showToast(`Update failed: ${err}`, "error");
           }
         });
       });
 
-      // Test route listener
+      // Test route
       grid.querySelectorAll(".btn-test-alias-route").forEach(btn => {
         btn.addEventListener("click", async () => {
           const alias = btn.dataset.alias;
           btn.disabled = true;
-          btn.textContent = "⚡ Testing...";
+          btn.textContent = "Testing…";
           try {
-            const res = await fetch("/api/aliases/test-route", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ alias: alias, to_email: "rajdep.f12x@gmail.com" })
-            });
-            const r = await res.json();
+            const r = await apiFetch("/api/aliases/test-route", "POST", { alias, to_email: "rajdep.f12x@gmail.com" });
             if (r.success) {
-              alert(`✅ Test route verified for ${alias}!\nLatency: ${r.elapsed_ms || 0}ms\nMessage-ID: ${r.message_id || 'OK'}`);
+              showToast(`Route verified for ${alias} (${r.elapsed_ms || 0}ms)`, "success");
             } else {
-              alert(`❌ Route test failed: ${r.error || 'Failed'}`);
+              showToast(`Test failed: ${r.error}`, "error");
             }
           } catch (e) {
-            alert(`❌ Network error: ${e}`);
+            showToast(`Network error: ${e}`, "error");
           } finally {
             btn.disabled = false;
             btn.textContent = "⚡ Test Route";
@@ -409,279 +310,192 @@ document.addEventListener("DOMContentLoaded", () => {
         });
       });
 
-      // Delete alias listener
+      // Delete alias
       grid.querySelectorAll(".btn-delete-alias").forEach(btn => {
         btn.addEventListener("click", async () => {
           const alias = btn.dataset.alias;
-          if (!confirm(`Delete sending alias ${alias}?`)) return;
-          try {
-            await fetch(`/api/accounts/alias/${encodeURIComponent(alias)}`, { method: "DELETE" });
-            loadAliasesRouting();
-          } catch (e) {}
+          if (!confirm(`Delete alias ${alias}?`)) return;
+          await apiFetch(`/api/accounts/alias/${encodeURIComponent(alias)}`, "DELETE");
+          loadAliasesRouting();
         });
       });
 
     } catch (err) {
-      console.error("Error loading aliases routing:", err);
+      console.error("Aliases routing error:", err);
     }
   }
 
-  // ═══════════════════════════════════════════════════════════════
-  //                    COMPOSE MODAL MODULE
-  // ═══════════════════════════════════════════════════════════════
-  const btnOpenCompose = document.getElementById("btn-open-compose");
-  const backdropCompose = document.getElementById("backdrop-compose");
-  const btnCloseCompose = document.getElementById("btn-close-compose");
-  const btnCancelCompose = document.getElementById("btn-cancel-compose");
-  const formCompose = document.getElementById("form-compose-email");
-  const composeFromSelect = document.getElementById("compose-from-select");
+  on("btn-cf-gen5-routing", "click", async (e) => {
+    const btn = e.currentTarget;
+    btn.disabled = true;
+    btn.textContent = "⚡ Generating…";
+    try {
+      const d = await apiFetch("/api/cloudflare/generate", "POST", { count: 5 });
+      if (d.success) {
+        showToast(`Created ${d.created.length} Cloudflare aliases!`, "success");
+        loadAliasesRouting();
+      } else {
+        showToast(`Failed: ${d.error}`, "error");
+      }
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "⚡ Generate 5 CF Aliases";
+    }
+  });
 
-  if (btnOpenCompose) {
-    btnOpenCompose.addEventListener("click", async () => {
-      backdropCompose.classList.add("active");
-      // Populate senders list
-      try {
-        const res = await fetch("/api/accounts");
-        const d = await res.json();
-        if (d.success) {
-          const accs = d.accounts || [];
-          const aliases = d.aliases || [];
-          composeFromSelect.innerHTML = "";
+  // ═══════════════════════════════════════════════════════
+  //  COMPOSE MODAL
+  // ═══════════════════════════════════════════════════════
+  on("btn-open-compose", "click", async () => {
+    openModal("backdrop-compose");
+    try {
+      const d = await apiFetch("/api/accounts");
+      if (d.success) populateFromSelect(d.accounts || [], d.aliases || []);
+    } catch {}
+  });
 
-          if (aliases.length > 0) {
-            const optgroupAliases = document.createElement("optgroup");
-            optgroupAliases.label = "Verified Domain Aliases";
-            aliases.forEach(al => {
-              const opt = document.createElement("option");
-              opt.value = al.alias;
-              opt.textContent = `${al.display_name || 'Alias'} <${al.alias}>`;
-              optgroupAliases.appendChild(opt);
-            });
-            composeFromSelect.appendChild(optgroupAliases);
-          }
+  on("btn-close-compose", "click", () => closeModal("backdrop-compose"));
+  on("btn-cancel-compose", "click", () => closeModal("backdrop-compose"));
 
-          if (accs.length > 0) {
-            const optgroupAccs = document.createElement("optgroup");
-            optgroupAccs.label = "Master Outbound Accounts";
-            accs.forEach(a => {
-              const opt = document.createElement("option");
-              opt.value = a.email;
-              opt.textContent = `${a.email} (${a.provider || 'SMTP'})`;
-              optgroupAccs.appendChild(opt);
-            });
-            composeFromSelect.appendChild(optgroupAccs);
-          }
-        }
-      } catch (e) {}
-    });
-  }
-
-  if (btnCloseCompose) btnCloseCompose.addEventListener("click", () => backdropCompose.classList.remove("active"));
-  if (btnCancelCompose) btnCancelCompose.addEventListener("click", () => backdropCompose.classList.remove("active"));
-
+  const formCompose = g("form-compose-email");
   if (formCompose) {
     formCompose.addEventListener("submit", async (e) => {
       e.preventDefault();
-      const fromAcct = composeFromSelect.value;
-      const toEmail = document.getElementById("compose-to").value.trim();
-      const subject = document.getElementById("compose-subject").value.trim();
-      const body = document.getElementById("compose-body").value.trim();
-
-      const submitBtn = document.getElementById("btn-send-compose");
+      const submitBtn = g("btn-send-compose");
       submitBtn.disabled = true;
-      submitBtn.textContent = "🚀 Sending...";
-
+      submitBtn.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg> Sending…`;
       try {
-        const res = await fetch("/api/webmail/compose", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            from_account: fromAcct,
-            to_email: toEmail,
-            subject: subject,
-            body: body
-          })
+        const d = await apiFetch("/api/webmail/compose", "POST", {
+          from_account: g("compose-from-select")?.value,
+          to_email:     g("compose-to")?.value.trim(),
+          subject:      g("compose-subject")?.value.trim(),
+          body:         g("compose-body")?.value.trim(),
         });
-        const d = await res.json();
         if (d.success) {
-          alert(`✅ Message sent to ${toEmail}!`);
-          backdropCompose.classList.remove("active");
+          showToast(`Message sent!`, "success");
+          closeModal("backdrop-compose");
           formCompose.reset();
-          loadWebmailThreads(currentFolder, activeSearchQuery);
+          loadWebmailThreads(currentFolder);
         } else {
-          alert(`❌ Failed to send: ${d.error || 'Unknown error'}`);
+          showToast(`Failed: ${d.error}`, "error");
         }
-      } catch (err) {
-        alert(`❌ Network error: ${err}`);
       } finally {
         submitBtn.disabled = false;
-        submitBtn.textContent = "🚀 Send Message";
+        submitBtn.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg> Send`;
       }
     });
   }
 
-  // ═══════════════════════════════════════════════════════════════
-  //             CREATE ALIAS & ROUTE MODAL MODULE
-  // ═══════════════════════════════════════════════════════════════
-  const btnOpenCreateAlias = document.getElementById("btn-open-create-alias");
-  const backdropCreateAlias = document.getElementById("backdrop-create-alias");
-  const btnCloseCreateAlias = document.getElementById("btn-close-create-alias");
-  const formCreateAlias = document.getElementById("form-create-alias");
-  const aliasInMaster = document.getElementById("alias-in-master");
+  // ═══════════════════════════════════════════════════════
+  //  CREATE ALIAS MODAL
+  // ═══════════════════════════════════════════════════════
+  on("btn-open-create-alias", "click", async () => {
+    openModal("backdrop-create-alias");
+    try {
+      const d = await apiFetch("/api/accounts");
+      const master = g("alias-in-master");
+      if (d.success && master) {
+        master.innerHTML = (d.accounts || []).map(a =>
+          `<option value="${esc(a.email)}">${esc(a.email)}</option>`
+        ).join("");
+      }
+    } catch {}
+  });
 
-  if (btnOpenCreateAlias) {
-    btnOpenCreateAlias.addEventListener("click", async () => {
-      backdropCreateAlias.classList.add("active");
-      try {
-        const res = await fetch("/api/accounts");
-        const d = await res.json();
-        if (d.success && aliasInMaster) {
-          aliasInMaster.innerHTML = (d.accounts || []).map(a => `<option value="${a.email}">${a.email}</option>`).join("");
-        }
-      } catch (e) {}
-    });
-  }
+  on("btn-close-create-alias", "click", () => closeModal("backdrop-create-alias"));
 
-  if (btnCloseCreateAlias) btnCloseCreateAlias.addEventListener("click", () => backdropCreateAlias.classList.remove("active"));
-
-  if (formCreateAlias) {
-    formCreateAlias.addEventListener("submit", async (e) => {
+  const formAlias = g("form-create-alias");
+  if (formAlias) {
+    formAlias.addEventListener("submit", async (e) => {
       e.preventDefault();
-      const alias = document.getElementById("alias-in-address").value.trim();
-      const display = document.getElementById("alias-in-display").value.trim();
-      const mode = document.getElementById("alias-in-mode").value;
-      const master = aliasInMaster.value;
-      const forward = document.getElementById("alias-in-forward").value.trim();
-
+      const btn = g("btn-submit-create-alias");
+      btn.disabled = true;
+      btn.textContent = "Creating…";
       try {
-        const res = await fetch("/api/aliases/create", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            alias: alias,
-            display_name: display,
-            routing_mode: mode,
-            smtp_user: master,
-            forward_to: forward
-          })
+        const d = await apiFetch("/api/aliases/create", "POST", {
+          alias:        g("alias-in-address")?.value.trim(),
+          display_name: g("alias-in-display")?.value.trim(),
+          routing_mode: g("alias-in-mode")?.value,
+          smtp_user:    g("alias-in-master")?.value,
+          forward_to:   g("alias-in-forward")?.value.trim(),
         });
-        const d = await res.json();
         if (d.success) {
-          alert(`✅ Alias ${alias} created and configured for ${mode}!`);
-          backdropCreateAlias.classList.remove("active");
-          formCreateAlias.reset();
+          showToast(`Alias created!`, "success");
+          closeModal("backdrop-create-alias");
+          formAlias.reset();
           loadAliasesRouting();
         } else {
-          alert(`❌ Failed to create alias: ${d.detail || 'Error'}`);
+          showToast(`Failed: ${d.detail || "Error"}`, "error");
         }
-      } catch (err) {
-        alert(`❌ Network error: ${err}`);
-      }
-    });
-  }
-
-  // 1-Click Auto-generate 5 CF Aliases button
-  const btnCfGen5Routing = document.getElementById("btn-cf-gen5-routing");
-  if (btnCfGen5Routing) {
-    btnCfGen5Routing.addEventListener("click", async () => {
-      btnCfGen5Routing.disabled = true;
-      btnCfGen5Routing.textContent = "⚡ Generating...";
-      try {
-        const res = await fetch("/api/cloudflare/generate", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ count: 5 })
-        });
-        const d = await res.json();
-        if (d.success) {
-          alert(`✅ Successfully created ${d.created.length} new Cloudflare domain aliases!`);
-          loadAliasesRouting();
-        } else {
-          alert(`❌ Cloudflare generation error: ${d.error || 'Failed'}`);
-        }
-      } catch (e) {
-        alert(`Network error: ${e}`);
       } finally {
-        btnCfGen5Routing.disabled = false;
-        btnCfGen5Routing.textContent = "⚡ Auto-Generate 5 CF Aliases";
+        btn.disabled = false;
+        btn.textContent = "Create Alias";
       }
     });
   }
 
-  // ═══════════════════════════════════════════════════════════════
-  //                      DASHBOARD MODULE
-  // ═══════════════════════════════════════════════════════════════
+  // ═══════════════════════════════════════════════════════
+  //  DASHBOARD MODULE
+  // ═══════════════════════════════════════════════════════
   async function loadDashboard() {
     try {
-      const res = await fetch("/api/stats");
-      const data = await res.json();
+      const data = await apiFetch("/api/stats");
       if (!data.success) return;
 
       const s = data.stats;
       const t = data.tracking;
 
-      document.getElementById("stat-sent-today").textContent = s.sent_today;
-      document.getElementById("stat-cap").textContent = (s.sent_today + s.remaining_today);
-      document.getElementById("stat-open-rate").textContent = `${t.open_rate}%`;
-      document.getElementById("stat-opened-count").textContent = t.total_opened;
-      document.getElementById("stat-click-rate").textContent = `${t.click_rate}%`;
-      document.getElementById("stat-clicked-count").textContent = t.total_clicked;
-      document.getElementById("stat-replies").textContent = s.total_replies;
-      document.getElementById("stat-unhandled").textContent = s.unhandled_replies;
+      setEl("stat-sent-today", s.sent_today ?? "—");
+      setEl("stat-cap", (s.sent_today ?? 0) + (s.remaining_today ?? 0));
+      setEl("stat-open-rate", `${t?.open_rate ?? 0}%`);
+      setEl("stat-opened-count", t?.total_opened ?? 0);
+      setEl("stat-click-rate", `${t?.click_rate ?? 0}%`);
+      setEl("stat-clicked-count", t?.total_clicked ?? 0);
+      setEl("stat-replies", s.total_replies ?? "—");
+      setEl("stat-unhandled", s.unhandled_replies ?? 0);
+      setEl("badge-leads", s.total_leads ?? 0);
+      setEl("badge-inboxes", s.accounts ?? 0);
 
-      // Badges
-      const bLeads = document.getElementById("badge-leads");
-      const bInboxes = document.getElementById("badge-inboxes");
-      if (bLeads) bLeads.textContent = s.total_leads;
-      if (bInboxes) bInboxes.textContent = s.accounts;
-
-      // Pipeline breakdown
-      const pipelineContainer = document.getElementById("pipeline-breakdown");
-      if (pipelineContainer) {
-        pipelineContainer.innerHTML = "";
+      const pc = g("pipeline-breakdown");
+      if (pc && data.pipeline) {
         const p = data.pipeline;
-        const stageOrder = [
-          { key: "new", label: "🆕 New Prospects" },
-          { key: "contacted", label: "📤 First Opener Sent" },
-          { key: "opened", label: "👁️ Email Opened" },
-          { key: "clicked", label: "🔗 Link Clicked" },
-          { key: "followup_1", label: "1️⃣ Follow-Up #1 Sent" },
-          { key: "followup_2", label: "2️⃣ Follow-Up #2 Sent" },
-          { key: "replied", label: "💬 Replied / Inbound" },
+        const stages = [
+          { key: "new",         label: "New Prospects" },
+          { key: "contacted",   label: "First Email Sent" },
+          { key: "opened",      label: "Opened" },
+          { key: "clicked",     label: "Clicked" },
+          { key: "followup_1",  label: "Follow-Up #1" },
+          { key: "followup_2",  label: "Follow-Up #2" },
+          { key: "replied",     label: "Replied" },
         ];
-
-        stageOrder.forEach(stage => {
-          const count = p[stage.key] || 0;
-          const row = document.createElement("div");
-          row.className = "pipeline-row";
-          row.innerHTML = `
-            <span>${stage.label}</span>
-            <strong>${count}</strong>
-          `;
-          pipelineContainer.appendChild(row);
-        });
+        pc.innerHTML = stages.map(st => `
+          <div class="pipeline-row">
+            <span>${st.label}</span>
+            <strong>${p[st.key] ?? 0}</strong>
+          </div>`).join("");
       }
     } catch (err) {
       console.error("Dashboard error:", err);
     }
   }
 
-  // ═══════════════════════════════════════════════════════════════
-  //                      LEADS CRM MODULE
-  // ═══════════════════════════════════════════════════════════════
+  // Dashboard quick controls
+  on("btn-launch-outreach2", "click", () => g("btn-launch-outreach")?.click());
+  on("btn-quick-test2",      "click", () => g("btn-quick-test")?.click());
+  on("btn-sync-replies",     "click", () => g("btn-refresh-webmail")?.click());
+
+  // ═══════════════════════════════════════════════════════
+  //  LEADS CRM MODULE
+  // ═══════════════════════════════════════════════════════
   let currentLeads = [];
   let currentStageFilter = "all";
 
   async function loadLeads() {
     try {
-      const url = currentStageFilter === "all"
-        ? "/api/leads?stage=all"
-        : `/api/leads?stage=${currentStageFilter}`;
-      const res = await fetch(url);
-      const data = await res.json();
+      const url = currentStageFilter === "all" ? "/api/leads?stage=all" : `/api/leads?stage=${currentStageFilter}`;
+      const data = await apiFetch(url);
       if (!data.success) return;
-
-      currentLeads = data.leads;
+      currentLeads = data.leads || [];
       renderLeadsTable(currentLeads);
     } catch (err) {
       console.error("Leads error:", err);
@@ -689,45 +503,39 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   function renderLeadsTable(leads) {
-    const tbody = document.getElementById("leads-tbody");
+    const tbody = g("leads-tbody");
     if (!tbody) return;
-    tbody.innerHTML = "";
 
     if (leads.length === 0) {
-      tbody.innerHTML = `<tr><td colspan="6" style="text-align: center; color: var(--text-dim); padding: 32px;">No leads found. Click "Add Lead" or "Import CSV" to get started.</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="6" class="table-empty">No leads found. Add leads or import a CSV to get started.</td></tr>`;
       return;
     }
 
-    leads.forEach(l => {
-      const tr = document.createElement("tr");
-      tr.innerHTML = `
-        <td><strong>${escapeHtml(l.name || "Lead")}</strong></td>
-        <td><code>${escapeHtml(l.email)}</code></td>
-        <td>${escapeHtml(l.company || "-")}</td>
-        <td>${escapeHtml(l.niche || "General")}</td>
+    tbody.innerHTML = leads.map(l => `
+      <tr>
+        <td>${esc(l.name || "—")}</td>
+        <td><code>${esc(l.email)}</code></td>
+        <td>${esc(l.company || "—")}</td>
+        <td>${esc(l.niche || "General")}</td>
         <td><span class="stage-badge ${l.stage}">${l.stage}</span></td>
         <td>
-          <button class="btn btn-outline btn-sm btn-delete-lead" data-id="${l.id}">🗑️</button>
+          <button class="btn-ghost-sm btn-delete-lead" data-id="${l.id}" style="color:var(--rose);">🗑</button>
         </td>
-      `;
-      tbody.appendChild(tr);
-    });
+      </tr>`).join("");
 
     tbody.querySelectorAll(".btn-delete-lead").forEach(btn => {
-      btn.addEventListener("click", async (e) => {
-        const id = e.target.dataset.id;
-        if (!confirm("Are you sure you want to delete this lead?")) return;
-        await fetch(`/api/leads/${id}`, { method: "DELETE" });
+      btn.addEventListener("click", async () => {
+        if (!confirm("Delete this lead?")) return;
+        await apiFetch(`/api/leads/${btn.dataset.id}`, "DELETE");
         loadLeads();
       });
     });
   }
 
   // Stage filter tabs
-  const stageTabs = document.querySelectorAll("#lead-stage-tabs .tab-btn");
-  stageTabs.forEach(tab => {
+  document.querySelectorAll("#lead-stage-tabs .stage-tab").forEach(tab => {
     tab.addEventListener("click", () => {
-      stageTabs.forEach(t => t.classList.remove("active"));
+      document.querySelectorAll("#lead-stage-tabs .stage-tab").forEach(t => t.classList.remove("active"));
       tab.classList.add("active");
       currentStageFilter = tab.dataset.stage;
       loadLeads();
@@ -735,268 +543,379 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 
   // Leads search
-  const leadsSearch = document.getElementById("leads-search-input");
-  if (leadsSearch) {
-    leadsSearch.addEventListener("input", (e) => {
-      const query = e.target.value.toLowerCase();
-      const filtered = currentLeads.filter(l =>
-        (l.name && l.name.toLowerCase().includes(query)) ||
-        l.email.toLowerCase().includes(query) ||
-        (l.company && l.company.toLowerCase().includes(query)) ||
-        (l.niche && l.niche.toLowerCase().includes(query))
-      );
-      renderLeadsTable(filtered);
-    });
-  }
+  on("leads-search-input", "input", (e) => {
+    const q = e.target.value.toLowerCase();
+    renderLeadsTable(currentLeads.filter(l =>
+      [l.name, l.email, l.company, l.niche].some(f => f && f.toLowerCase().includes(q))
+    ));
+  });
 
-  // ═══════════════════════════════════════════════════════════════
-  //                      MAILBOX FLEET MODULE
-  // ═══════════════════════════════════════════════════════════════
+  // ═══════════════════════════════════════════════════════
+  //  MAILBOXES MODULE
+  // ═══════════════════════════════════════════════════════
   async function loadMailboxes() {
+    const grid = g("accounts-grid");
+    if (!grid) return;
     try {
-      const res = await fetch("/api/accounts");
-      const data = await res.json();
+      const data = await apiFetch("/api/accounts");
       if (!data.success) return;
 
-      const grid = document.getElementById("accounts-grid");
-      if (!grid) return;
       grid.innerHTML = "";
-
       data.accounts.forEach(a => {
-        let badge = '<span class="provider-badge badge-gmail">Gmail</span>';
-        if (a.provider === "cloudflare_api") {
-          badge = '<span class="provider-badge badge-cf-sending">Cloudflare API ($5/mo)</span>';
-        } else if (a.provider === "amazon_ses") {
-          badge = '<span class="provider-badge badge-ses">Amazon SES</span>';
-        } else if (a.is_oauth) {
-          badge = '<span class="provider-badge badge-gmail">OAuth2</span>';
-        }
+        const providerClass = { gmail: "provider-gmail", cloudflare_api: "provider-cf", amazon_ses: "provider-ses" }[a.provider] || (a.is_oauth ? "provider-oauth" : "provider-gmail");
+        const providerLabel = { gmail: "Gmail", cloudflare_api: "Cloudflare API", amazon_ses: "Amazon SES" }[a.provider] || (a.is_oauth ? "OAuth2" : "SMTP");
 
         const card = document.createElement("div");
         card.className = "account-card";
         card.innerHTML = `
-          <div class="account-header">
-            <span class="account-email">${a.email}</span>
-            ${badge}
+          <div class="account-top">
+            <span class="account-email">${esc(a.email)}</span>
+            <span class="provider-badge ${providerClass}">${providerLabel}</span>
           </div>
-          <div style="font-size: 12.5px; color: var(--text-dim);">
-            Daily Limit: <strong>${a.daily_limit}</strong> | Sent Today: <strong>${a.sent_today}</strong>
+          <div style="font-size:12px; color:var(--text-dim);">
+            Daily cap: <strong>${a.daily_limit}</strong> · Sent today: <strong>${a.sent_today}</strong>
           </div>
-          <div style="display: flex; gap: 8px; margin-top: 6px;">
-            <button class="btn btn-outline btn-sm btn-test-account" data-email="${a.email}">Test Login</button>
-            <button class="btn btn-danger btn-sm btn-remove-account" data-email="${a.email}">Remove</button>
-          </div>
-        `;
+          <div style="display:flex; gap:8px; margin-top:4px;">
+            <button class="btn-ghost-sm btn-test-account" data-email="${esc(a.email)}">Test Login</button>
+            <button class="btn-ghost-sm btn-remove-account" data-email="${esc(a.email)}" style="color:var(--rose);">Remove</button>
+          </div>`;
         grid.appendChild(card);
       });
 
-      // Test account handlers
       grid.querySelectorAll(".btn-test-account").forEach(btn => {
-        btn.addEventListener("click", async (e) => {
-          const email = e.target.dataset.email;
-          btn.textContent = "Testing...";
-          const res = await fetch("/api/accounts/test", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ email }),
-          });
-          const d = await res.json();
-          btn.textContent = "Test Login";
-          if (d.success) {
-            alert(`✅ ${email}: Connection successful!`);
-          } else {
-            alert(`❌ ${email}: Connection failed!\n${d.error}`);
-          }
+        btn.addEventListener("click", async () => {
+          const email = btn.dataset.email;
+          btn.textContent = "Testing…";
+          try {
+            const d = await apiFetch("/api/accounts/test", "POST", { email });
+            showToast(d.success ? `Connected: ${email}` : `Failed: ${d.error}`, d.success ? "success" : "error");
+          } finally { btn.textContent = "Test Login"; }
         });
       });
 
-      // Remove account handlers
       grid.querySelectorAll(".btn-remove-account").forEach(btn => {
-        btn.addEventListener("click", async (e) => {
-          const email = e.target.dataset.email;
-          if (!confirm(`Remove account ${email}?`)) return;
-          await fetch(`/api/accounts/${encodeURIComponent(email)}`, { method: "DELETE" });
+        btn.addEventListener("click", async () => {
+          if (!confirm(`Remove ${btn.dataset.email}?`)) return;
+          await apiFetch(`/api/accounts/${encodeURIComponent(btn.dataset.email)}`, "DELETE");
           loadMailboxes();
         });
       });
-
-    } catch (err) {
-      console.error("Mailboxes error:", err);
-    }
+    } catch (err) { console.error("Mailboxes error:", err); }
   }
 
-  // ═══════════════════════════════════════════════════════════════
-  //                      CLOUDFLARE MODULE
-  // ═══════════════════════════════════════════════════════════════
+  // ═══════════════════════════════════════════════════════
+  //  CLOUDFLARE MODULE
+  // ═══════════════════════════════════════════════════════
   async function loadCloudflare() {
+    const c = g("cf-zones-container");
+    if (!c) return;
+    c.innerHTML = `<p class="info-text">Fetching Cloudflare zones…</p>`;
     try {
-      const res = await fetch("/api/cloudflare/zones");
-      const data = await res.json();
-      const container = document.getElementById("cf-zones-container");
-      if (!container) return;
-
+      const data = await apiFetch("/api/cloudflare/zones");
       if (!data.zones || data.zones.length === 0) {
-        container.innerHTML = `
-          <p style="color: var(--text-dim);">No zones discovered. Please verify <code>CF_API_TOKEN</code> in your <code>.env</code> file.</p>
-        `;
+        c.innerHTML = `<p class="info-text">No zones found. Verify <code>CF_API_TOKEN</code> in your <code>.env</code> file.</p>`;
         return;
       }
-
-      container.innerHTML = data.zones.map(z => `
-        <div style="display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; background: var(--bg-card-subtle); border-radius: 12px; margin-bottom: 8px;">
+      c.innerHTML = data.zones.map(z => `
+        <div class="audit-zone-row">
           <div>
-            <strong>${z.name}</strong> (Status: ${z.status})
+            <strong>${esc(z.name)}</strong>
+            <span style="font-size:12px; color:var(--text-dim); margin-left:8px;">Status: ${esc(z.status)}</span>
           </div>
-          <span class="badge badge-primary">ID: ${z.id.slice(0, 10)}...</span>
-        </div>
-      `).join("");
+          <span style="font-family:var(--font-mono); font-size:11px; color:var(--brand-cyan);">${esc(z.id.slice(0, 12))}…</span>
+        </div>`).join("");
     } catch (err) {
-      console.error("Cloudflare error:", err);
+      c.innerHTML = `<p class="info-text">Error loading Cloudflare data.</p>`;
     }
   }
 
-  // ═══════════════════════════════════════════════════════════════
-  //                      SEQUENCE ARCHITECT
-  // ═══════════════════════════════════════════════════════════════
+  on("btn-cf-audit", "click", loadCloudflare);
+
+  // ═══════════════════════════════════════════════════════
+  //  SEQUENCES MODULE
+  // ═══════════════════════════════════════════════════════
   async function loadSequences() {
+    const c = g("sequence-steps-container");
+    if (!c) return;
     try {
-      const res = await fetch("/api/sequences?campaign_id=1");
-      const data = await res.json();
-      const container = document.getElementById("sequence-steps-container");
-      if (!container) return;
-
+      const data = await apiFetch("/api/sequences?campaign_id=1");
       if (!data.steps || data.steps.length === 0) {
-        container.innerHTML = `<p style="color: var(--text-dim);">Using dynamic AI autonomous sequences.</p>`;
+        c.innerHTML = `<p class="info-text">Running on AI autonomous sequences. No manual steps configured.</p>`;
         return;
       }
-
-      container.innerHTML = data.steps.map(s => `
-        <div class="sequence-step-card" style="background: var(--bg-card); border: 1px solid var(--border-subtle); border-radius: 14px; padding: 18px; margin-bottom: 14px;">
-          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-            <span style="font-weight: 700; color: var(--accent-primary);">Step ${s.step_number} (${s.delay_days} days delay)</span>
-            <span class="badge">${s.condition_type}</span>
+      c.innerHTML = data.steps.map(s => `
+        <div class="sequence-step-card">
+          <div style="display:flex; justify-content:space-between; margin-bottom:8px;">
+            <span style="font-weight:700; color:var(--brand-cyan);">Step ${s.step_number}</span>
+            <span style="font-size:12px; color:var(--text-dim);">${esc(s.delay_days)}d delay · ${esc(s.condition_type)}</span>
           </div>
-          <div style="font-weight: 600; font-size: 13.5px; margin-bottom: 4px;">${escapeHtml(s.subject_a)}</div>
-          <div style="font-size: 12.5px; color: var(--text-muted);">${escapeHtml(s.body_a.slice(0, 150))}...</div>
-        </div>
-      `).join("");
-    } catch (err) {
-      console.error("Sequences error:", err);
-    }
+          <div style="font-weight:600; margin-bottom:4px;">${esc(s.subject_a)}</div>
+          <div style="font-size:12.5px; color:var(--text-dim);">${esc(s.body_a?.slice(0, 160))}…</div>
+        </div>`).join("");
+    } catch {}
   }
 
-  // ═══════════════════════════════════════════════════════════════
-  //                      ENDPOINTS MODULE
-  // ═══════════════════════════════════════════════════════════════
+  // ═══════════════════════════════════════════════════════
+  //  AI ENDPOINTS MODULE
+  // ═══════════════════════════════════════════════════════
   async function loadEndpoints() {
+    const grid = g("endpoints-grid");
+    if (!grid) return;
     try {
-      const res = await fetch("/api/endpoints");
-      const data = await res.json();
-      const grid = document.getElementById("endpoints-grid");
-      if (!grid) return;
-
+      const data = await apiFetch("/api/endpoints");
       if (!data.endpoints || data.endpoints.length === 0) {
-        grid.innerHTML = `<p style="color: var(--text-dim); grid-column: 1/-1;">No custom endpoints configured yet.</p>`;
+        grid.innerHTML = `<p class="info-text">No AI endpoints configured yet. Click + Add Endpoint.</p>`;
         return;
       }
-
       grid.innerHTML = data.endpoints.map(e => `
         <div class="account-card">
-          <div class="account-header">
-            <span class="account-email">${escapeHtml(e.name)}</span>
-            <span class="provider-badge badge-cf-sending">${escapeHtml(e.model_name)}</span>
+          <div class="account-top">
+            <span class="account-email">${esc(e.name)}</span>
+            <span class="provider-badge provider-cf">${esc(e.model_name)}</span>
           </div>
-          <div style="font-size: 12px; color: var(--text-dim); word-break: break-all;">
-            URL: <code>${escapeHtml(e.base_url)}</code>
-          </div>
-        </div>
-      `).join("");
-    } catch (err) {}
+          <div style="font-size:12px; color:var(--text-dim); word-break:break-all;">URL: <code>${esc(e.base_url)}</code></div>
+        </div>`).join("");
+    } catch {}
   }
 
-  // ═══════════════════════════════════════════════════════════════
-  //                      SETTINGS MODULE
-  // ═══════════════════════════════════════════════════════════════
+  on("btn-add-endpoint", "click", () => showToast("AI endpoint manager coming soon!", "info"));
+
+  // ═══════════════════════════════════════════════════════
+  //  SETTINGS MODULE
+  // ═══════════════════════════════════════════════════════
   async function loadSettings() {
     try {
-      const res = await fetch("/api/settings");
-      const d = await res.json();
+      const d = await apiFetch("/api/settings");
       if (!d.success) return;
-
       const s = d.settings;
-      if (document.getElementById("set-sender-name")) document.getElementById("set-sender-name").value = s.sender_name || "";
-      if (document.getElementById("set-min-interval")) document.getElementById("set-min-interval").value = s.min_interval_seconds || 120;
-      if (document.getElementById("set-max-interval")) document.getElementById("set-max-interval").value = s.max_interval_seconds || 420;
-      if (document.getElementById("set-tracking-url")) document.getElementById("set-tracking-url").value = s.tracking_base_url || "";
-      if (document.getElementById("set-system-prompt")) document.getElementById("set-system-prompt").value = s.system_prompt || "";
-    } catch (err) {}
+      setVal("set-sender-name", s.sender_name || "");
+      setVal("set-min-interval", s.min_interval_seconds || 120);
+      setVal("set-max-interval", s.max_interval_seconds || 420);
+      setVal("set-tracking-url", s.tracking_base_url || "");
+      setVal("set-system-prompt", s.system_prompt || "");
+    } catch {}
   }
 
-  // ═══════════════════════════════════════════════════════════════
-  //                      GLOBAL CONTROLS
-  // ═══════════════════════════════════════════════════════════════
-  const btnQuickTest = document.getElementById("btn-quick-test");
-  if (btnQuickTest) {
-    btnQuickTest.addEventListener("click", async () => {
-      btnQuickTest.disabled = true;
-      btnQuickTest.textContent = "⚡ Sending...";
-      try {
-        const res = await fetch("/api/campaign/testsend", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ to_email: "rajdep.f12x@gmail.com" }),
-        });
-        const d = await res.json();
-        if (d.success) {
-          alert(`✅ Instant test email delivered to rajdep.f12x@gmail.com!\nLatency: ${d.elapsed_ms || 0}ms\nAccount: ${d.account_used}`);
-        } else {
-          alert(`❌ Test failed: ${d.error}`);
-        }
-      } catch (e) {
-        alert(`❌ Network error: ${e}`);
-      } finally {
-        btnQuickTest.disabled = false;
-        btnQuickTest.textContent = "⚡ Instant Test Send";
+  on("btn-save-settings", "click", async () => {
+    try {
+      const d = await apiFetch("/api/settings", "POST", {
+        sender_name:            getVal("set-sender-name"),
+        min_interval_seconds:   parseInt(getVal("set-min-interval")),
+        max_interval_seconds:   parseInt(getVal("set-max-interval")),
+        tracking_base_url:      getVal("set-tracking-url"),
+        system_prompt:          getVal("set-system-prompt"),
+      });
+      showToast(d.success ? "Settings saved!" : `Error: ${d.error}`, d.success ? "success" : "error");
+    } catch {}
+  });
+
+  // ═══════════════════════════════════════════════════════
+  //  GLOBAL CONTROLS (TOPBAR)
+  // ═══════════════════════════════════════════════════════
+  on("btn-quick-test", "click", async (e) => {
+    const btn = e.currentTarget;
+    btn.disabled = true;
+    btn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg> Testing…`;
+    try {
+      const d = await apiFetch("/api/campaign/testsend", "POST", { to_email: "rajdep.f12x@gmail.com" });
+      if (d.success) {
+        showToast(`Test delivered (${d.elapsed_ms || 0}ms) via ${d.account_used}`, "success");
+      } else {
+        showToast(`Test failed: ${d.error}`, "error");
       }
-    });
-  }
+    } finally {
+      btn.disabled = false;
+      btn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg> Test Send`;
+    }
+  });
 
-  const btnLaunchOutreach = document.getElementById("btn-launch-outreach");
-  if (btnLaunchOutreach) {
-    btnLaunchOutreach.addEventListener("click", async () => {
-      if (!confirm("🚀 Launch cold email campaign for all un-contacted leads?")) return;
-      btnLaunchOutreach.disabled = true;
-      btnLaunchOutreach.textContent = "▶️ Launching...";
-      try {
-        const res = await fetch("/api/campaign/launch", { method: "POST" });
-        const d = await res.json();
-        if (d.success) {
-          alert(`🎉 Campaign launched! Queued ${d.queued_count} leads for AI outreach.`);
-          loadDashboard();
-        } else {
-          alert(`⚠️ Notice: ${d.message || d.detail}`);
-        }
-      } catch (e) {
-        alert(`❌ Error: ${e}`);
-      } finally {
-        btnLaunchOutreach.disabled = false;
-        btnLaunchOutreach.textContent = "▶️ Launch Outreach";
+  on("btn-launch-outreach", "click", async (e) => {
+    if (!confirm("Launch cold email campaign for all un-contacted leads?")) return;
+    const btn = e.currentTarget;
+    btn.disabled = true;
+    btn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="5 3 19 12 5 21 5 3"/></svg> Launching…`;
+    try {
+      const d = await apiFetch("/api/campaign/launch", "POST");
+      if (d.success) {
+        showToast(`Campaign launched! ${d.queued_count} leads queued.`, "success");
+        const qd = g("queue-dot");
+        if (qd) qd.className = "status-dot running";
+        setEl("queue-status-text", `Queue: Running (${d.queued_count})`);
+        loadDashboard();
+      } else {
+        showToast(d.message || "Notice: campaign already running.", "info");
       }
-    });
+    } finally {
+      btn.disabled = false;
+      btn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="5 3 19 12 5 21 5 3"/></svg> Launch Campaign`;
+    }
+  });
+
+  // ═══════════════════════════════════════════════════════
+  //  TOAST NOTIFICATION SYSTEM
+  // ═══════════════════════════════════════════════════════
+  function showToast(msg, type = "info") {
+    const existing = document.querySelector(".flinza-toast-container");
+    const container = existing || (() => {
+      const c = document.createElement("div");
+      c.className = "flinza-toast-container";
+      c.style.cssText = "position:fixed; bottom:24px; right:24px; display:flex; flex-direction:column; gap:8px; z-index:9999;";
+      document.body.appendChild(c);
+      return c;
+    })();
+
+    const colors = {
+      success: { bg: "rgba(52,211,153,0.12)", border: "rgba(52,211,153,0.3)", color: "#34d399" },
+      error:   { bg: "rgba(251,113,133,0.12)", border: "rgba(251,113,133,0.3)", color: "#fb7185" },
+      info:    { bg: "rgba(126,206,206,0.12)", border: "rgba(126,206,206,0.3)", color: "#7ECECE" },
+    };
+
+    const c = colors[type] || colors.info;
+    const toast = document.createElement("div");
+    toast.style.cssText = `
+      background: ${c.bg};
+      border: 1px solid ${c.border};
+      color: ${c.color};
+      padding: 10px 16px;
+      border-radius: 10px;
+      font-family: var(--font-body);
+      font-size: 13px;
+      font-weight: 500;
+      backdrop-filter: blur(12px);
+      box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+      animation: fadeUp 0.2s ease;
+      max-width: 320px;
+    `;
+    toast.textContent = msg;
+    container.appendChild(toast);
+    setTimeout(() => {
+      toast.style.opacity = "0";
+      toast.style.transition = "opacity 0.3s ease";
+      setTimeout(() => toast.remove(), 300);
+    }, 3500);
   }
 
-  // Helper
-  function escapeHtml(text) {
-    if (!text) return "";
-    return String(text)
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")
-      .replace(/"/g, "&quot;")
-      .replace(/'/g, "&#039;");
+  // ═══════════════════════════════════════════════════════
+  //  HELPER UTILITIES
+  // ═══════════════════════════════════════════════════════
+
+  function g(id) { return document.getElementById(id); }
+  function esc(t) {
+    if (!t) return "";
+    return String(t).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#039;");
+  }
+  function setEl(id, text) { const el = g(id); if (el) el.textContent = text; }
+  function setVal(id, val) { const el = g(id); if (el) el.value = val; }
+  function getVal(id) { return g(id)?.value?.trim() || ""; }
+
+  function on(id, ev, handler) {
+    const el = g(id);
+    if (el) el.addEventListener(ev, handler);
   }
 
-  // Initial load
+  function debounce(fn, ms) {
+    let t;
+    return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), ms); };
+  }
+
+  async function apiFetch(url, method = "GET", body = null) {
+    const opts = { method, headers: {} };
+    if (body) { opts.headers["Content-Type"] = "application/json"; opts.body = JSON.stringify(body); }
+    const res = await fetch(url, opts);
+    return res.json();
+  }
+
+  function openModal(id) {
+    const el = g(id);
+    if (el) { el.style.display = "flex"; requestAnimationFrame(() => el.classList.add("active")); }
+  }
+
+  function closeModal(id) {
+    const el = g(id);
+    if (el) { el.classList.remove("active"); setTimeout(() => { el.style.display = ""; }, 200); }
+  }
+
+  function closeAllModals() {
+    ["backdrop-compose", "backdrop-create-alias"].forEach(closeModal);
+  }
+
+  function tagToClass(tag) {
+    const t = (tag || "").toLowerCase();
+    if (t.includes("interest")) return "chip-interested";
+    if (t.includes("sent"))     return "chip-sent";
+    if (t.includes("draft"))    return "chip-draft";
+    if (t.includes("admin"))    return "chip-admin";
+    return "chip-inbound";
+  }
+
+  function formatTime(ts) {
+    if (!ts) return "";
+    const d = new Date(ts);
+    const now = new Date();
+    const diffMs = now - d;
+    if (diffMs < 60000) return "Just now";
+    if (diffMs < 3600000) return `${Math.floor(diffMs / 60000)}m ago`;
+    if (diffMs < 86400000) return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    return d.toLocaleDateString([], { month: "short", day: "numeric" });
+  }
+
+  function routeMode(mode, a) {
+    if (mode === "cloudflare_api") return {
+      cls: "chip-cf", label: "⚡ Cloudflare",
+      desc: `Edge REST API — zero SMTP credentials`
+    };
+    if (mode === "external_smtp") return {
+      cls: "chip-ses", label: "🚀 SMTP/SES",
+      desc: `Routes via ${a.smtp_host || "Amazon SES"}`
+    };
+    return {
+      cls: "chip-gmail", label: "✉️ Gmail Relay",
+      desc: `Send-As via ${a.smtp_user || "connected Gmail"}`
+    };
+  }
+
+  function populateFromSelect(accounts, aliases) {
+    const sel = g("compose-from-select");
+    if (!sel) return;
+    sel.innerHTML = "";
+
+    if (aliases.length > 0) {
+      const grp = document.createElement("optgroup");
+      grp.label = "Domain Aliases";
+      aliases.forEach(al => {
+        const opt = document.createElement("option");
+        opt.value = al.alias;
+        opt.textContent = `${al.display_name || "Alias"} <${al.alias}>`;
+        grp.appendChild(opt);
+      });
+      sel.appendChild(grp);
+    }
+
+    if (accounts.length > 0) {
+      const grp = document.createElement("optgroup");
+      grp.label = "Master Accounts";
+      accounts.forEach(a => {
+        const opt = document.createElement("option");
+        opt.value = a.email;
+        opt.textContent = `${a.email} (${a.provider || "SMTP"})`;
+        grp.appendChild(opt);
+      });
+      sel.appendChild(grp);
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════
+  //  INIT
+  // ═══════════════════════════════════════════════════════
   loadWebmailThreads("inbox");
   loadDashboard();
+
+  // Add spin keyframe dynamically
+  const styleEl = document.createElement("style");
+  styleEl.textContent = `
+    @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+    @keyframes fadeUp { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+  `;
+  document.head.appendChild(styleEl);
+
 });
