@@ -205,17 +205,19 @@ def send_email_now(to_email: str, subject: str, body: str, account: dict, tracki
         return {"success": False, "error": f"Send error: {str(e)}", "account_used": from_email}
 
 
-def send_test_email(to_email: str, from_account_email: str = None) -> dict:
+def send_test_email(to_email: str, from_account_email: str = None, target_account: str = None) -> dict:
     """
     Sends a test email to verify mailbox deliverability, headers, and credentials.
     """
     import time
     start_t = time.time()
 
+    from_account = from_account_email or target_account
+
     # Find account or pick next available
     account = None
-    if from_account_email:
-        target = from_account_email.strip().lower()
+    if from_account:
+        target = from_account.strip().lower()
         # Check gmail accounts
         accs = db.get_all_accounts()
         for a in accs:

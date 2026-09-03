@@ -7,6 +7,7 @@ Google OAuth2 callback processing, and serving the Studio Single-Page Applicatio
 import os
 import json
 import logging
+import threading
 from pathlib import Path
 from typing import Optional
 from fastapi import FastAPI, Request, Response, Query, Form, UploadFile, File, BackgroundTasks, HTTPException
@@ -27,6 +28,7 @@ import ai_router
 import email_toolkit
 import google_auth
 import tracking_server
+import outreach_engine
 
 logger = logging.getLogger(__name__)
 
@@ -526,9 +528,14 @@ async def send_unibox_reply(request: Request):
 
 @app.post("/api/unibox/check")
 async def poll_inboxes():
-    """Forces immediate check of all inboxes for replies."""
-    replies = reply_watcher.check_now()
-    return {"success": True, "new_replies_count": len(replies)}
+    """Triggers immediate check of all inboxes for replies in background."""
+    def _do_poll():
+        try:
+            reply_watcher.check_now()
+        except Exception as e:
+            logger.error(f"Background inbox check error: {e}")
+    threading.Thread(target=_do_poll, daemon=True).start()
+    return {"success": True, "message": "Reply sync started in background"}
 
 
 # ── Webmail & Priority Inbox Endpoints (Mailflare Style) ──────
@@ -856,6 +863,249 @@ async def trigger_testsend(request: Request):
     to_email = b.get("to_email", "rajdep.f12x@gmail.com")
     account_email = b.get("account_email")
     res = email_sender.send_test_email(to_email, target_account=account_email)
+    return res
+
+
+# ── Campaign Control Routes (aliases for JS compatibility) ────────
+@app.post("/api/campaign/testsend")
+async def campaign_testsend(request: Request):
+    """Alias: Sends a live test email (JS-compatible route)."""
+    b = await request.json()
+    to_email = b.get("to_email", "rajdep.f12x@gmail.com")
+    account_email = b.get("account_email")
+    import time
+    start = time.time()
+    res = email_sender.send_test_email(to_email, target_account=account_email)
+    res["elapsed_ms"] = round((time.time() - start) * 1000)
+    return res
+
+
+@app.post("/api/campaign/launch")
+async def campaign_launch(request: Request, background_tasks: BackgroundTasks):
+    """Launches outreach campaign for all uncontacted leads."""
+    b = await request.json()
+    dry_run = b.get("dry_run", False)
+    campaign_id = int(b.get("campaign_id", 1))
+    result = outreach_engine.launch_campaign(campaign_id=campaign_id, dry_run=dry_run)
+    if result.get("success") and result.get("queued_count", 0) > 0 and not dry_run:
+        background_tasks.add_task(email_queue.start_queue)
+    return result
+
+
+@app.post("/api/campaign/pause")
+async def campaign_pause():
+    """Pauses the sending queue."""
+    msg = email_queue.pause_queue()
+    return {"success": True, "message": msg, "queue_status": "paused"}
+
+
+@app.post("/api/campaign/resume")
+async def campaign_resume():
+    """Resumes the sending queue."""
+    msg = email_queue.resume_queue()
+    return {"success": True, "message": msg, "queue_status": "running"}
+
+
+@app.get("/api/campaign/status")
+async def campaign_status():
+    """Returns live queue status, running state, and queued count."""
+    is_running = email_queue.is_running()
+    is_paused  = email_queue.is_paused()
+    stats = db.get_stats()
+    return {
+        "success": True,
+        "queue_status": "paused" if is_paused else ("running" if is_running else "idle"),
+        "is_running": is_running,
+        "is_paused": is_paused,
+        "queued_count": stats.get("queued_count", 0),
+        "sent_today": stats.get("sent_today", 0),
+    }
+
+
+# ── Warmup & Account Health ───────────────────────────────────────
+@app.get("/api/warmup/stats")
+async def warmup_stats():
+    """Returns warmup health stats for all accounts."""
+    stats = outreach_engine.get_account_warmup_stats()
+    return {"success": True, "accounts": stats}
+
+
+@app.post("/api/warmup/audit")
+async def warmup_audit():
+    """Scans accounts and auto-pauses those exceeding bounce/spam thresholds."""
+    paused = outreach_engine.check_and_auto_pause_unhealthy_accounts()
+    return {"success": True, "auto_paused": paused, "count": len(paused)}
+
+
+# ── Deliverability Score ──────────────────────────────────────────
+@app.post("/api/score")
+async def deliverability_score(request: Request):
+    """Scores an email subject + body for deliverability (0-100)."""
+    b = await request.json()
+    subject = b.get("subject", "")
+    body = b.get("body", "")
+    result = outreach_engine.score_email_deliverability(subject, body)
+    return {"success": True, **result}
+
+
+# ── A/B Spintax Preview ───────────────────────────────────────────
+@app.post("/api/spintax/preview")
+async def spintax_preview(request: Request):
+    """Generates N resolved variants of a spintax template."""
+    b = await request.json()
+    text = b.get("text", "")
+    count = min(int(b.get("count", 5)), 10)
+    variants = outreach_engine.preview_spin_variants(text, count=count)
+    return {"success": True, "variants": variants, "count": len(variants)}
+
+
+# ── Reply Intent Classification ───────────────────────────────────
+@app.post("/api/reply/classify")
+async def classify_reply(request: Request):
+    """Classifies a reply body for intent and generates an AI draft reply."""
+    b = await request.json()
+    body = b.get("body", "")
+    subject = b.get("subject", "")
+    lead_id = b.get("lead_id")
+    lead = None
+    if lead_id:
+        lead = db.get_lead_by_id(lead_id)
+        lead = dict(lead) if lead else None
+    result = outreach_engine.ai_classify_reply_and_draft(body, subject, lead=lead)
+    return {"success": True, **result}
+
+
+# ── Terminal Command Runner ───────────────────────────────────────
+@app.post("/api/terminal")
+async def run_terminal_command(request: Request):
+    """Executes a text terminal command and returns output (used by Terminal tab)."""
+    b = await request.json()
+    command = b.get("command", "").strip()
+    if not command:
+        return {"success": False, "output": "Empty command"}
+    result = outreach_engine.dispatch_terminal_command(command)
+    return result
+
+
+@app.get("/api/terminal/help")
+async def terminal_help():
+    """Returns list of all available terminal commands."""
+    cmds = sorted(outreach_engine.COMMAND_REGISTRY.keys())
+    return {"success": True, "commands": cmds}
+
+
+# ── Smartlead Webhook ─────────────────────────────────────────────
+@app.post("/webhook/smartlead")
+async def smartlead_webhook(request: Request):
+    """Ingests Smartlead reply/open/bounce webhook events."""
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = {}
+    result = outreach_engine.ingest_smartlead_webhook(payload)
+    return result
+
+
+# ── SMTP Verification ─────────────────────────────────────────────
+@app.post("/api/smtp/verify")
+async def smtp_verify(request: Request):
+    """Tests SMTP credentials without sending. Returns latency + auth result."""
+    b = await request.json()
+    result = outreach_engine.verify_smtp_connection(
+        smtp_host=b.get("smtp_host", "smtp.gmail.com"),
+        smtp_port=int(b.get("smtp_port", 587)),
+        smtp_user=b.get("smtp_user", ""),
+        smtp_pass=b.get("smtp_pass", ""),
+    )
+    return result
+
+
+
+
+
+# ── Analytics Endpoints ───────────────────────────────────────────
+@app.get("/api/analytics")
+async def get_analytics():
+    """Returns detailed analytics: per-account stats, hourly send distribution, reply funnel."""
+    try:
+        stats     = db.get_stats()
+        tracking  = db.get_tracking_stats()
+        pipeline  = db.get_pipeline_breakdown()
+        warmup    = outreach_engine.get_account_warmup_stats()
+        return {
+            "success": True,
+            "stats": stats,
+            "tracking": tracking,
+            "pipeline": pipeline,
+            "warmup": warmup,
+        }
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+# ── Webmail Compose Alias ─────────────────────────────────────────
+@app.post("/api/webmail/compose")
+async def webmail_compose(request: Request):
+    """Sends an email from the compose modal using smart routing."""
+    b = await request.json()
+    from_account = b.get("from_account", "").strip()
+    to_email     = b.get("to_email", "").strip()
+    subject      = b.get("subject", "")
+    body         = b.get("body", "")
+    reply_to_id  = b.get("reply_to_id")  # optional thread stitching
+
+    if not to_email or "@" not in to_email:
+        raise HTTPException(status_code=400, detail="Valid to_email required")
+
+    # Pick account
+    account = None
+    if from_account:
+        accs = db.get_all_accounts()
+        for a in accs:
+            if a["email"].lower() == from_account.lower():
+                account = {
+                    "id": a["email"], "type": "gmail",
+                    "from_email": a["email"], "smtp_user": a["email"],
+                    "smtp_pass": a.get("app_password"), "proxy_url": a.get("proxy_url"),
+                    "display_name": a.get("label") or "",
+                    "provider": a.get("provider") or "gmail",
+                }
+                break
+        if not account:
+            aliases = db.get_all_aliases()
+            for al in aliases:
+                if al["alias"].lower() == from_account.lower():
+                    master_accs = db.get_all_accounts()
+                    master = next((x for x in master_accs if x["email"] == al.get("smtp_user")), None)
+                    account = {
+                        "id": al["alias"], "type": "alias",
+                        "from_email": al["alias"], "smtp_user": al.get("smtp_user") or al["alias"],
+                        "smtp_pass": master["app_password"] if master else al.get("smtp_pass"),
+                        "display_name": al.get("display_name") or "",
+                        "routing_mode": al.get("routing_mode", "gmail_send_as"),
+                        "provider": al.get("routing_mode", "gmail_send_as"),
+                    }
+                    break
+
+    if not account:
+        account = outreach_engine.pick_best_account(lead_email=to_email)
+
+    if not account:
+        raise HTTPException(status_code=400, detail="No sending account available. Connect a Gmail account first.")
+
+    # Build reply headers if this is a reply
+    extra_headers = {}
+    if reply_to_id:
+        thread = db.get_reply_thread(reply_to_id)
+        if thread:
+            extra_headers = outreach_engine.build_reply_headers(dict(thread))
+
+    res = email_sender.send_email_now(
+        to_email=to_email,
+        subject=subject,
+        body=body,
+        account=account,
+    )
     return res
 
 

@@ -1647,8 +1647,371 @@ html, body {
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   padding: 18px;
+/* ══════════════════════════════
+   CAMPAIGN BUILDER & DELIVERABILITY LAB
+══════════════════════════════ */
+.builder-layout {
+  display: grid;
+  grid-template-columns: 1.15fr 0.85fr;
+  gap: 16px;
+  align-items: start;
+}
+
+.builder-editor-card,
+.builder-diagnostics-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  padding: 20px;
+}
+
+.tag-chips-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.tag-chip-label {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-dim);
+  text-transform: uppercase;
+}
+
+.btn-tag-chip {
+  background: var(--bg-card-2);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 3px 8px;
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--brand-cyan);
+  cursor: pointer;
+  transition: all 0.12s ease;
+}
+
+.btn-tag-chip:hover {
+  background: var(--bg-active);
+  border-color: var(--brand-cyan);
+  transform: translateY(-1px);
+}
+
+.score-header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 16px;
+}
+
+.score-dial {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  border: 3px solid var(--brand-cyan);
+  box-shadow: 0 0 16px rgba(126, 206, 206, 0.25);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.score-dial-val {
+  font-family: var(--font-display);
+  font-size: 20px;
+  font-weight: 800;
+  color: var(--text-primary);
+  line-height: 1;
+}
+
+.score-dial-lbl {
+  font-size: 8px;
+  font-weight: 700;
+  color: var(--text-dim);
+  letter-spacing: 0.5px;
+}
+
+.diagnostics-section {
+  margin-bottom: 16px;
+}
+
+.diagnostics-title {
+  font-size: 11.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-dim);
+  margin-bottom: 8px;
+}
+
+.diagnostics-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.diagnostics-list li {
+  font-size: 12px;
+  color: var(--rose);
+  padding-left: 12px;
+  position: relative;
+  line-height: 1.4;
+}
+
+.diagnostics-list li::before {
+  content: '•';
+  position: absolute;
+  left: 0;
+  color: inherit;
+}
+
+.diagnostics-list.suggestions li {
+  color: var(--brand-cyan);
+}
+
+.preview-box {
+  background: var(--bg-card-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 12px;
+  min-height: 90px;
+  font-family: var(--font-body);
+}
+
+/* ══════════════════════════════
+   A/B LAB VARIANT CARDS
+══════════════════════════════ */
+.ab-variants-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.ab-variant-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 16px;
+  transition: all 0.15s ease;
+}
+
+.ab-variant-card:hover {
+  border-color: var(--border-med);
+  box-shadow: var(--shadow-sm);
+}
+
+.ab-variant-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.ab-variant-num {
+  font-size: 11px;
+  font-weight: 800;
+  color: var(--brand-cyan);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.ab-variant-body {
+  font-size: 13px;
+  color: var(--text-primary);
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
+
+/* ══════════════════════════════
+   COMMAND TERMINAL CONSOLE
+══════════════════════════════ */
+.terminal-quick-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
   margin-bottom: 12px;
 }
+
+.terminal-chip {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 5px 10px;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.12s ease;
+}
+
+.terminal-chip:hover {
+  background: var(--bg-hover);
+  color: var(--brand-cyan);
+  border-color: var(--brand-cyan);
+  transform: translateY(-1px);
+}
+
+.terminal-window {
+  background: #05060a;
+  border: 1px solid rgba(126, 206, 206, 0.25);
+  border-radius: var(--radius-xl);
+  overflow: hidden;
+  box-shadow: var(--shadow-lg), 0 0 30px rgba(126, 206, 206, 0.08);
+  display: flex;
+  flex-direction: column;
+  height: 520px;
+}
+
+.terminal-titlebar {
+  height: 38px;
+  background: #090a12;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 14px;
+}
+
+.term-dots {
+  display: flex;
+  gap: 6px;
+}
+
+.term-dots .dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+
+.dot-red    { background: #ef4444; }
+.dot-yellow { background: #f59e0b; }
+.dot-green  { background: #10b981; }
+
+.term-title {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-dim);
+  letter-spacing: 0.3px;
+}
+
+.term-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--emerald);
+  font-family: var(--font-mono);
+}
+
+.terminal-output {
+  flex: 1;
+  padding: 16px;
+  overflow-y: auto;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: #c9d1d9;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255,255,255,0.1) transparent;
+}
+
+.term-line {
+  word-break: break-word;
+  white-space: pre-wrap;
+}
+
+.term-line.cmd-entry {
+  color: var(--brand-cyan);
+  font-weight: 600;
+}
+
+.term-line.banner {
+  color: var(--text-dim);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.terminal-input-row {
+  display: flex;
+  align-items: center;
+  background: #080910;
+  border-top: 1px solid var(--border);
+  padding: 8px 14px;
+  gap: 10px;
+}
+
+.terminal-prompt {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--emerald);
+  flex-shrink: 0;
+}
+
+#terminal-cli-input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  outline: none;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  color: #fff;
+}
+
+#terminal-cli-input::placeholder {
+  color: var(--text-dim);
+}
+
+.terminal-send-btn {
+  background: var(--brand-grad);
+  color: #000;
+  border: none;
+  border-radius: var(--radius-sm);
+  padding: 6px 14px;
+  font-family: var(--font-body);
+  font-size: 11.5px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: opacity 0.12s ease;
+}
+
+.terminal-send-btn:hover {
+  opacity: 0.9;
+}
+
+/* Webhook Card in Analytics */
+.webhook-card {
+  background: var(--bg-card-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 12px 14px;
+}
+
+.webhook-url {
+  display: block;
+  margin-top: 6px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--brand-cyan);
+  word-break: break-all;
+  background: rgba(126, 206, 206, 0.08);
+  padding: 6px 10px;
+  border-radius: 6px;
+  border: 1px solid rgba(126, 206, 206, 0.15);
+}
+
+
 
 /* ══════════════════════════════
    RESPONSIVE (Telegram Mini App)

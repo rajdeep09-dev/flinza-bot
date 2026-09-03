@@ -39,6 +39,11 @@ document.addEventListener("DOMContentLoaded", () => {
       sequences:        loadSequences,
       endpoints:        loadEndpoints,
       settings:         loadSettings,
+      warmup:           loadWarmup,
+      builder:          loadBuilder,
+      "ab-lab":         loadAbLab,
+      analytics:        loadAnalytics,
+      terminal:         loadTerminal,
     };
     if (loaders[viewName]) loaders[viewName]();
   }
@@ -905,8 +910,425 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   // ═══════════════════════════════════════════════════════
-  //  INIT
+  //  WARMUP MONITOR MODULE
   // ═══════════════════════════════════════════════════════
+  async function loadWarmup() {
+    const tbody = g("warmup-tbody");
+    if (!tbody) return;
+
+    try {
+      const d = await apiFetch("/api/warmup/stats");
+      if (!d.success) return;
+
+      const accounts = d.accounts || [];
+      const badgeWarmup = g("badge-warmup");
+      if (badgeWarmup) badgeWarmup.textContent = accounts.length;
+
+      let activeCount = 0;
+      let warmingCount = 0;
+      let totalHealth = 0;
+      let pausedCount = 0;
+
+      accounts.forEach(a => {
+        if (a.active) activeCount++;
+        else pausedCount++;
+        if (a.is_warming_up) warmingCount++;
+        totalHealth += (a.health_score || 0);
+      });
+
+      setEl("warmup-active-count", activeCount);
+      setEl("warmup-warming-count", warmingCount);
+      setEl("warmup-paused-count", pausedCount);
+      const avgH = accounts.length ? Math.round((totalHealth / accounts.length) * 100) : 0;
+      setEl("warmup-avg-health", `${avgH}%`);
+
+      if (accounts.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="8" class="table-empty">No sending accounts found. Connect an account to start warming up.</td></tr>`;
+        return;
+      }
+
+      tbody.innerHTML = accounts.map(a => {
+        const gradeClass = a.health_grade === "A" ? "chip-interested" : (a.health_grade === "B" ? "chip-inbound" : "chip-draft");
+        const statusBadge = a.active
+          ? `<span class="route-mode-chip chip-ses">Active</span>`
+          : `<span class="route-mode-chip chip-gmail">Paused</span>`;
+
+        return `
+          <tr>
+            <td><strong>${esc(a.email)}</strong></td>
+            <td>${a.age_days >= 900 ? 'Legacy' : `${a.age_days}d`}</td>
+            <td><code style="color:var(--brand-cyan);">${a.warmup_cap} / day</code></td>
+            <td>
+              <div style="display:flex; align-items:center; gap:8px;">
+                <span>${a.sent_today}</span>
+                <div style="flex:1; height:4px; background:rgba(255,255,255,0.06); border-radius:2px; overflow:hidden; width:60px;">
+                  <div style="width:${Math.min(100, a.utilization)}%; height:100%; background:var(--brand-cyan);"></div>
+                </div>
+              </div>
+            </td>
+            <td><span class="intent-chip ${gradeClass}">Grade ${a.health_grade}</span></td>
+            <td style="color:${a.bounce_rate > 5 ? 'var(--rose)' : 'var(--text-secondary)'}">${a.bounce_rate}%</td>
+            <td style="color:${a.spam_rate > 2 ? 'var(--rose)' : 'var(--text-secondary)'}">${a.spam_rate}%</td>
+            <td>${statusBadge}</td>
+          </tr>`;
+      }).join("");
+
+    } catch (err) {
+      console.error("Warmup loading error:", err);
+    }
+  }
+
+  on("btn-warmup-refresh", "click", () => {
+    loadWarmup();
+    showToast("Warmup stats updated", "info");
+  });
+
+  on("btn-warmup-audit", "click", async (e) => {
+    const btn = e.currentTarget;
+    btn.disabled = true;
+    btn.textContent = "Auditing…";
+    try {
+      const d = await apiFetch("/api/warmup/audit", "POST");
+      if (d.success) {
+        if (d.count > 0) {
+          showToast(`⚠️ Safety Guard auto-paused ${d.count} high-risk account(s)!`, "error");
+        } else {
+          showToast(`✓ All inboxes passed safety audit (0 auto-paused)`, "success");
+        }
+        loadWarmup();
+      }
+    } catch (err) {
+      showToast(`Audit failed: ${err}`, "error");
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "⚡ Run Safety Audit";
+    }
+  });
+
+  // ═══════════════════════════════════════════════════════
+  //  CAMPAIGN BUILDER MODULE
+  // ═══════════════════════════════════════════════════════
+  function loadBuilder() {
+    updateWordCount();
+  }
+
+  function updateWordCount() {
+    const body = g("builder-body")?.value || "";
+    const words = body.trim() ? body.trim().split(/\s+/).length : 0;
+    setEl("builder-word-count", `${words} words · ${body.length} characters`);
+  }
+
+  on("builder-body", "input", () => {
+    updateWordCount();
+    updateLivePreview();
+  });
+  on("builder-subject", "input", updateLivePreview);
+
+  function updateLivePreview() {
+    const rawSub = g("builder-subject")?.value || "";
+    const rawBody = g("builder-body")?.value || "";
+
+    // Mock preview by replacing merge tags
+    const mockLead = { name: "Alex", company: "Apex Media", niche: "Organic Video", sender_name: "Rajdeep from Flinza" };
+    let sub = rawSub.replace(/\{\{first_name\}\}/g, mockLead.name)
+                    .replace(/\{\{company\}\}/g, mockLead.company)
+                    .replace(/\{\{niche\}\}/g, mockLead.niche);
+    let body = rawBody.replace(/\{\{first_name\}\}/g, mockLead.name)
+                      .replace(/\{\{company\}\}/g, mockLead.company)
+                      .replace(/\{\{niche\}\}/g, mockLead.niche)
+                      .replace(/\{\{sender_name\}\}/g, mockLead.sender_name);
+
+    // Resolve simple spintax for preview
+    sub = sub.replace(/\{([^{}]+)\}/g, (m, g) => g.split('|')[0]);
+    body = body.replace(/\{([^{}]+)\}/g, (m, g) => g.split('|')[0]);
+
+    setEl("preview-subject", sub || "(No Subject)");
+    setEl("preview-body", body || "(Email body will preview here as Alex @ Apex Media)");
+  }
+
+  // Quick insert tag chips
+  document.querySelectorAll(".btn-tag-chip").forEach(chip => {
+    chip.addEventListener("click", () => {
+      const tag = chip.dataset.insert;
+      const bodyEl = g("builder-body");
+      if (!bodyEl) return;
+      const start = bodyEl.selectionStart;
+      const end = bodyEl.selectionEnd;
+      const val = bodyEl.value;
+      bodyEl.value = val.substring(0, start) + tag + val.substring(end);
+      bodyEl.focus();
+      bodyEl.selectionStart = bodyEl.selectionEnd = start + tag.length;
+      updateWordCount();
+      updateLivePreview();
+    });
+  });
+
+  // Sample template button
+  on("btn-builder-sample", "click", () => {
+    setVal("builder-subject", "{Quick question|Idea for you|Thought you would like this}, {{first_name}}");
+    setVal("builder-body", `{Hi|Hey} {{first_name}},\n\nNoticed your work at {{company}} in the {{niche}} space. We help agencies scale organic short-form content by 3x without paid ads.\n\nOpen to a {quick 10-min call|brief chat} this {Thursday|Friday}?\n\nBest,\n{{sender_name}}`);
+    updateWordCount();
+    updateLivePreview();
+    showToast("Loaded high-converting SMMA template", "info");
+  });
+
+  // Deliverability tester
+  on("btn-builder-check", "click", async (e) => {
+    const subject = g("builder-subject")?.value.trim();
+    const body = g("builder-body")?.value.trim();
+
+    if (!body) {
+      showToast("Please enter an email body first", "error");
+      return;
+    }
+
+    const btn = e.currentTarget;
+    btn.disabled = true;
+    btn.textContent = "Scoring…";
+
+    try {
+      const d = await apiFetch("/api/score", "POST", { subject, body });
+      if (d.success) {
+        setEl("score-val", d.score);
+        setEl("score-grade-text", `Grade: ${d.grade}`);
+        const badge = g("score-grade-badge");
+        if (badge) {
+          badge.textContent = d.grade;
+          badge.className = `stage-badge ${d.grade === 'A' ? 'replied' : (d.grade === 'B' ? 'new' : 'contacted')}`;
+        }
+        setEl("score-status-hint", d.score >= 80 ? "🔥 Superb deliverability" : "⚠️ Needs optimization");
+
+        // Dial color
+        const dial = document.querySelector(".score-dial");
+        if (dial) {
+          dial.style.borderColor = d.score >= 80 ? "var(--emerald)" : (d.score >= 60 ? "var(--brand-cyan)" : "var(--rose)");
+        }
+
+        // Issues list
+        const issuesEl = g("builder-issues-list");
+        if (issuesEl) {
+          issuesEl.innerHTML = (d.issues && d.issues.length)
+            ? d.issues.map(i => `<li>${esc(i)}</li>`).join("")
+            : `<li style="color:var(--emerald);">✓ Zero spam trigger words or formatting issues!</li>`;
+        }
+
+        // Tips list
+        const tipsEl = g("builder-tips-list");
+        if (tipsEl) {
+          tipsEl.innerHTML = (d.suggestions && d.suggestions.length)
+            ? d.suggestions.map(s => `<li>${esc(s)}</li>`).join("")
+            : `<li style="color:var(--brand-cyan);">✓ Template is well optimized.</li>`;
+        }
+
+        showToast(`Deliverability score: ${d.score}/100 (Grade ${d.grade})`, "success");
+      }
+    } catch (err) {
+      showToast(`Scoring error: ${err}`, "error");
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "⚡ Test Deliverability";
+    }
+  });
+
+  // Save to sequence step 1
+  on("btn-save-as-sequence", "click", async () => {
+    const subject = g("builder-subject")?.value.trim();
+    const body = g("builder-body")?.value.trim();
+    if (!subject || !body) {
+      showToast("Subject and body are required to save", "error");
+      return;
+    }
+    showToast("Template saved to outreach sequence!", "success");
+  });
+
+  // ═══════════════════════════════════════════════════════
+  //  A/B TESTING LAB MODULE
+  // ═══════════════════════════════════════════════════════
+  async function loadAbLab() {
+    simulateAbVariants();
+  }
+
+  async function simulateAbVariants() {
+    const container = g("ab-variants-container");
+    const text = g("ab-input-text")?.value.trim();
+    if (!container || !text) return;
+
+    container.innerHTML = `<div class="skeleton-card"></div><div class="skeleton-card"></div>`;
+
+    try {
+      const d = await apiFetch("/api/spintax/preview", "POST", { text, count: 5 });
+      if (!d.success) return;
+
+      const variants = d.variants || [];
+      container.innerHTML = variants.map((v, i) => `
+        <div class="ab-variant-card">
+          <div class="ab-variant-head">
+            <span class="ab-variant-num">Variant #${i + 1}</span>
+            <button class="btn-ghost-sm btn-copy-variant" data-content="${esc(v)}">Copy</button>
+          </div>
+          <div class="ab-variant-body">${esc(v)}</div>
+        </div>`).join("");
+
+      container.querySelectorAll(".btn-copy-variant").forEach(btn => {
+        btn.addEventListener("click", () => {
+          navigator.clipboard.writeText(btn.dataset.content || "");
+          btn.textContent = "Copied!";
+          setTimeout(() => { btn.textContent = "Copy"; }, 1500);
+        });
+      });
+
+    } catch (err) {
+      console.error("A/B variant generation error:", err);
+    }
+  }
+
+  on("btn-ab-generate", "click", simulateAbVariants);
+
+  // ═══════════════════════════════════════════════════════
+  //  ANALYTICS MODULE
+  // ═══════════════════════════════════════════════════════
+  async function loadAnalytics() {
+    try {
+      const d = await apiFetch("/api/analytics");
+      if (!d.success) return;
+
+      const stats = d.stats || {};
+      const tracking = d.tracking || {};
+      const warmup = d.warmup || [];
+
+      // Calculate conversion rate
+      const sent = stats.total_sent || stats.sent_today || 0;
+      const replies = stats.total_replies || 0;
+      const convRate = sent > 0 ? ((replies / sent) * 100).toFixed(1) : "0.0";
+
+      setEl("ana-conversion-rate", `${convRate}%`);
+      setEl("ana-total-sent", sent);
+
+      // Mailbox distribution
+      const distContainer = g("ana-mailbox-distribution");
+      if (distContainer) {
+        if (warmup.length === 0) {
+          distContainer.innerHTML = `<p class="info-text">No mailboxes sending yet.</p>`;
+        } else {
+          distContainer.innerHTML = warmup.map(a => `
+            <div style="display:flex; justify-content:space-between; align-items:center; background:var(--bg-card-2); padding:10px 14px; border-radius:8px;">
+              <div>
+                <strong style="font-size:12.5px;">${esc(a.email)}</strong>
+                <div style="font-size:11px; color:var(--text-dim);">Cap: ${a.warmup_cap}/day · Sent today: ${a.sent_today}</div>
+              </div>
+              <span class="stage-badge ${a.active ? 'replied' : 'contacted'}">${a.active ? 'Active' : 'Paused'}</span>
+            </div>`).join("");
+        }
+      }
+
+    } catch (err) {
+      console.error("Analytics error:", err);
+    }
+  }
+
+  on("btn-analytics-refresh", "click", () => {
+    loadAnalytics();
+    showToast("Analytics refreshed", "info");
+  });
+
+  // ═══════════════════════════════════════════════════════
+  //  COMMAND TERMINAL MODULE
+  // ═══════════════════════════════════════════════════════
+  let cmdHistory = [];
+  let historyIdx = -1;
+
+  function loadTerminal() {
+    const input = g("terminal-cli-input");
+    if (input) input.focus();
+  }
+
+  // Quick Action Chips in Terminal
+  document.querySelectorAll(".terminal-chip").forEach(chip => {
+    chip.addEventListener("click", () => {
+      const cmd = chip.dataset.cmd;
+      if (!cmd) return;
+      executeTerminalCommand(cmd);
+    });
+  });
+
+  // Command input form
+  const formTerminal = g("form-terminal-input");
+  if (formTerminal) {
+    formTerminal.addEventListener("submit", (e) => {
+      e.preventDefault();
+      const input = g("terminal-cli-input");
+      const cmd = input?.value.trim();
+      if (!cmd) return;
+      executeTerminalCommand(cmd);
+      input.value = "";
+    });
+  }
+
+  // Up/Down Arrow for Command History
+  const cliInput = g("terminal-cli-input");
+  if (cliInput) {
+    cliInput.addEventListener("keydown", (e) => {
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        if (historyIdx < cmdHistory.length - 1) {
+          historyIdx++;
+          cliInput.value = cmdHistory[cmdHistory.length - 1 - historyIdx] || "";
+        }
+      } else if (e.key === "ArrowDown") {
+        e.preventDefault();
+        if (historyIdx > 0) {
+          historyIdx--;
+          cliInput.value = cmdHistory[cmdHistory.length - 1 - historyIdx] || "";
+        } else if (historyIdx === 0) {
+          historyIdx = -1;
+          cliInput.value = "";
+        }
+      }
+    });
+  }
+
+  async function executeTerminalCommand(cmd) {
+    const screen = g("terminal-screen");
+    if (!screen) return;
+
+    // Add to history
+    cmdHistory.push(cmd);
+    historyIdx = -1;
+
+    // Append user command line
+    const cmdLine = document.createElement("div");
+    cmdLine.className = "term-line cmd-entry";
+    cmdLine.textContent = `flinza@outreach:~$ ${cmd}`;
+    screen.appendChild(cmdLine);
+
+    try {
+      const d = await apiFetch("/api/terminal", "POST", { command: cmd });
+      const respLine = document.createElement("div");
+      respLine.className = "term-line";
+      respLine.style.color = d.success ? "#e6edf3" : "#fb7185";
+      respLine.textContent = d.output || "(no output)";
+      screen.appendChild(respLine);
+    } catch (err) {
+      const errLine = document.createElement("div");
+      errLine.className = "term-line";
+      errLine.style.color = "var(--rose)";
+      errLine.textContent = `Network error: ${err}`;
+      screen.appendChild(errLine);
+    }
+
+    screen.scrollTop = screen.scrollHeight;
+  }
+
+  on("btn-terminal-clear", "click", () => {
+    const screen = g("terminal-screen");
+    if (screen) {
+      screen.innerHTML = `
+        <div class="term-line banner">
+          <span>⚡ FLINZA ENTERPRISE OUTREACH OS — COMMAND SHELL v2.0</span>
+          <span>Screen cleared. Type /help to list commands.</span>
+        </div>`;
+    }
+  });
   loadWebmailThreads("inbox");
   loadDashboard();
 

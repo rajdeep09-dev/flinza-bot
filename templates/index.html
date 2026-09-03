@@ -92,9 +92,34 @@
           <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 4.93a10 10 0 0 0 0 14.14"/></svg>
           AI Models
         </button>
+
+        <div class="nav-section-label" style="margin-top:12px;">Growth Tools</div>
+        <button class="nav-item" data-view="warmup">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2z"/><path d="M12 6v6l4 2"/></svg>
+          Warmup Monitor
+          <span class="nav-badge cyan" id="badge-warmup">0</span>
+        </button>
+        <button class="nav-item" data-view="builder">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+          Campaign Builder
+        </button>
+        <button class="nav-item" data-view="ab-lab">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 3H5a2 2 0 0 0-2 2v4m6-6h10a2 2 0 0 1 2 2v4M9 3v18m0 0h10a2 2 0 0 0 2-2V9M9 21H5a2 2 0 0 1-2-2V9m0 0h18"/></svg>
+          A/B Lab
+        </button>
+        <button class="nav-item" data-view="analytics">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+          Analytics
+        </button>
         <button class="nav-item" data-view="settings">
           <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
           Settings
+        </button>
+
+        <div class="nav-section-label" style="margin-top:12px;">Command</div>
+        <button class="nav-item" data-view="terminal">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+          Terminal
         </button>
       </nav>
 
@@ -472,6 +497,300 @@
                 <textarea id="set-system-prompt" rows="5" placeholder="You are an expert cold email copywriter for an SMMA agency…"></textarea>
               </div>
             </div>
+          </div>
+        </section>
+
+        <!-- ══ WARMUP MONITOR VIEW ══ -->
+        <section class="view-section" id="view-warmup">
+          <div class="view-header-bar">
+            <div>
+              <h2 class="view-title">Warmup Monitor & Mailbox Health</h2>
+              <p class="view-subtitle">Automatic progressive warmup curves (5→10→20→30→50/day), bounce guard, and health grading</p>
+            </div>
+            <div class="view-header-actions">
+              <button class="btn-ghost-sm" id="btn-warmup-refresh">↻ Refresh Health</button>
+              <button class="btn-primary-sm" id="btn-warmup-audit">⚡ Run Safety Audit</button>
+            </div>
+          </div>
+
+          <!-- Warmup Metric Highlights -->
+          <div class="metrics-row" id="warmup-summary-cards">
+            <div class="metric-card">
+              <div class="metric-top">
+                <span class="metric-label">Active Inboxes</span>
+                <div class="metric-icon-box emerald">📬</div>
+              </div>
+              <div class="metric-value" id="warmup-active-count">—</div>
+              <div class="metric-sub">Ready for outreach</div>
+            </div>
+            <div class="metric-card">
+              <div class="metric-top">
+                <span class="metric-label">In Warmup Phase</span>
+                <div class="metric-icon-box cyan">🔥</div>
+              </div>
+              <div class="metric-value" id="warmup-warming-count">—</div>
+              <div class="metric-sub">&le; 30 days active</div>
+            </div>
+            <div class="metric-card">
+              <div class="metric-top">
+                <span class="metric-label">Average Health</span>
+                <div class="metric-icon-box violet">💎</div>
+              </div>
+              <div class="metric-value" id="warmup-avg-health">—</div>
+              <div class="metric-sub">Reputation index</div>
+            </div>
+            <div class="metric-card">
+              <div class="metric-top">
+                <span class="metric-label">Auto-Paused</span>
+                <div class="metric-icon-box amber">🛡️</div>
+              </div>
+              <div class="metric-value" id="warmup-paused-count">0</div>
+              <div class="metric-sub">Protected from burn</div>
+            </div>
+          </div>
+
+          <!-- Warmup Accounts Table -->
+          <div class="data-table-wrap">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Account</th>
+                  <th>Age</th>
+                  <th>Warmup Cap</th>
+                  <th>Today's Volume</th>
+                  <th>Health Grade</th>
+                  <th>Bounce %</th>
+                  <th>Spam %</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody id="warmup-tbody">
+                <tr><td colspan="8" class="table-empty">Loading mailbox warmup metrics…</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <!-- ══ CAMPAIGN BUILDER VIEW ══ -->
+        <section class="view-section" id="view-builder">
+          <div class="view-header-bar">
+            <div>
+              <h2 class="view-title">Campaign Builder & Deliverability Lab</h2>
+              <p class="view-subtitle">Craft high-converting cold email sequences with real-time deliverability scoring & spintax</p>
+            </div>
+            <div class="view-header-actions">
+              <button class="btn-ghost-sm" id="btn-builder-sample">Load SMMA Template</button>
+              <button class="btn-primary-sm" id="btn-builder-check">⚡ Test Deliverability</button>
+            </div>
+          </div>
+
+          <div class="builder-layout">
+            <!-- Left: Editor Pane -->
+            <div class="builder-editor-card">
+              <div class="form-field">
+                <label>Subject Line (Supports Nested Spintax)</label>
+                <input type="text" id="builder-subject" placeholder="{Quick question|Idea for you|Thought you would like this}, {{first_name}}" />
+              </div>
+
+              <!-- Quick Insert Tag Chips -->
+              <div class="tag-chips-row">
+                <span class="tag-chip-label">Quick Inserts:</span>
+                <button type="button" class="btn-tag-chip" data-insert="{{first_name}}">+ {{first_name}}</button>
+                <button type="button" class="btn-tag-chip" data-insert="{{company}}">+ {{company}}</button>
+                <button type="button" class="btn-tag-chip" data-insert="{{niche}}">+ {{niche}}</button>
+                <button type="button" class="btn-tag-chip" data-insert="{Hi|Hey|Hello}">+ {Hi|Hey|Hello}</button>
+                <button type="button" class="btn-tag-chip" data-insert="{15 mins|a quick 10-min chat}">+ Spintax CTA</button>
+              </div>
+
+              <div class="form-field" style="margin-top: 14px;">
+                <label>Email Body</label>
+                <textarea id="builder-body" rows="12" placeholder="{Hi|Hey} {{first_name}},&#10;&#10;Noticed your work at {{company}} in the {{niche}} space. We help agencies scale organic short-form content by 3x without paid ads.&#10;&#10;Open to a {quick 10-min call|brief chat} this {Thursday|Friday}?&#10;&#10;Best,&#10;{{sender_name}}"></textarea>
+              </div>
+
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 14px;">
+                <span style="font-size: 12px; color: var(--text-dim);" id="builder-word-count">0 words</span>
+                <button class="btn-send-reply" id="btn-save-as-sequence">Save to Sequence Step 1</button>
+              </div>
+            </div>
+
+            <!-- Right: Live Score & Diagnostics -->
+            <div class="builder-diagnostics-card">
+              <div class="score-header">
+                <div class="score-dial">
+                  <div class="score-dial-val" id="score-val">—</div>
+                  <div class="score-dial-lbl">SCORE</div>
+                </div>
+                <div>
+                  <div style="display: flex; align-items: center; gap: 8px;">
+                    <span style="font-size: 16px; font-weight: 700;" id="score-grade-text">Grade: —</span>
+                    <span class="stage-badge new" id="score-grade-badge">—</span>
+                  </div>
+                  <p style="font-size: 12px; color: var(--text-dim); margin-top: 4px;" id="score-status-hint">Click 'Test Deliverability' to analyze</p>
+                </div>
+              </div>
+
+              <div class="diagnostics-section">
+                <div class="diagnostics-title">⚠️ Potential Issues</div>
+                <ul class="diagnostics-list" id="builder-issues-list">
+                  <li style="color: var(--text-dim);">No issues checked yet</li>
+                </ul>
+              </div>
+
+              <div class="diagnostics-section">
+                <div class="diagnostics-title">💡 Deliverability Tips</div>
+                <ul class="diagnostics-list suggestions" id="builder-tips-list">
+                  <li style="color: var(--text-dim);">Run a check to see optimization tips</li>
+                </ul>
+              </div>
+
+              <div class="diagnostics-section">
+                <div class="diagnostics-title">👁️ Live Prospect Preview</div>
+                <div class="preview-box" id="builder-live-preview">
+                  <div style="font-weight: 600; margin-bottom: 4px; color: var(--brand-cyan);" id="preview-subject">(Subject preview)</div>
+                  <div style="font-size: 12.5px; color: var(--text-secondary); white-space: pre-wrap;" id="preview-body">(Body preview with sample lead Alex @ Apex Studio)</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ══ A/B LAB VIEW ══ -->
+        <section class="view-section" id="view-ab-lab">
+          <div class="view-header-bar">
+            <div>
+              <h2 class="view-title">A/B Testing & Spintax Simulator</h2>
+              <p class="view-subtitle">Generate and inspect 5 unique variations to verify high-entropy fingerprinting before launching</p>
+            </div>
+            <div class="view-header-actions">
+              <button class="btn-primary-sm" id="btn-ab-generate">⚡ Simulate 5 Variants</button>
+            </div>
+          </div>
+
+          <div class="form-field" style="margin-bottom: 16px;">
+            <label>Template with Spintax</label>
+            <input type="text" id="ab-input-text" placeholder="{Hey|Hi|Hello} {{first_name}}, {loved|impressed by} your recent work on {Instagram|TikTok}." value="{Hey|Hi|Hello} {{first_name}}, {loved|was really impressed by} your recent video on {Instagram|TikTok}. We helped 14 brands add $120k ARR using {short-form clips|organic shorts}. Open to {a 10-min chat|seeing how it works}?" />
+          </div>
+
+          <div class="ab-variants-grid" id="ab-variants-container">
+            <div class="skeleton-card"></div>
+            <div class="skeleton-card"></div>
+          </div>
+        </section>
+
+        <!-- ══ ANALYTICS VIEW ══ -->
+        <section class="view-section" id="view-analytics">
+          <div class="view-header-bar">
+            <div>
+              <h2 class="view-title">Campaign Intelligence & Conversion Funnel</h2>
+              <p class="view-subtitle">In-depth deliverability rates, reply breakdown, and lead stage conversion velocity</p>
+            </div>
+            <button class="btn-ghost-sm" id="btn-analytics-refresh">↻ Refresh Data</button>
+          </div>
+
+          <div class="metrics-row">
+            <div class="metric-card">
+              <div class="metric-top">
+                <span class="metric-label">Prospect Conversion</span>
+                <div class="metric-icon-box emerald">📈</div>
+              </div>
+              <div class="metric-value" id="ana-conversion-rate">—</div>
+              <div class="metric-sub">Leads contacted to replied</div>
+            </div>
+            <div class="metric-card">
+              <div class="metric-top">
+                <span class="metric-label">Total Dispatched</span>
+                <div class="metric-icon-box cyan">🚀</div>
+              </div>
+              <div class="metric-value" id="ana-total-sent">—</div>
+              <div class="metric-sub">All-time outreach emails</div>
+            </div>
+            <div class="metric-card">
+              <div class="metric-top">
+                <span class="metric-label">Bounce Resistance</span>
+                <div class="metric-icon-box violet">🛡️</div>
+              </div>
+              <div class="metric-value" id="ana-bounce-health">99.8%</div>
+              <div class="metric-sub">Deliverability safety margin</div>
+            </div>
+            <div class="metric-card">
+              <div class="metric-top">
+                <span class="metric-label">Active Sequence Steps</span>
+                <div class="metric-icon-box amber">⚡</div>
+              </div>
+              <div class="metric-value" id="ana-seq-steps">3</div>
+              <div class="metric-sub">Drip sequence cadence</div>
+            </div>
+          </div>
+
+          <div class="dashboard-panels">
+            <div class="panel-card">
+              <div class="panel-title">Smartlead Webhook Integration</div>
+              <p style="font-size: 12.5px; color: var(--text-dim); margin-bottom: 12px;">Connect Smartlead or Instantly webhooks to ingest replies and automatically trigger AI drafts.</p>
+              <div class="webhook-card">
+                <div style="font-size: 11px; font-weight: 700; color: var(--text-dim); text-transform: uppercase;">Incoming Webhook URL</div>
+                <code class="webhook-url" id="ana-webhook-url">http://localhost:7880/webhook/smartlead</code>
+                <p style="font-size: 11.5px; color: var(--text-dim); margin-top: 8px;">Supports <code>reply_received</code>, <code>email_opened</code>, and <code>email_bounced</code> events.</p>
+              </div>
+            </div>
+
+            <div class="panel-card">
+              <div class="panel-title">Mailbox Sending Distribution</div>
+              <div id="ana-mailbox-distribution" style="display: flex; flex-direction: column; gap: 8px;">
+                <p class="info-text">Loading distribution data…</p>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ══ COMMAND TERMINAL VIEW ══ -->
+        <section class="view-section" id="view-terminal">
+          <div class="view-header-bar">
+            <div>
+              <h2 class="view-title">Outreach Command Terminal</h2>
+              <p class="view-subtitle">Interactive web terminal — execute backend engine commands, launch campaigns, control queues</p>
+            </div>
+            <div class="view-header-actions">
+              <button class="btn-ghost-sm" id="btn-terminal-clear">Clear Screen</button>
+            </div>
+          </div>
+
+          <!-- Quick Command Launcher Bar -->
+          <div class="terminal-quick-bar">
+            <span style="font-size: 11px; font-weight: 700; color: var(--text-dim); text-transform: uppercase;">Quick Actions:</span>
+            <button class="terminal-chip" data-cmd="/stats">📊 /stats</button>
+            <button class="terminal-chip" data-cmd="/launch">🚀 /launch</button>
+            <button class="terminal-chip" data-cmd="/launch --dry">🧪 /launch --dry</button>
+            <button class="terminal-chip" data-cmd="/pause">⏸ /pause</button>
+            <button class="terminal-chip" data-cmd="/resume">▶️ /resume</button>
+            <button class="terminal-chip" data-cmd="/warmup">🔥 /warmup</button>
+            <button class="terminal-chip" data-cmd="/accounts">📬 /accounts</button>
+            <button class="terminal-chip" data-cmd="/leads">👥 /leads</button>
+            <button class="terminal-chip" data-cmd="/help">❓ /help</button>
+          </div>
+
+          <!-- Terminal Screen Container -->
+          <div class="terminal-window">
+            <div class="terminal-titlebar">
+              <div class="term-dots">
+                <span class="dot dot-red"></span>
+                <span class="dot dot-yellow"></span>
+                <span class="dot dot-green"></span>
+              </div>
+              <div class="term-title">flinza-core-engine — bash (port 7880)</div>
+              <div class="term-status"><span class="pulse-dot"></span> Online</div>
+            </div>
+            <div class="terminal-output" id="terminal-screen">
+              <div class="term-line banner">
+                <span>⚡ FLINZA ENTERPRISE OUTREACH OS — COMMAND SHELL v2.0</span>
+                <span>Type /help to list available commands or click the action buttons above.</span>
+                <span>----------------------------------------------------------------------</span>
+              </div>
+            </div>
+            <form id="form-terminal-input" class="terminal-input-row">
+              <span class="terminal-prompt">flinza@outreach:~$</span>
+              <input type="text" id="terminal-cli-input" placeholder="Type a command (e.g. /stats, /launch, /warmup, /score)..." autocomplete="off" />
+              <button type="submit" class="terminal-send-btn">Execute</button>
+            </form>
           </div>
         </section>
 

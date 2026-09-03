@@ -179,7 +179,8 @@ Flinza includes full support for **Cloudflare Tunnels (`cloudflared`)**:
 ```
 flinza-bot/
 ├── bot.py                     # Telegram Bot logic, conversational menus & handlers
-├── web_server.py              # FastAPI Web Studio & REST API backend
+├── web_server.py              # FastAPI Web Studio & REST API backend (Port 7880/8000)
+├── outreach_engine.py         # Billion-Dollar Outreach Engine (Spintax, Warmup, Deliverability, CLI)
 ├── database.py                # SQLite database engine, migrations & CRM queries
 ├── email_sender.py            # Universal outbound sender (Gmail, CF API, AWS SES)
 ├── email_queue.py             # Dispatch queue with randomized delay & jitter
@@ -187,14 +188,27 @@ flinza-bot/
 ├── reply_watcher.py           # Inbound IMAP poller & AI intent classifier
 ├── ai_router.py               # AI engine (Gemini, Groq, Mistral, Ollama, DeepSeek)
 ├── cloudflare_aliases.py      # Cloudflare Email Routing & DNS deliverability auditor
+├── test_verification.py       # Full automated E2E test verification suite
 ├── templates/
-│   └── index.html             # Mailflare-style Single Page Webmail App
+│   └── index.html             # Billion-Dollar Web Studio SPA (Warmup, Lab, Terminal, CRM)
 ├── static/
-│   ├── css/studio.css         # Clean Mailflare Light & Dark design system
-│   └── js/app.js              # Reactive SPA engine & theme controller
+│   ├── css/studio.css         # Dark & Light Glassmorphism Studio Design System
+│   └── js/app.js              # Reactive SPA engine, tabs, & live terminal runner
 ├── CLOUDFLARE_DOMAIN_SETUP.md # Free Cloudflare Tunnel & custom domain setup guide
 └── requirements.txt           # Python dependencies
 ```
+
+---
+
+## ⚡ Billion-Dollar Growth Architecture (Smartlead-Grade Power)
+
+| Tool | Capability | How It Works |
+|---|---|---|
+| **🔥 Auto-Warmup Ramp** | Smart Mailbox Health | Automated ramp curve (5 → 50/day), health scoring (A-F), bounce rate guardrail |
+| **🧪 Spintax & A/B Lab** | High Reply Rates | `{Hi\|Hello} {name}` permutation tester with live combinatorial analysis |
+| **🛡️ Deliverability Scorer** | Zero Spam Inboxes | Real-time spam word detector, SPF/DKIM/DMARC auditor, deliverability dial (0-100) |
+| **💻 Interactive Web Terminal** | Remote Dev Control | Execute commands directly in browser (`/stats`, `/warmup`, `/leads`, `/queue`) |
+| **⚡ Smartlead Webhook** | Sync Outreach | Direct bi-directional integration (`/webhook/smartlead`) for external campaigns |
 
 ---
 
