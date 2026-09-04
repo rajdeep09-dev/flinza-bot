@@ -2826,6 +2826,200 @@ html, body {
   color: #f87171 !important;
 }
 
+
+/* ══════════════════════════════
+   IP NODES 100X ENGINE STYLING
+══════════════════════════════ */
+.live-pulse-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  position: relative;
+  flex-shrink: 0;
+}
+
+.live-pulse-dot.active {
+  background: #00e082;
+  box-shadow: 0 0 8px rgba(0, 224, 130, 0.7);
+  animation: livePulseGreen 2s infinite ease-in-out;
+}
+
+.live-pulse-dot.paused {
+  background: #f59e0b;
+  box-shadow: 0 0 8px rgba(245, 158, 11, 0.6);
+  animation: livePulseAmber 2.4s infinite ease-in-out;
+}
+
+.live-pulse-dot.offline {
+  background: #64748b;
+  box-shadow: none;
+}
+
+@keyframes livePulseGreen {
+  0%   { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(0, 224, 130, 0.7); }
+  70%  { transform: scale(1.15); box-shadow: 0 0 0 8px rgba(0, 224, 130, 0); }
+  100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(0, 224, 130, 0); }
+}
+
+@keyframes livePulseAmber {
+  0%   { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.6); }
+  70%  { transform: scale(1.1); box-shadow: 0 0 0 6px rgba(245, 158, 11, 0); }
+  100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(245, 158, 11, 0); }
+}
+
+.pulse-beacon {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+}
+.pulse-beacon.green {
+  background: #10b981;
+  box-shadow: 0 0 6px rgba(16, 185, 129, 0.8);
+}
+
+.node-quota-bar-wrap {
+  width: 100%;
+  height: 6px;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 4px;
+  overflow: hidden;
+  margin-top: 5px;
+}
+
+.node-quota-bar {
+  height: 100%;
+  border-radius: 4px;
+  background: linear-gradient(90deg, #00d2ff, #9333ea);
+  transition: width 0.4s ease;
+}
+
+.carrier-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 500;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-primary);
+}
+
+.latency-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-family: var(--font-mono, monospace);
+  font-weight: 600;
+  background: rgba(52, 211, 153, 0.08);
+  color: #34d399;
+  border: 1px solid rgba(52, 211, 153, 0.2);
+}
+
+.node-action-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 9px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-primary);
+  transition: all 0.15s ease;
+}
+.node-action-btn:hover {
+  background: rgba(255, 255, 255, 0.09);
+  border-color: var(--border);
+}
+
+.node-action-btn.pause {
+  color: #fbbf24;
+  border-color: rgba(251, 191, 36, 0.3);
+  background: rgba(251, 191, 36, 0.06);
+}
+.node-action-btn.pause:hover {
+  background: rgba(251, 191, 36, 0.16);
+  border-color: rgba(251, 191, 36, 0.5);
+}
+
+.node-action-btn.resume {
+  color: #34d399;
+  border-color: rgba(52, 211, 153, 0.3);
+  background: rgba(52, 211, 153, 0.06);
+}
+.node-action-btn.resume:hover {
+  background: rgba(52, 211, 153, 0.16);
+  border-color: rgba(52, 211, 153, 0.5);
+}
+
+.node-action-btn.ping {
+  color: #38bdf8;
+  border-color: rgba(56, 189, 248, 0.3);
+}
+.node-action-btn.ping:hover {
+  background: rgba(56, 189, 248, 0.15);
+  border-color: rgba(56, 189, 248, 0.5);
+}
+
+.node-action-btn.rotate {
+  color: #38bdf8;
+  background: rgba(56, 189, 248, 0.08);
+  border-color: rgba(56, 189, 248, 0.35);
+}
+.node-action-btn.rotate:hover {
+  background: rgba(56, 189, 248, 0.18);
+  border-color: rgba(56, 189, 248, 0.6);
+  box-shadow: 0 0 10px rgba(56, 189, 248, 0.25);
+}
+
+.tunnel-tag-badge {
+  background: linear-gradient(135deg, rgba(56, 189, 248, 0.15), rgba(168, 85, 247, 0.15));
+  color: #38bdf8;
+  border: 1px solid rgba(56, 189, 248, 0.35);
+  padding: 1px 7px;
+  border-radius: 6px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.ip-tab-btn {
+  padding: 8px 16px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text-muted);
+  transition: all 0.2s ease;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+.ip-tab-btn.active {
+  background: rgba(0, 224, 130, 0.12);
+  border-color: rgba(0, 224, 130, 0.35);
+  color: #00e082;
+  box-shadow: 0 2px 8px rgba(0, 224, 130, 0.12);
+}
+.ip-tab-btn:hover:not(.active) {
+  color: var(--text-primary);
+  background: rgba(255, 255, 255, 0.04);
+}
+
 /* ══════════════════════════════
    RESPONSIVE (Telegram Mini App)
 ══════════════════════════════ */

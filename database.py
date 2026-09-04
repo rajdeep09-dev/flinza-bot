@@ -444,6 +444,21 @@ def _init_default_settings(conn):
         "ALTER TABLE replies ADD COLUMN message_id TEXT",
         "ALTER TABLE replies ADD COLUMN is_read INTEGER DEFAULT 0",
         "ALTER TABLE replies ADD COLUMN is_starred INTEGER DEFAULT 0",
+        "ALTER TABLE ip_nodes ADD COLUMN provider TEXT DEFAULT 'Cellular / 5G'",
+        "ALTER TABLE ip_nodes ADD COLUMN daily_limit INTEGER DEFAULT 150",
+        "ALTER TABLE ip_nodes ADD COLUMN sent_today INTEGER DEFAULT 0",
+        "ALTER TABLE ip_nodes ADD COLUMN latency_ms INTEGER DEFAULT 32",
+        "ALTER TABLE ip_nodes ADD COLUMN is_paused INTEGER DEFAULT 0",
+        "ALTER TABLE ip_nodes ADD COLUMN last_reset_date TEXT DEFAULT ''",
+        "ALTER TABLE ip_nodes ADD COLUMN is_persistent_tunnel INTEGER DEFAULT 0",
+        "ALTER TABLE ip_nodes ADD COLUMN proxy_protocol TEXT DEFAULT 'socks5'",
+        "ALTER TABLE ip_nodes ADD COLUMN proxy_host TEXT DEFAULT ''",
+        "ALTER TABLE ip_nodes ADD COLUMN proxy_port INTEGER DEFAULT 1080",
+        "ALTER TABLE ip_nodes ADD COLUMN proxy_user TEXT DEFAULT ''",
+        "ALTER TABLE ip_nodes ADD COLUMN proxy_pass TEXT DEFAULT ''",
+        "ALTER TABLE ip_nodes ADD COLUMN rotation_webhook TEXT DEFAULT ''",
+        "ALTER TABLE ip_nodes ADD COLUMN auto_rotate_count INTEGER DEFAULT 0",
+        "ALTER TABLE ip_nodes ADD COLUMN last_rotated_at TEXT DEFAULT ''",
     ]:
         try:
             conn.execute(col_def)
@@ -1962,30 +1977,124 @@ def get_user_by_google_id(google_id: str):
 #             IP NODES — Connect / Disconnect / List
 # ═══════════════════════════════════════════════════════════════
 
-def connect_ip_node(ip_address: str, name: str = None, user_agent: str = None) -> dict:
-    """Register or refresh a connected IP node. Returns the node record."""
+def connect_ip_node(ip_address: str, name: str = None, user_agent: str = None, provider: str = None, daily_limit: int = 150) -> dict:
+    """Register or refresh a connected IP node with carrier detection and daily limits."""
     conn = get_db()
-    # Check if this IP is already registered
-    existing = conn.execute(
-        "SELECT id FROM ip_nodes WHERE ip_address=?", (ip_address,)
-    ).fetchone()
     now = datetime.utcnow().isoformat()
+    ua = user_agent or ""
+    
+    # Auto-detect carrier/type if provider not specified
+    if not provider:
+        if "iPhone" in ua or "iPad" in ua:
+            provider = "Apple iOS 5G / 4G"
+        elif "Android" in ua:
+            provider = "Android Cellular 5G"
+        elif "Macintosh" in ua:
+            provider = "macOS Residential"
+        elif "Windows" in ua:
+            provider = "Windows Residential"
+        else:
+            provider = "Residential Proxy"
+
+    existing = conn.execute(
+        "SELECT id, name, is_paused, daily_limit FROM ip_nodes WHERE ip_address=?", (ip_address,)
+    ).fetchone()
+
     if existing:
+        node_name = name or existing["name"]
         conn.execute(
-            "UPDATE ip_nodes SET status='connected', last_seen=?, name=COALESCE(?,name), user_agent=COALESCE(?,user_agent) WHERE ip_address=?",
-            (now, name, user_agent, ip_address)
+            """UPDATE ip_nodes 
+               SET status=CASE WHEN is_paused=1 THEN 'paused' ELSE 'connected' END, 
+                   last_seen=?, 
+                   name=?, 
+                   user_agent=?, 
+                   provider=COALESCE(?, provider)
+               WHERE ip_address=?""",
+            (now, node_name, ua, provider, ip_address)
         )
         row_id = existing["id"]
     else:
+        node_name = name or (f"Mobile 5G ({ip_address[:10]}…)" if ("iPhone" in ua or "Android" in ua) else f"Node {ip_address}")
         cur = conn.execute(
-            "INSERT INTO ip_nodes (name, ip_address, status, user_agent, connected_at, last_seen) VALUES (?,?,?,?,?,?)",
-            (name or f"Node {ip_address}", ip_address, "connected", user_agent, now, now)
+            """INSERT INTO ip_nodes (name, ip_address, status, user_agent, provider, daily_limit, sent_today, latency_ms, is_paused, connected_at, last_seen) 
+               VALUES (?, ?, 'connected', ?, ?, ?, 0, 32, 0, ?, ?)""",
+            (node_name, ip_address, ua, provider, daily_limit, now, now)
         )
         row_id = cur.lastrowid
+
     conn.commit()
     row = conn.execute("SELECT * FROM ip_nodes WHERE id=?", (row_id,)).fetchone()
     conn.close()
     return dict(row)
+
+
+def toggle_pause_ip_node(node_id: int) -> dict:
+    """Toggles pause/resume state of an IP node."""
+    conn = get_db()
+    node = conn.execute("SELECT * FROM ip_nodes WHERE id=?", (node_id,)).fetchone()
+    if not node:
+        conn.close()
+        return None
+    new_paused = 0 if (node["is_paused"] or 0) == 1 else 1
+    new_status = "paused" if new_paused == 1 else "connected"
+    conn.execute(
+        "UPDATE ip_nodes SET is_paused=?, status=? WHERE id=?",
+        (new_paused, new_status, node_id)
+    )
+    conn.commit()
+    updated = conn.execute("SELECT * FROM ip_nodes WHERE id=?", (node_id,)).fetchone()
+    conn.close()
+    return dict(updated)
+
+
+def update_ip_node(node_id: int, name: str = None, provider: str = None, daily_limit: int = None, webhook: str = None) -> dict:
+    """Updates metadata (nickname, carrier provider, daily sending limit, rotation webhook) for an IP node."""
+    conn = get_db()
+    node = conn.execute("SELECT * FROM ip_nodes WHERE id=?", (node_id,)).fetchone()
+    if not node:
+        conn.close()
+        return None
+    
+    new_name = name.strip() if name and name.strip() else node["name"]
+    new_provider = provider.strip() if provider and provider.strip() else node["provider"]
+    new_limit = int(daily_limit) if daily_limit is not None and int(daily_limit) > 0 else (node["daily_limit"] or 150)
+    new_webhook = webhook.strip() if webhook is not None else (node["rotation_webhook"] or "")
+
+    conn.execute(
+        "UPDATE ip_nodes SET name=?, provider=?, daily_limit=?, rotation_webhook=? WHERE id=?",
+        (new_name, new_provider, new_limit, new_webhook, node_id)
+    )
+    conn.commit()
+    updated = conn.execute("SELECT * FROM ip_nodes WHERE id=?", (node_id,)).fetchone()
+    conn.close()
+    return dict(updated)
+
+
+def record_ip_node_send(ip_address: str):
+    """Increments the sent_today counter for an IP node."""
+    conn = get_db()
+    today = date.today().isoformat()
+    conn.execute(
+        """UPDATE ip_nodes 
+           SET sent_today = CASE WHEN last_reset_date = ? THEN sent_today + 1 ELSE 1 END,
+               last_reset_date = ?,
+               last_seen = ?
+           WHERE ip_address = ?""",
+        (today, today, datetime.utcnow().isoformat(), ip_address)
+    )
+    conn.commit()
+    conn.close()
+
+
+def update_ip_node_latency(node_id: int, latency_ms: int):
+    """Updates the live response latency (ms) for an IP node."""
+    conn = get_db()
+    conn.execute(
+        "UPDATE ip_nodes SET latency_ms=?, last_seen=? WHERE id=?",
+        (latency_ms, datetime.utcnow().isoformat(), node_id)
+    )
+    conn.commit()
+    conn.close()
 
 
 def disconnect_ip_node(ip_address: str) -> bool:
@@ -1998,8 +2107,15 @@ def disconnect_ip_node(ip_address: str) -> bool:
 
 
 def get_ip_nodes(status: str = None) -> list:
-    """Return all IP nodes, optionally filtered by status."""
+    """Return all IP nodes, resetting sent_today if new day."""
     conn = get_db()
+    today = date.today().isoformat()
+    # Auto-reset sent_today for fresh day
+    conn.execute(
+        "UPDATE ip_nodes SET sent_today=0, last_reset_date=? WHERE last_reset_date != ? AND last_reset_date != ''",
+        (today, today)
+    )
+    conn.commit()
     if status:
         rows = conn.execute("SELECT * FROM ip_nodes WHERE status=? ORDER BY last_seen DESC", (status,)).fetchall()
     else:
@@ -2012,7 +2128,7 @@ def heartbeat_ip_node(ip_address: str) -> bool:
     """Update last_seen for an active node (called by JS ping every 30s)."""
     conn = get_db()
     conn.execute(
-        "UPDATE ip_nodes SET last_seen=? WHERE ip_address=? AND status='connected'",
+        "UPDATE ip_nodes SET last_seen=? WHERE ip_address=? AND status IN ('connected', 'paused')",
         (datetime.utcnow().isoformat(), ip_address)
     )
     conn.commit()
@@ -2021,15 +2137,116 @@ def heartbeat_ip_node(ip_address: str) -> bool:
 
 
 def get_connected_nodes() -> list:
-    """Return all currently connected nodes (last seen within 2 minutes)."""
+    """Return all currently active and unpaused connected nodes (browser nodes seen within 5 min OR persistent 24/7 tunnels)."""
     conn = get_db()
-    cutoff = (datetime.utcnow() - timedelta(minutes=2)).isoformat()
+    cutoff = (datetime.utcnow() - timedelta(minutes=5)).isoformat()
     rows = conn.execute(
-        "SELECT * FROM ip_nodes WHERE status='connected' AND last_seen >= ? ORDER BY connected_at ASC",
+        """SELECT * FROM ip_nodes 
+           WHERE status='connected' AND (is_paused=0 OR is_paused IS NULL) 
+           AND (is_persistent_tunnel=1 OR last_seen >= ?) 
+           ORDER BY is_persistent_tunnel DESC, connected_at ASC""",
         (cutoff,)
     ).fetchall()
     conn.close()
     return [dict(r) for r in rows]
+
+
+def save_persistent_tunnel_node(
+    name: str,
+    host: str,
+    port: int,
+    protocol: str = "socks5",
+    user: str = "",
+    password: str = "",
+    webhook: str = "",
+    provider: str = "Cellular 5G (Localtonet)",
+    daily_limit: int = 200,
+    external_ip: str = "",
+    latency_ms: int = 28
+) -> dict:
+    """
+    Saves or updates a persistent 24/7 mobile SOCKS5 / HTTP proxy tunnel (Localtonet).
+    Stored permanently in flinza.db so outbound sending stays active even when browser is closed.
+    """
+    conn = get_db()
+    now = datetime.utcnow().isoformat()
+    ip_addr = external_ip.strip() if external_ip and external_ip.strip() else f"{host}:{port}"
+    label = name.strip() if name and name.strip() else f"Localtonet {protocol.upper()} ({host}:{port})"
+    prov = provider.strip() if provider and provider.strip() else "Cellular 5G (Localtonet)"
+
+    existing = conn.execute(
+        "SELECT id FROM ip_nodes WHERE proxy_host=? AND proxy_port=?", (host.strip(), int(port))
+    ).fetchone()
+
+    if existing:
+        node_id = existing["id"]
+        conn.execute(
+            """UPDATE ip_nodes 
+               SET name=?, ip_address=?, status='connected', is_paused=0,
+                   provider=?, daily_limit=?, latency_ms=?, last_seen=?,
+                   is_persistent_tunnel=1, proxy_protocol=?, proxy_host=?, proxy_port=?,
+                   proxy_user=?, proxy_pass=?, rotation_webhook=?
+               WHERE id=?""",
+            (label, ip_addr, prov, int(daily_limit), int(latency_ms), now,
+             protocol.lower(), host.strip(), int(port), user.strip(), password.strip(), webhook.strip(), node_id)
+        )
+    else:
+        cur = conn.execute(
+            """INSERT INTO ip_nodes (
+                name, ip_address, status, user_agent, provider, daily_limit, sent_today, latency_ms,
+                is_paused, connected_at, last_seen, is_persistent_tunnel, proxy_protocol,
+                proxy_host, proxy_port, proxy_user, proxy_pass, rotation_webhook
+               ) VALUES (?, ?, 'connected', 'Localtonet-Daemon/1.0', ?, ?, 0, ?, 0, ?, ?, 1, ?, ?, ?, ?, ?, ?)""",
+            (label, ip_addr, prov, int(daily_limit), int(latency_ms), now, now,
+             protocol.lower(), host.strip(), int(port), user.strip(), password.strip(), webhook.strip())
+        )
+        node_id = cur.lastrowid
+
+    conn.commit()
+    row = conn.execute("SELECT * FROM ip_nodes WHERE id=?", (node_id,)).fetchone()
+    conn.close()
+    return dict(row)
+
+
+def update_tunnel_ip(node_id: int, new_ip: str, latency_ms: int = None):
+    """Updates external IP, latency, and rotation timestamp after an IP rotation."""
+    conn = get_db()
+    now = datetime.utcnow().isoformat()
+    if latency_ms is not None:
+        conn.execute(
+            "UPDATE ip_nodes SET ip_address=?, latency_ms=?, last_seen=?, last_rotated_at=? WHERE id=?",
+            (new_ip.strip(), int(latency_ms), now, now, node_id)
+        )
+    else:
+        conn.execute(
+            "UPDATE ip_nodes SET ip_address=?, last_seen=?, last_rotated_at=? WHERE id=?",
+            (new_ip.strip(), now, now, node_id)
+        )
+    conn.commit()
+    conn.close()
+
+
+def get_ip_node_stats() -> dict:
+    """Calculates aggregate pool metrics for IP sending nodes."""
+    conn = get_db()
+    rows = conn.execute("SELECT * FROM ip_nodes").fetchall()
+    conn.close()
+    nodes = [dict(r) for r in rows]
+    total = len(nodes)
+    active = [n for n in nodes if n.get("status") == "connected" and not n.get("is_paused")]
+    paused = [n for n in nodes if n.get("is_paused") == 1 or n.get("status") == "paused"]
+    daily_capacity = sum(n.get("daily_limit") or 150 for n in active)
+    sent_today = sum(n.get("sent_today") or 0 for n in nodes)
+    latencies = [n.get("latency_ms") for n in active if n.get("latency_ms")]
+    avg_latency = round(sum(latencies) / len(latencies)) if latencies else 28
+    return {
+        "total_nodes": total,
+        "active_nodes": len(active),
+        "paused_nodes": len(paused),
+        "daily_capacity": daily_capacity,
+        "sent_today": sent_today,
+        "avg_latency_ms": avg_latency,
+    }
 
 
 # ═══════════════════════════════════════════════════════════════

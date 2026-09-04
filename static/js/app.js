@@ -426,9 +426,17 @@ document.addEventListener("DOMContentLoaded", () => {
   on("btn-open-compose", "click", async () => {
     openModal("backdrop-compose");
     try {
-      const d = await apiFetch("/api/accounts");
-      if (d.success) populateFromSelect(d.accounts || [], d.aliases || []);
-    } catch {}
+      const [accData, smtpData] = await Promise.all([
+        apiFetch("/api/accounts"),
+        apiFetch("/api/smtp/profiles")
+      ]);
+      const accounts = accData?.accounts || [];
+      const aliases = accData?.aliases || [];
+      const smtpProfiles = smtpData?.profiles || [];
+      populateFromSelect(accounts, aliases, smtpProfiles);
+    } catch (err) {
+      console.error("Failed to load compose identities:", err);
+    }
   });
 
   on("btn-close-compose", "click", () => closeModal("backdrop-compose"));
@@ -440,7 +448,7 @@ document.addEventListener("DOMContentLoaded", () => {
       e.preventDefault();
       const submitBtn = g("btn-send-compose");
       submitBtn.disabled = true;
-      submitBtn.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg> Sending…`;
+      submitBtn.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg> Dispatching…`;
       try {
         const d = await apiFetch("/api/webmail/compose", "POST", {
           from_account: g("compose-from-select")?.value,
@@ -449,13 +457,15 @@ document.addEventListener("DOMContentLoaded", () => {
           body:         g("compose-body")?.value.trim(),
         });
         if (d.success) {
-          showToast(`Message sent!`, "success");
+          showToast(`🚀 Message dispatched successfully! (via ${d.account_used || "router"})`, "success");
           closeModal("backdrop-compose");
           formCompose.reset();
           loadWebmailThreads(currentFolder);
         } else {
-          showToast(`Failed: ${d.error}`, "error");
+          showToast(`Send failed: ${d.error || d.detail || "Check SMTP settings"}`, "error");
         }
+      } catch (err) {
+        showToast(`Send failed: ${err.message || "Network error"}`, "error");
       } finally {
         submitBtn.disabled = false;
         submitBtn.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg> Send`;
@@ -1574,14 +1584,36 @@ document.addEventListener("DOMContentLoaded", () => {
     };
   }
 
-  function populateFromSelect(accounts, aliases) {
+  function populateFromSelect(accounts = [], aliases = [], smtpProfiles = []) {
     const sel = g("compose-from-select");
     if (!sel) return;
     sel.innerHTML = "";
 
-    if (aliases.length > 0) {
+    // 0. Auto Smart Route option
+    const autoOpt = document.createElement("option");
+    autoOpt.value = "auto";
+    autoOpt.textContent = "✨ Auto-Route (Recommended · High-Reputation Relay Pool)";
+    sel.appendChild(autoOpt);
+
+    // 1. SMTP Vault Profiles (Brevo, Mailjet, SES, etc.)
+    if (smtpProfiles && smtpProfiles.length > 0) {
       const grp = document.createElement("optgroup");
-      grp.label = "Domain Aliases";
+      grp.label = "🚀 SMTP Vault (High-Reputation Relays)";
+      const icons = { brevo:'🚀 Brevo', smtp2go:'⚡ SMTP2GO', mailjet:'✈️ Mailjet', gmail:'📧 Gmail', amazon_ses:'🟠 Amazon SES', namecheap:'💙 Namecheap', zoho:'🟣 Zoho', outlook:'🔵 Outlook', custom:'⚙️ SMTP' };
+      smtpProfiles.forEach(p => {
+        const opt = document.createElement("option");
+        opt.value = `smtp_vault:${p.id}`;
+        const tag = icons[p.provider] || '⚙️ Relay';
+        opt.textContent = `${tag}: ${p.name} <${p.smtp_user}>`;
+        grp.appendChild(opt);
+      });
+      sel.appendChild(grp);
+    }
+
+    // 2. Domain Aliases
+    if (aliases && aliases.length > 0) {
+      const grp = document.createElement("optgroup");
+      grp.label = "✉️ Domain Aliases (Cold Outreach)";
       aliases.forEach(al => {
         const opt = document.createElement("option");
         opt.value = al.alias;
@@ -1591,13 +1623,14 @@ document.addEventListener("DOMContentLoaded", () => {
       sel.appendChild(grp);
     }
 
-    if (accounts.length > 0) {
+    // 3. Master Accounts
+    if (accounts && accounts.length > 0) {
       const grp = document.createElement("optgroup");
-      grp.label = "Master Accounts";
+      grp.label = "📬 Master Mailboxes";
       accounts.forEach(a => {
         const opt = document.createElement("option");
         opt.value = a.email;
-        opt.textContent = `${a.email} (${a.provider || "SMTP"})`;
+        opt.textContent = `${a.email} (${a.provider || "Gmail"})`;
         grp.appendChild(opt);
       });
       sel.appendChild(grp);
@@ -2416,19 +2449,27 @@ async function detectMyIp() {
     const r = await fetch('/api/ip/myip');
     const d = await r.json();
     _myIpCache = d.ip;
-    const badge = document.getElementById('ip-node-my-ip-badge');
-    if (badge) badge.textContent = `Your IP: ${_myIpCache}`;
+    const txt = document.getElementById('ip-detected-text');
+    if (txt) txt.textContent = `Detected IP: ${_myIpCache}`;
+    const nameInput = document.getElementById('ip-connect-name');
+    if (nameInput && !nameInput.value) {
+      const isMobile = /iPhone|Android|iPad/i.test(navigator.userAgent);
+      nameInput.value = isMobile ? 'Mobile 5G Node' : 'Primary Desktop Node';
+    }
     return _myIpCache;
   } catch(e) { return null; }
 }
 
 function timeSinceStr(isoStr) {
   if (!isoStr) return '—';
-  const secs = Math.floor((Date.now() - new Date(isoStr + 'Z').getTime()) / 1000);
-  if (secs < 60) return `${secs}s ago`;
-  if (secs < 3600) return `${Math.floor(secs/60)}m ago`;
-  if (secs < 86400) return `${Math.floor(secs/3600)}h ago`;
-  return `${Math.floor(secs/86400)}d ago`;
+  try {
+    const d = isoStr.endsWith('Z') ? new Date(isoStr) : new Date(isoStr + 'Z');
+    const secs = Math.max(0, Math.floor((Date.now() - d.getTime()) / 1000));
+    if (secs < 60) return `${secs}s ago`;
+    if (secs < 3600) return `${Math.floor(secs/60)}m ago`;
+    if (secs < 86400) return `${Math.floor(secs/3600)}h ago`;
+    return `${Math.floor(secs/86400)}d ago`;
+  } catch(e) { return isoStr; }
 }
 
 function parseDeviceName(ua) {
@@ -2441,50 +2482,156 @@ function parseDeviceName(ua) {
   return '🌐 Browser';
 }
 
+async function loadIpStats() {
+  try {
+    const r = await apiFetch('/api/ip/stats');
+    if (!r.success || !r.stats) return;
+    const s = r.stats;
+    const elActive = document.getElementById('ip-stat-active-nodes');
+    if (elActive) elActive.textContent = `${s.active_nodes} Active`;
+    
+    const elSub = document.getElementById('ip-stat-nodes-sub');
+    if (elSub) elSub.textContent = `${s.active_nodes} of ${s.total_nodes} nodes ready`;
+
+    const elCap = document.getElementById('ip-stat-pool-capacity');
+    if (elCap) elCap.textContent = `${(s.daily_capacity || 0).toLocaleString()} / day`;
+
+    const elSent = document.getElementById('ip-stat-sent-today');
+    if (elSent) elSent.textContent = `${(s.sent_today || 0).toLocaleString()} emails`;
+
+    const elBar = document.getElementById('ip-stat-sent-bar');
+    if (elBar) {
+      const cap = s.daily_capacity || 150;
+      const pct = cap > 0 ? Math.min(100, Math.round(((s.sent_today || 0) / cap) * 100)) : 0;
+      elBar.style.width = `${pct}%`;
+    }
+
+    const elLat = document.getElementById('ip-stat-avg-latency');
+    if (elLat) elLat.textContent = `${s.avg_latency_ms || 24} ms`;
+  } catch (e) {
+    console.error('Failed to load IP pool stats:', e);
+  }
+}
+
 async function loadIpNodes() {
   await detectMyIp();
+  await loadIpStats();
+
   const r = await apiFetch('/api/ip/nodes');
   if (!r.success) return;
   const nodes = r.nodes || [];
-  const connected = nodes.filter(n => n.status === 'connected');
-  const badge = document.getElementById('badge-ip-nodes');
-  if (badge) badge.textContent = connected.length;
+  const activeNodes = nodes.filter(n => n.status === 'connected' && !n.is_paused);
 
-  const myNode = nodes.find(n => n.ip_address === _myIpCache && n.status === 'connected');
-  _ipConnected = !!myNode;
+  const badge = document.getElementById('badge-ip-nodes');
+  if (badge) badge.textContent = activeNodes.length;
+
+  const totalBadge = document.getElementById('badge-ip-nodes-total');
+  if (totalBadge) totalBadge.textContent = `${nodes.length} nodes`;
+
+  const myNode = nodes.find(n => n.ip_address === _myIpCache);
+  _ipConnected = !!(myNode && myNode.status === 'connected');
   updateIpConnectButton();
 
   const statusCard = document.getElementById('ip-my-status-card');
+  const connTag = document.getElementById('ip-my-connection-tag');
   if (statusCard) {
-    statusCard.style.display = myNode ? 'flex' : 'none';
-    if (myNode) {
-      const detail = document.getElementById('ip-my-status-detail');
-      if (detail) detail.textContent = `${_myIpCache} · Connected ${timeSinceStr(myNode.connected_at)}`;
+    statusCard.style.display = (myNode && myNode.status === 'connected') ? 'flex' : 'none';
+  }
+  if (connTag) {
+    connTag.style.display = (myNode && myNode.status === 'connected') ? 'inline-flex' : 'none';
+  }
+  if (myNode && myNode.status === 'connected') {
+    const detail = document.getElementById('ip-my-status-detail');
+    if (detail) {
+      detail.innerHTML = `This device is active: <strong style="color:var(--text-primary);">${myNode.name || myNode.ip_address}</strong> (${myNode.provider || '5G'} · limit: ${myNode.daily_limit || 150}/day)`;
     }
+    const lastSeen = document.getElementById('ip-my-last-seen');
+    if (lastSeen) lastSeen.textContent = `Last seen: ${timeSinceStr(myNode.last_seen)}`;
   }
 
   const tbody = document.getElementById('ip-nodes-tbody');
   if (!tbody) return;
   if (!nodes.length) {
-    tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--text-muted);padding:30px;">No nodes connected yet. Click "Connect My IP" above.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--text-muted);padding:35px;">No nodes registered yet. Click "Connect Node" above.</td></tr>';
     return;
   }
+
   tbody.innerHTML = nodes.map(n => {
     const isMe = n.ip_address === _myIpCache;
-    const statusHtml = n.status === 'connected'
-      ? '<span style="display:inline-flex;align-items:center;gap:5px;"><span style="width:8px;height:8px;border-radius:50%;background:#00e082;box-shadow:0 0 6px #00e08266;"></span> Connected</span>'
-      : '<span style="display:inline-flex;align-items:center;gap:5px;"><span style="width:8px;height:8px;border-radius:50%;background:#64748b;"></span> Offline</span>';
-    return `<tr style="${isMe ? 'background:rgba(0,224,130,0.04);' : ''}">
-      <td>${statusHtml}</td>
-      <td>
-        <div style="font-weight:600;font-size:13px;">${n.name || n.ip_address}</div>
-        <div style="font-size:11px;color:var(--text-muted);">${n.ip_address}${isMe ? ' · <span style="color:#00e082;">You</span>' : ''}</div>
-      </td>
-      <td style="font-size:12px;color:var(--text-muted);">${timeSinceStr(n.connected_at)}</td>
-      <td style="font-size:12px;color:var(--text-muted);">${timeSinceStr(n.last_seen)}</td>
-      <td style="font-size:12px;">${parseDeviceName(n.user_agent)}</td>
-      <td><button class="btn-ghost btn-xs" style="color:#ef4444;" onclick="deleteIpNode(${n.id})">Remove</button></td>
-    </tr>`;
+    const isPaused = n.is_paused === 1 || n.status === 'paused';
+    const isConnected = n.status === 'connected' && !isPaused;
+
+    // Status pill with live glow pulse
+    let statusHtml = '';
+    if (isConnected) {
+      statusHtml = `<span style="display:inline-flex;align-items:center;gap:6px;font-size:12px;color:#00e082;font-weight:600;"><span class="live-pulse-dot active"></span> Active</span>`;
+    } else if (isPaused) {
+      statusHtml = `<span style="display:inline-flex;align-items:center;gap:6px;font-size:12px;color:#fbbf24;font-weight:600;"><span class="live-pulse-dot paused"></span> Paused</span>`;
+    } else {
+      statusHtml = `<span style="display:inline-flex;align-items:center;gap:6px;font-size:12px;color:#94a3b8;"><span class="live-pulse-dot offline"></span> Offline</span>`;
+    }
+
+    const limit = n.daily_limit || 150;
+    const sent = n.sent_today || 0;
+    const pct = Math.min(100, Math.round((sent / limit) * 100));
+
+    const carrierIcon = n.provider && n.provider.includes('Fiber') ? '🏠' : (n.provider && n.provider.includes('Mesh') ? '🛡️' : '📱');
+    const isTunnel = n.is_persistent_tunnel === 1;
+
+    return `
+      <tr style="${isMe ? 'background:rgba(0,224,130,0.03);' : (isTunnel ? 'background:rgba(56,189,248,0.02);' : '')}">
+        <td>${statusHtml}</td>
+        <td>
+          <div style="font-weight:600;font-size:13px;display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+            <span>${n.name || 'Unnamed Node'}</span>
+            ${isTunnel ? '<span class="tunnel-tag-badge">⚡ 24/7 TUNNEL</span>' : ''}
+            ${isMe ? '<span style="background:rgba(0,224,130,0.15);color:#00e082;border:1px solid rgba(0,224,130,0.3);padding:1px 6px;border-radius:10px;font-size:10px;font-weight:700;">THIS DEVICE</span>' : ''}
+          </div>
+          <div style="font-family:monospace;font-size:11px;color:var(--text-muted);margin-top:2px;cursor:pointer;" title="Click to copy IP" onclick="navigator.clipboard.writeText('${n.ip_address}');showToast('Copied IP: ${n.ip_address}','info');">
+            ${n.ip_address} <span style="font-size:10px;opacity:0.7;">📋</span>
+          </div>
+          ${isTunnel ? `<div style="font-family:monospace;font-size:10.5px;color:#38bdf8;margin-top:2px;">${(n.proxy_protocol||'socks5').toUpperCase()}://${n.proxy_host||''}:${n.proxy_port||1080}</div>` : ''}
+        </td>
+        <td>
+          <div class="carrier-chip">
+            <span>${carrierIcon}</span>
+            <span>${n.provider || 'Cellular 5G'}</span>
+          </div>
+        </td>
+        <td>
+          <div style="display:flex;justify-content:space-between;font-size:11.5px;color:var(--text-muted);margin-bottom:2px;">
+            <span><strong style="color:var(--text-primary);">${sent}</strong> / ${limit} sent</span>
+            <span>${pct}%</span>
+          </div>
+          <div class="node-quota-bar-wrap">
+            <div class="node-quota-bar" style="width:${pct}%;"></div>
+          </div>
+        </td>
+        <td>
+          <div class="latency-chip" id="latency-cell-${n.id}">
+            <span>⚡</span>
+            <span>${n.latency_ms || 28} ms</span>
+          </div>
+        </td>
+        <td style="font-size:11.5px;color:var(--text-muted);">
+          ${timeSinceStr(n.last_seen)}
+        </td>
+        <td style="text-align:right;">
+          <div style="display:inline-flex;gap:6px;align-items:center;">
+            ${(isTunnel || n.rotation_webhook) ? `
+              <button class="node-action-btn rotate" id="btn-rotate-${n.id}" onclick="rotateIpNode(${n.id})" title="Force IP Rotation via Localtonet Webhook">🔄 Rotate</button>
+            ` : ''}
+            ${isPaused 
+              ? `<button class="node-action-btn resume" onclick="togglePauseIpNode(${n.id})" title="Resume routing through this IP">▶ Resume</button>`
+              : `<button class="node-action-btn pause" onclick="togglePauseIpNode(${n.id})" title="Pause using this IP for now">⏸ Pause</button>`
+            }
+            <button class="node-action-btn" onclick="openEditIpNode(${n.id}, '${n.ip_address}', '${(n.name||'').replace(/'/g, "\\'")}', '${(n.provider||'Jio 5G').replace(/'/g, "\\'")}', ${limit}, '${(n.rotation_webhook||'').replace(/'/g, "\\'")}')" title="Edit Name, Provider & Limits">✏️ Edit</button>
+            <button class="node-action-btn ping" id="btn-ping-${n.id}" onclick="pingIpNode(${n.id})" title="Test Live Ping">⚡ Ping</button>
+            <button class="node-action-btn" style="color:#ef4444;" onclick="deleteIpNode(${n.id})" title="Remove Node">🗑</button>
+          </div>
+        </td>
+      </tr>
+    `;
   }).join('');
 }
 
@@ -2496,16 +2643,161 @@ function updateIpConnectButton() {
   btnDisconnect.style.display = _ipConnected ? '' : 'none';
 }
 
-async function ipNodeConnect() {
-  const name = prompt("Name this connection (optional):", "My Device") || "";
-  const r = await apiFetch("/api/ip/connect", "POST", { name });
-  if (r.success) {
-    _ipConnected = true;
-    showToast(`✅ Connected from ${r.node.ip_address}`, "success");
-    startIpHeartbeat();
-    await loadIpNodes();
+function switchIpConnectTab(tab) {
+  const btnLt = document.getElementById('btn-tab-localtonet');
+  const btnBr = document.getElementById('btn-tab-browser');
+  const tabLt = document.getElementById('ip-tab-localtonet');
+  const tabBr = document.getElementById('ip-tab-browser');
+  if (tab === 'localtonet') {
+    if (btnLt) btnLt.classList.add('active');
+    if (btnBr) btnBr.classList.remove('active');
+    if (tabLt) tabLt.style.display = 'block';
+    if (tabBr) tabBr.style.display = 'none';
   } else {
-    showToast("Failed: " + (r.error || "Unknown error"), "error");
+    if (btnLt) btnLt.classList.remove('active');
+    if (btnBr) btnBr.classList.add('active');
+    if (tabLt) tabLt.style.display = 'none';
+    if (tabBr) tabBr.style.display = 'block';
+  }
+}
+
+async function testLocaltonetTunnel() {
+  const host = document.getElementById('lt-tunnel-host')?.value.trim();
+  const port = parseInt(document.getElementById('lt-tunnel-port')?.value);
+  const protocol = document.getElementById('lt-tunnel-protocol')?.value || 'socks5';
+  const username = document.getElementById('lt-auth-user')?.value.trim();
+  const password = document.getElementById('lt-auth-pass')?.value.trim();
+  const statusEl = document.getElementById('lt-test-status');
+
+  if (!host || !port) {
+    showToast("Please enter Tunnel Host and Port first", "error");
+    return;
+  }
+
+  const btn = document.getElementById('btn-lt-test');
+  if (btn) { btn.disabled = true; btn.textContent = "⏳ Testing…"; }
+  if (statusEl) { statusEl.innerHTML = `<span style="color:#38bdf8;">Connecting through ${protocol.toUpperCase()} proxy…</span>`; }
+
+  try {
+    const r = await apiFetch("/api/ip/tunnel/test", "POST", { host, port, protocol, username, password });
+    if (r.success) {
+      showToast(`✅ Live Mobile IP: ${r.ip} (${r.latency_ms} ms)`, "success");
+      if (statusEl) {
+        statusEl.innerHTML = `<span style="color:#00e082;font-weight:600;">✅ Connected! Mobile IP: ${r.ip} · Latency: ${r.latency_ms} ms</span>`;
+      }
+    } else {
+      showToast(r.error || "Tunnel connection test failed", "error");
+      if (statusEl) {
+        statusEl.innerHTML = `<span style="color:#ef4444;">❌ Failed: ${r.error || 'Connection timed out'}</span>`;
+      }
+    }
+  } catch(e) {
+    showToast("Error testing proxy: " + e.message, "error");
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = "Test Connection"; }
+  }
+}
+
+async function saveLocaltonetTunnel() {
+  const host = document.getElementById('lt-tunnel-host')?.value.trim();
+  const port = parseInt(document.getElementById('lt-tunnel-port')?.value);
+  const name = document.getElementById('lt-node-name')?.value.trim();
+  const protocol = document.getElementById('lt-tunnel-protocol')?.value || 'socks5';
+  const username = document.getElementById('lt-auth-user')?.value.trim();
+  const password = document.getElementById('lt-auth-pass')?.value.trim();
+  const provider = document.getElementById('lt-provider')?.value || 'Cellular 5G (Localtonet)';
+  const daily_limit = parseInt(document.getElementById('lt-daily-limit')?.value) || 200;
+  const webhook = document.getElementById('lt-rotation-webhook')?.value.trim();
+  const auto_rotate = parseInt(document.getElementById('lt-auto-rotate')?.value) || 0;
+
+  if (!host || !port) {
+    showToast("Tunnel Host and Port are required to save", "error");
+    return;
+  }
+
+  const btn = document.getElementById('btn-lt-save');
+  if (btn) { btn.disabled = true; btn.textContent = "Saving 24/7 Tunnel…"; }
+
+  try {
+    const r = await apiFetch("/api/ip/tunnel/save", "POST", {
+      name,
+      host,
+      port,
+      protocol,
+      username,
+      password,
+      provider,
+      daily_limit,
+      webhook,
+      auto_rotate,
+    });
+
+    if (r.success) {
+      showToast(`⚡ 24/7 Mobile Tunnel saved! Outreach is now routed through ${r.node.name}`, "success");
+      await loadIpNodes();
+      await loadIpStats();
+    } else {
+      showToast(r.error || "Failed to save mobile tunnel", "error");
+    }
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg> Save & Activate 24/7 Mobile Tunnel`;
+    }
+  }
+}
+
+async function rotateIpNode(nodeId) {
+  const btn = document.getElementById(`btn-rotate-${nodeId}`);
+  if (btn) { btn.disabled = true; btn.textContent = "⏳ Rotating…"; }
+
+  try {
+    const r = await apiFetch(`/api/ip/nodes/${nodeId}/rotate-ip`, "POST", {});
+    if (r.success) {
+      showToast(`🔄 Mobile IP rotated: ${r.old_ip} → ${r.new_ip} (${r.latency_ms} ms)`, "success");
+      await loadIpNodes();
+      await loadIpStats();
+    } else {
+      showToast(r.error || "IP rotation failed. Check rotation webhook URL.", "error");
+    }
+  } catch(e) {
+    showToast("Rotation error: " + e.message, "error");
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = "🔄 Rotate"; }
+  }
+}
+
+function openLocaltonetGuide() {
+  openModal('backdrop-localtonet-guide');
+}
+
+async function ipNodeConnect() {
+  const btn = document.getElementById('btn-ip-connect');
+  if (btn) { btn.disabled = true; btn.textContent = 'Connecting…'; }
+  try {
+    const name = document.getElementById('ip-connect-name')?.value.trim() || 'My 5G Node';
+    const provider = document.getElementById('ip-connect-provider')?.value || 'Jio 5G';
+    const dailyLimit = parseInt(document.getElementById('ip-connect-limit')?.value) || 150;
+
+    const r = await apiFetch("/api/ip/connect", "POST", {
+      name,
+      provider,
+      daily_limit: dailyLimit,
+    });
+
+    if (r.success) {
+      _ipConnected = true;
+      showToast(`✅ Node connected: ${name} (${r.node.ip_address})`, "success");
+      startIpHeartbeat();
+      await loadIpNodes();
+    } else {
+      showToast("Failed to connect: " + (r.error || "Unknown error"), "error");
+    }
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg> Connect Node`;
+    }
   }
 }
 
@@ -2517,22 +2809,89 @@ async function ipNodeDisconnect() {
     showToast("Disconnected from sending pool", "info");
     const card = document.getElementById("ip-my-status-card");
     if (card) card.style.display = "none";
+    const tag = document.getElementById("ip-my-connection-tag");
+    if (tag) tag.style.display = "none";
     await loadIpNodes();
   }
 }
 
+async function togglePauseIpNode(id) {
+  const r = await apiFetch(`/api/ip/nodes/${id}/toggle-pause`, "POST", {});
+  if (r.success) {
+    const isPaused = r.node && r.node.is_paused === 1;
+    showToast(isPaused ? "⏸ Node paused from outbound sending" : "▶ Node resumed for outbound sending", "info");
+    await loadIpNodes();
+  } else {
+    showToast(r.error || "Could not toggle node state", "error");
+  }
+}
+
+function openEditIpNode(id, ip, name, provider, limit, webhook) {
+  document.getElementById('edit-node-id').value = id;
+  document.getElementById('edit-node-ip').value = ip;
+  document.getElementById('edit-node-name').value = name || '';
+  const provSel = document.getElementById('edit-node-provider');
+  if (provSel) provSel.value = provider || 'Jio 5G';
+  document.getElementById('edit-node-limit').value = limit || 150;
+  const whInput = document.getElementById('edit-node-webhook');
+  if (whInput) whInput.value = webhook || '';
+  openModal('backdrop-edit-ip-node');
+}
+
+async function saveEditedIpNode() {
+  const id = document.getElementById('edit-node-id')?.value;
+  if (!id) return;
+  const name = document.getElementById('edit-node-name')?.value.trim();
+  const provider = document.getElementById('edit-node-provider')?.value;
+  const dailyLimit = parseInt(document.getElementById('edit-node-limit')?.value) || 150;
+  const webhook = document.getElementById('edit-node-webhook')?.value.trim() || '';
+
+  const r = await apiFetch(`/api/ip/nodes/${id}/update`, "POST", {
+    name,
+    provider,
+    daily_limit: dailyLimit,
+    webhook,
+  });
+
+  if (r.success) {
+    closeModal('backdrop-edit-ip-node');
+    showToast("✅ Node settings updated", "success");
+    await loadIpNodes();
+  } else {
+    showToast(r.error || "Failed to update node", "error");
+  }
+}
+
+async function pingIpNode(id) {
+  const btn = document.getElementById(`btn-ping-${id}`);
+  if (btn) { btn.textContent = '...'; btn.disabled = true; }
+  try {
+    const r = await apiFetch(`/api/ip/nodes/${id}/ping`, "POST", {});
+    if (r.success) {
+      showToast(`⚡ Real-time Latency: ${r.latency_ms} ms`, "success");
+      const cell = document.getElementById(`latency-cell-${id}`);
+      if (cell) cell.innerHTML = `<span>⚡</span> <span>${r.latency_ms} ms</span>`;
+      await loadIpStats();
+    }
+  } finally {
+    if (btn) { btn.textContent = '⚡ Ping'; btn.disabled = false; }
+  }
+}
+
 async function deleteIpNode(id) {
-  if (!confirm("Remove this node from the list?")) return;
+  if (!confirm("Remove this IP node from the sending pool?")) return;
   await apiFetch(`/api/ip/nodes/${id}`, "DELETE");
+  showToast("Node removed", "info");
   await loadIpNodes();
 }
+
 function startIpHeartbeat() {
   stopIpHeartbeat();
   _ipHeartbeatTimer = setInterval(async () => {
     if (_ipConnected) {
       try { await fetch('/api/ip/heartbeat', { method: 'POST', headers: {'Content-Type':'application/json'}, body: '{}' }); } catch(e) {}
     }
-  }, 30000); // ping every 30 seconds
+  }, 30000);
 }
 
 function stopIpHeartbeat() {
@@ -2722,4 +3081,13 @@ window.smtpVaultProviderPreset = smtpVaultProviderPreset;
 window.runDomainDeliverabilityAudit = runDomainDeliverabilityAudit;
 window.fetchTerminalLogs = fetchTerminalLogs;
 window.clearTerminalLogs = clearTerminalLogs;
+window.switchIpConnectTab = switchIpConnectTab;
+window.testLocaltonetTunnel = testLocaltonetTunnel;
+window.saveLocaltonetTunnel = saveLocaltonetTunnel;
+window.rotateIpNode = rotateIpNode;
+window.openLocaltonetGuide = openLocaltonetGuide;
+window.openEditIpNode = openEditIpNode;
+window.saveEditedIpNode = saveEditedIpNode;
+window.togglePauseIpNode = togglePauseIpNode;
+window.pingIpNode = pingIpNode;
 

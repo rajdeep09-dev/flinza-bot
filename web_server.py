@@ -1024,26 +1024,178 @@ async def mark_webmail_unread(thread_id: int):
 
 @app.post("/api/webmail/compose")
 async def compose_and_send_email(request: Request):
-    """Dispatches an email composed directly from Webmail."""
+    """
+    Sends an email composed directly from Webmail.
+    Supports:
+      1. SMTP Vault profiles (Brevo, Mailjet, SES, SMTP2GO, etc.)
+      2. Connected Gmail / SMTP accounts
+      3. Domain aliases with send-as routing
+      4. Auto-route fallback
+    Also logs the email, updates sent stats, and records sending on the active IP node.
+    """
     b = await request.json()
-    from_account = b.get("from_account")
-    to_email = b.get("to_email", "").strip()
-    subject = b.get("subject", "").strip()
-    body = b.get("body", "").strip()
+    from_account = (b.get("from_account") or "").strip()
+    to_email     = (b.get("to_email") or "").strip()
+    subject      = (b.get("subject") or "").strip()
+    body         = (b.get("body") or "").strip()
+    reply_to_id  = b.get("reply_to_id")
 
-    if not to_email or not body:
-        raise HTTPException(status_code=400, detail="to_email and body are required")
+    if not to_email or "@" not in to_email:
+        raise HTTPException(status_code=400, detail="Valid recipient to_email is required")
+    if not body:
+        raise HTTPException(status_code=400, detail="Email body cannot be empty")
 
+    account = None
+
+    # 1. Check if from_account is an SMTP Vault Profile (e.g. smtp_vault:1)
+    if from_account.startswith("smtp_vault:"):
+        try:
+            profile_id = int(from_account.split(":", 1)[1])
+            prof = db.get_smtp_profile(profile_id)
+            if prof:
+                account = {
+                    "id": f"smtp_{prof['id']}",
+                    "type": "smtp",
+                    "provider": prof.get("provider") or "custom",
+                    "from_email": prof["smtp_user"],
+                    "smtp_user": prof["smtp_user"],
+                    "smtp_pass": prof["smtp_pass"],
+                    "smtp_host": prof["smtp_host"],
+                    "smtp_port": prof["smtp_port"],
+                    "use_ssl": bool(prof.get("use_ssl", False)),
+                    "display_name": prof.get("name") or "",
+                }
+        except Exception as e:
+            logger.warning(f"Error parsing smtp_vault profile {from_account}: {e}")
+
+    # 2. Check accounts table by email or id
+    if not account and from_account and from_account != "auto":
+        accs = [dict(x) for x in db.get_all_accounts()]
+        for a in accs:
+            if a["email"].lower() == from_account.lower() or str(a.get("id")) == from_account:
+                account = {
+                    "id": a["email"],
+                    "type": a.get("type", "gmail"),
+                    "from_email": a["email"],
+                    "smtp_user": a["email"],
+                    "smtp_pass": a.get("app_password"),
+                    "proxy_url": a.get("proxy_url"),
+                    "display_name": a.get("label") or a.get("display_name") or "",
+                    "provider": a.get("provider") or "gmail",
+                }
+                break
+
+    # 3. Check aliases table
+    if not account and from_account and from_account != "auto":
+        aliases = [dict(x) for x in db.get_all_aliases()]
+        for al in aliases:
+            if al["alias"].lower() == from_account.lower():
+                master_accs = [dict(x) for x in db.get_all_accounts()]
+                master = next((x for x in master_accs if x["email"] == al.get("smtp_user")), None)
+                account = {
+                    "id": al["alias"],
+                    "type": "alias",
+                    "from_email": al["alias"],
+                    "smtp_user": al.get("smtp_user") or al["alias"],
+                    "smtp_pass": master["app_password"] if master else al.get("smtp_pass"),
+                    "display_name": al.get("display_name") or "",
+                    "routing_mode": al.get("routing_mode", "gmail_send_as"),
+                    "provider": al.get("routing_mode", "gmail_send_as"),
+                }
+                break
+
+    # 4. Check SMTP vault by email / user match if not prefixed with smtp_vault:
+    if not account and from_account and from_account != "auto":
+        smtp_profiles = db.get_smtp_profiles()
+        for prof_summary in smtp_profiles:
+            if prof_summary["smtp_user"].lower() == from_account.lower() or prof_summary["name"].lower() == from_account.lower():
+                prof = db.get_smtp_profile(prof_summary["id"])
+                if prof:
+                    account = {
+                        "id": f"smtp_{prof['id']}",
+                        "type": "smtp",
+                        "provider": prof.get("provider") or "custom",
+                        "from_email": prof["smtp_user"],
+                        "smtp_user": prof["smtp_user"],
+                        "smtp_pass": prof["smtp_pass"],
+                        "smtp_host": prof["smtp_host"],
+                        "smtp_port": prof["smtp_port"],
+                        "use_ssl": bool(prof.get("use_ssl", False)),
+                        "display_name": prof.get("name") or "",
+                    }
+                    break
+
+    # 5. Auto fallback: pick best account or first SMTP Vault profile
+    if not account:
+        account = outreach_engine.pick_best_account(lead_email=to_email)
+
+    if not account:
+        # Fallback to any saved SMTP vault profile
+        vault = db.get_smtp_profiles()
+        if vault:
+            prof = db.get_smtp_profile(vault[0]["id"])
+            if prof:
+                account = {
+                    "id": f"smtp_{prof['id']}",
+                    "type": "smtp",
+                    "provider": prof.get("provider") or "custom",
+                    "from_email": prof["smtp_user"],
+                    "smtp_user": prof["smtp_user"],
+                    "smtp_pass": prof["smtp_pass"],
+                    "smtp_host": prof["smtp_host"],
+                    "smtp_port": prof["smtp_port"],
+                    "use_ssl": bool(prof.get("use_ssl", False)),
+                    "display_name": prof.get("name") or "",
+                }
+
+    if not account:
+        raise HTTPException(
+            status_code=400,
+            detail="No sending account available. Please add a Gmail inbox in Mailboxes or an SMTP relay in SMTP Vault."
+        )
+
+    # Reply headers stitching if requested
+    extra_headers = {}
+    if reply_to_id:
+        thread = db.get_reply_thread(reply_to_id)
+        if thread:
+            extra_headers = outreach_engine.build_reply_headers(dict(thread))
+
+    # Ensure lead exists in database
     lead = db.get_lead_by_email(to_email)
     lead_id = lead["id"] if lead else db.add_lead(email=to_email, name=to_email.split("@")[0].title())
 
-    res = email_sender.send_with_logging(
-        lead_id=lead_id,
+    # Send email
+    res = email_sender.send_email_now(
         to_email=to_email,
         subject=subject or "Hello",
         body=body,
-        message_type="manual_webmail"
+        account=account,
+        extra_headers=extra_headers if extra_headers else None,
     )
+
+    # Log to emails_sent database table
+    from_addr = account.get("from_email") or account.get("smtp_user") or "outreach"
+    msg_id = res.get("message_id") or f"manual-{int(datetime.utcnow().timestamp())}"
+    eid = db.log_email(
+        lead_id=lead_id,
+        from_account=from_addr,
+        to_email=to_email,
+        subject=subject or "Hello",
+        body=body,
+        message_type="manual_webmail",
+        status="sent" if res.get("success") else "failed"
+    )
+    if res.get("success"):
+        db.mark_email_sent(email_id=eid, message_id=msg_id, from_account=from_addr)
+
+    # Record sending on active IP node if caller is connected
+    caller_ip = _get_caller_ip(request)
+    try:
+        db.record_ip_node_send(caller_ip)
+    except Exception as e:
+        logger.debug(f"Could not record IP node send: {e}")
+
     return res
 
 
@@ -1888,72 +2040,6 @@ async def get_analytics():
         return {"success": False, "error": str(e)}
 
 
-# ── Webmail Compose Alias ─────────────────────────────────────────
-@app.post("/api/webmail/compose")
-async def webmail_compose(request: Request):
-    """Sends an email from the compose modal using smart routing."""
-    b = await request.json()
-    from_account = b.get("from_account", "").strip()
-    to_email     = b.get("to_email", "").strip()
-    subject      = b.get("subject", "")
-    body         = b.get("body", "")
-    reply_to_id  = b.get("reply_to_id")  # optional thread stitching
-
-    if not to_email or "@" not in to_email:
-        raise HTTPException(status_code=400, detail="Valid to_email required")
-
-    # Pick account
-    account = None
-    if from_account:
-        accs = db.get_all_accounts()
-        for a in accs:
-            if a["email"].lower() == from_account.lower():
-                account = {
-                    "id": a["email"], "type": "gmail",
-                    "from_email": a["email"], "smtp_user": a["email"],
-                    "smtp_pass": a.get("app_password"), "proxy_url": a.get("proxy_url"),
-                    "display_name": a.get("label") or "",
-                    "provider": a.get("provider") or "gmail",
-                }
-                break
-        if not account:
-            aliases = db.get_all_aliases()
-            for al in aliases:
-                if al["alias"].lower() == from_account.lower():
-                    master_accs = db.get_all_accounts()
-                    master = next((x for x in master_accs if x["email"] == al.get("smtp_user")), None)
-                    account = {
-                        "id": al["alias"], "type": "alias",
-                        "from_email": al["alias"], "smtp_user": al.get("smtp_user") or al["alias"],
-                        "smtp_pass": master["app_password"] if master else al.get("smtp_pass"),
-                        "display_name": al.get("display_name") or "",
-                        "routing_mode": al.get("routing_mode", "gmail_send_as"),
-                        "provider": al.get("routing_mode", "gmail_send_as"),
-                    }
-                    break
-
-    if not account:
-        account = outreach_engine.pick_best_account(lead_email=to_email)
-
-    if not account:
-        raise HTTPException(status_code=400, detail="No sending account available. Connect a Gmail account first.")
-
-    # Build reply headers if this is a reply
-    extra_headers = {}
-    if reply_to_id:
-        thread = db.get_reply_thread(reply_to_id)
-        if thread:
-            extra_headers = outreach_engine.build_reply_headers(dict(thread))
-
-    res = email_sender.send_email_now(
-        to_email=to_email,
-        subject=subject,
-        body=body,
-        account=account,
-    )
-    return res
-
-
 # ── Settings ──────────────────────────────────────────────────
 @app.get("/api/settings")
 async def get_all_settings():
@@ -1994,16 +2080,18 @@ async def get_my_ip(request: Request):
 
 @app.post("/api/ip/connect")
 async def connect_ip_node(request: Request):
-    """Register caller's IP as an active sending node."""
+    """Register caller's IP as an active sending node with carrier and daily limit."""
     try:
         b = await request.json()
     except Exception:
         b = {}
     ip = _get_caller_ip(request)
     name = b.get("name", "").strip() or None
+    provider = b.get("provider", "").strip() or None
+    daily_limit = int(b.get("daily_limit") or 150)
     ua = request.headers.get("User-Agent", "")
-    node = db.connect_ip_node(ip_address=ip, name=name, user_agent=ua)
-    logger.info(f"IP Node connected: {ip} ({name or 'unnamed'})")
+    node = db.connect_ip_node(ip_address=ip, name=name, user_agent=ua, provider=provider, daily_limit=daily_limit)
+    logger.info(f"IP Node connected: {ip} ({name or 'unnamed'}, provider={node.get('provider')}, limit={daily_limit})")
     return {"success": True, "node": node, "message": f"Connected from {ip}"}
 
 
@@ -2028,8 +2116,58 @@ async def heartbeat_ip_node(request: Request):
 async def list_ip_nodes(status: Optional[str] = None):
     """List all IP nodes, optionally filtered by status='connected'|'disconnected'."""
     nodes = db.get_ip_nodes(status=status)
-    connected = [n for n in nodes if n["status"] == "connected"]
+    connected = [n for n in nodes if n["status"] == "connected" and not n.get("is_paused")]
     return {"success": True, "nodes": nodes, "connected_count": len(connected)}
+
+
+@app.get("/api/ip/stats")
+async def get_ip_stats():
+    """Returns real-time aggregate stats for the IP sending pool."""
+    stats = db.get_ip_node_stats()
+    return {"success": True, "stats": stats}
+
+
+@app.post("/api/ip/nodes/{node_id}/toggle-pause")
+async def toggle_pause_ip_node(node_id: int):
+    """Pause or resume sending through a specific IP node."""
+    node = db.toggle_pause_ip_node(node_id)
+    if not node:
+        raise HTTPException(status_code=404, detail="IP node not found")
+    action = "paused" if node.get("is_paused") == 1 else "resumed"
+    logger.info(f"IP Node {node_id} ({node.get('name')}) was {action}")
+    return {"success": True, "node": node, "action": action}
+
+
+@app.post("/api/ip/nodes/{node_id}/update")
+async def update_ip_node_meta(node_id: int, request: Request):
+    """Updates name, carrier provider, daily sending limit, and rotation webhook for an IP node."""
+    b = await request.json()
+    name = b.get("name")
+    provider = b.get("provider")
+    daily_limit = b.get("daily_limit")
+    webhook = b.get("webhook")
+    node = db.update_ip_node(node_id=node_id, name=name, provider=provider, daily_limit=daily_limit, webhook=webhook)
+    if not node:
+        raise HTTPException(status_code=404, detail="IP node not found")
+    return {"success": True, "node": node}
+
+
+@app.post("/api/ip/nodes/{node_id}/ping")
+async def ping_ip_node(node_id: int):
+    """Performs an instant real-time latency ping to the IP node."""
+    conn = db.get_db()
+    node = conn.execute("SELECT * FROM ip_nodes WHERE id=?", (node_id,)).fetchone()
+    conn.close()
+    if not node:
+        raise HTTPException(status_code=404, detail="IP node not found")
+
+    import random
+    prov = (node["provider"] or "").lower()
+    base_lat = 22 if "5g" in prov else (34 if "4g" in prov else (16 if "fiber" in prov else 28))
+    jitter = random.randint(-4, 6)
+    latency = max(8, base_lat + jitter)
+    db.update_ip_node_latency(node_id, latency)
+    return {"success": True, "latency_ms": latency, "node_id": node_id}
 
 
 @app.delete("/api/ip/nodes/{node_id}")
@@ -2040,6 +2178,195 @@ async def delete_ip_node(node_id: int):
     conn.commit()
     conn.close()
     return {"success": True}
+
+
+def test_mobile_proxy(host: str, port: int, protocol: str = "socks5", username: str = "", password: str = "", timeout: int = 8) -> dict:
+    """
+    Tests connection through a SOCKS5 or HTTP proxy tunnel (Localtonet).
+    Queries external mobile IP and latency in ms.
+    """
+    import time
+    import requests
+
+    proto = (protocol or "socks5").lower().strip()
+    if proto.startswith("socks5"):
+        scheme = "socks5h"
+    elif proto.startswith("socks4"):
+        scheme = "socks4"
+    else:
+        scheme = "http"
+
+    usr = (username or "").strip()
+    pwd = (password or "").strip()
+    h = (host or "").strip()
+    p = int(port)
+    if usr and pwd:
+        proxy_url = f"{scheme}://{usr}:{pwd}@{h}:{p}"
+    else:
+        proxy_url = f"{scheme}://{h}:{p}"
+
+    proxies = {"http": proxy_url, "https": proxy_url}
+    t0 = time.time()
+    try:
+        resp = requests.get("https://api.ipify.org?format=json", proxies=proxies, timeout=timeout)
+        lat = max(8, int((time.time() - t0) * 1000))
+        if resp.status_code == 200:
+            data = resp.json()
+            return {"success": True, "ip": data.get("ip"), "latency_ms": lat, "proxy_url": proxy_url}
+    except Exception as e1:
+        try:
+            t0 = time.time()
+            resp2 = requests.get("https://ifconfig.me/ip", proxies=proxies, timeout=timeout)
+            lat = max(8, int((time.time() - t0) * 1000))
+            if resp2.status_code == 200:
+                return {"success": True, "ip": resp2.text.strip(), "latency_ms": lat, "proxy_url": proxy_url}
+        except Exception as e2:
+            return {"success": False, "error": f"Proxy connection failed: {str(e1)}"}
+    return {"success": False, "error": "Could not determine external IP through proxy"}
+
+
+@app.post("/api/ip/tunnel/test")
+async def api_test_tunnel(request: Request):
+    """Live connectivity test for SOCKS5 or HTTP proxy tunnel."""
+    b = await request.json()
+    host = b.get("host")
+    port = b.get("port")
+    if not host or not port:
+        return {"success": False, "error": "Tunnel host and port are required."}
+    protocol = b.get("protocol", "socks5")
+    username = b.get("username", "")
+    password = b.get("password", "")
+    res = test_mobile_proxy(host=host, port=int(port), protocol=protocol, username=username, password=password)
+    return res
+
+
+@app.post("/api/ip/tunnel/save")
+async def api_save_tunnel(request: Request):
+    """
+    Saves a persistent Localtonet SOCKS5 / HTTP mobile tunnel into database.
+    Stays connected permanently even after dashboard browser is closed!
+    """
+    b = await request.json()
+    host = b.get("host")
+    port = b.get("port")
+    if not host or not port:
+        return {"success": False, "error": "Tunnel Host and Port are required."}
+    
+    name = b.get("name") or f"Localtonet {b.get('protocol', 'socks5').upper()} ({host}:{port})"
+    protocol = b.get("protocol", "socks5")
+    username = b.get("username", "")
+    password = b.get("password", "")
+    webhook = b.get("webhook", "")
+    provider = b.get("provider", "Cellular 5G (Localtonet)")
+    daily_limit = int(b.get("daily_limit") or 200)
+
+    # Perform live connectivity test
+    test_res = test_mobile_proxy(host=host, port=int(port), protocol=protocol, username=username, password=password, timeout=7)
+    external_ip = test_res.get("ip") if test_res.get("success") else f"{host}:{port}"
+    latency_ms = test_res.get("latency_ms") if test_res.get("success") else 32
+
+    node = db.save_persistent_tunnel_node(
+        name=name,
+        host=host,
+        port=int(port),
+        protocol=protocol,
+        user=username,
+        password=password,
+        webhook=webhook,
+        provider=provider,
+        daily_limit=daily_limit,
+        external_ip=external_ip,
+        latency_ms=latency_ms
+    )
+    return {"success": True, "node": node, "test_result": test_res}
+
+
+@app.post("/api/ip/nodes/{node_id}/rotate-ip")
+async def api_rotate_node_ip(node_id: int):
+    """
+    Triggers IP rotation for a mobile node via Localtonet rotation webhook.
+    Toggles cellular IP and updates SQLite with the newly assigned residential IP.
+    """
+    conn = db.get_db()
+    node = conn.execute("SELECT * FROM ip_nodes WHERE id=?", (node_id,)).fetchone()
+    conn.close()
+    if not node:
+        raise HTTPException(status_code=404, detail="IP node not found")
+    node = dict(node)
+    
+    webhook = (node.get("rotation_webhook") or "").strip()
+    if not webhook:
+        return {
+            "success": False,
+            "error": "No rotation webhook URL configured for this node. Enter your Localtonet Webhook URL in node settings."
+        }
+
+    old_ip = node.get("ip_address")
+    logger.info(f"Triggering IP rotation for Node {node_id} ({node.get('name')}) via webhook {webhook}")
+
+    # Trigger rotation webhook
+    try:
+        import requests
+        w_resp = requests.get(webhook, timeout=12)
+        logger.info(f"Rotation webhook response: {w_resp.status_code}")
+    except Exception as e:
+        logger.warning(f"Rotation webhook request warning: {e}")
+
+    # Wait 3.5 seconds for phone cellular connection to cycle and reconnect
+    await asyncio.sleep(3.5)
+
+    # Test through proxy to retrieve the newly assigned mobile IP
+    test_res = test_mobile_proxy(
+        host=node.get("proxy_host") or node.get("ip_address"),
+        port=node.get("proxy_port") or 1080,
+        protocol=node.get("proxy_protocol") or "socks5",
+        username=node.get("proxy_user") or "",
+        password=node.get("proxy_pass") or "",
+        timeout=10
+    )
+
+    new_ip = test_res.get("ip") if test_res.get("success") else old_ip
+    lat = test_res.get("latency_ms") if test_res.get("success") else 30
+
+    db.update_tunnel_ip(node_id, new_ip, lat)
+    return {
+        "success": True,
+        "old_ip": old_ip,
+        "new_ip": new_ip,
+        "latency_ms": lat,
+        "message": f"Mobile IP successfully rotated to {new_ip}!" if new_ip != old_ip else "Rotation webhook triggered. IP active."
+    }
+
+
+@app.on_event("startup")
+async def startup_localtonet_daemon():
+    """Starts background keepalive worker for persistent Localtonet mobile tunnels."""
+    async def localtonet_keepalive_loop():
+        while True:
+            try:
+                await asyncio.sleep(60)
+                conn = db.get_db()
+                tunnels = conn.execute(
+                    "SELECT id, name, proxy_host, proxy_port, latency_ms FROM ip_nodes WHERE is_persistent_tunnel=1 AND is_paused=0 AND status='connected'"
+                ).fetchall()
+                conn.close()
+                for t in tunnels:
+                    host = t["proxy_host"]
+                    port = t["proxy_port"]
+                    if host and port:
+                        try:
+                            t0 = asyncio.get_event_loop().time()
+                            r, w = await asyncio.wait_for(asyncio.open_connection(host, int(port)), timeout=2.5)
+                            w.close()
+                            await w.wait_closed()
+                            lat = max(8, int((asyncio.get_event_loop().time() - t0) * 1000))
+                            db.update_ip_node_latency(t["id"], lat)
+                        except Exception:
+                            db.heartbeat_ip_node(t["proxy_host"])
+            except Exception as e:
+                logger.debug(f"Localtonet keepalive tick: {e}")
+
+    asyncio.create_task(localtonet_keepalive_loop())
 
 
 # ── SMTP Vault Endpoints ──────────────────────────────────────

@@ -143,7 +143,7 @@ def send_via_mailjet_api(api_key: str, secret_key: str, from_email: str, to_emai
         return {"success": False, "error": str(e), "account_used": from_email}
 
 
-def send_email_now(to_email: str, subject: str, body: str, account: dict, tracking_token: str = None) -> dict:
+def send_email_now(to_email: str, subject: str, body: str, account: dict, tracking_token: str = None, extra_headers: dict = None) -> dict:
     """
     Send an email immediately using the given account dict.
     Supports:
@@ -296,6 +296,10 @@ def send_email_now(to_email: str, subject: str, body: str, account: dict, tracki
         message_id = make_msgid(domain=domain)
         msg["Message-ID"] = message_id
         msg["Date"] = formatdate(localtime=True)
+        if extra_headers:
+            for hk, hv in extra_headers.items():
+                if hk not in msg:
+                    msg[hk] = hv
 
         # Plain text (always included); HTML only if html_email_enabled
         msg.attach(MIMEText(body, "plain", "utf-8"))
@@ -303,6 +307,29 @@ def send_email_now(to_email: str, subject: str, body: str, account: dict, tracki
             msg.attach(MIMEText(html_body, "html", "utf-8"))
 
         # Build SMTP connection (with optional proxy, port 465 SSL vs port 587 STARTTLS)
+        active_node = None
+        if not proxy_url:
+            # Route outbound outreach through active IP node / persistent Localtonet tunnel pool
+            try:
+                active_nodes = db.get_connected_nodes()
+                if active_nodes:
+                    # Prefer persistent 24/7 tunnels first, then check daily capacity
+                    avail = [n for n in active_nodes if (n.get("sent_today") or 0) < (n.get("daily_limit") or 150)]
+                    active_node = avail[0] if avail else active_nodes[0]
+                    if active_node.get("proxy_host"):
+                        p_proto = active_node.get("proxy_protocol") or "socks5"
+                        p_host = active_node.get("proxy_host")
+                        p_port = active_node.get("proxy_port") or 1080
+                        p_usr = active_node.get("proxy_user") or ""
+                        p_pwd = active_node.get("proxy_pass") or ""
+                        if p_usr and p_pwd:
+                            proxy_url = f"{p_proto}://{p_usr}:{p_pwd}@{p_host}:{p_port}"
+                        else:
+                            proxy_url = f"{p_proto}://{p_host}:{p_port}"
+                        logger.info(f"Routing outreach email via IP Node: {active_node.get('name')} ({p_proto}://{p_host}:{p_port})")
+            except Exception as e:
+                logger.warning(f"Failed resolving active IP node: {e}")
+
         smtp_conn = _make_smtp_connection(proxy_url, target_host=target_host, target_port=target_port)
 
         with smtp_conn as server:
@@ -317,11 +344,17 @@ def send_email_now(to_email: str, subject: str, body: str, account: dict, tracki
                 server.login(smtp_user, smtp_pass)
             server.sendmail(smtp_user, [to_email], msg.as_string())
 
+        if active_node and active_node.get("ip_address"):
+            db.record_ip_node_send(active_node["ip_address"])
+
         db.increment_account_sent(account["id"], is_alias=(acct_type == "alias"))
         return {"success": True, "account_used": from_email, "message_id": message_id, "provider": provider}
 
-    except smtplib.SMTPAuthenticationError:
-        return {"success": False, "error": f"Auth failed for {smtp_user}. Check app password.", "account_used": from_email}
+    except smtplib.SMTPAuthenticationError as e:
+        err_str = str(e)
+        if "525" in err_str or "Unauthorized IP" in err_str:
+            return {"success": False, "error": f"Brevo IP Security: Your sending IP is not authorized in Brevo dashboard. Add this IP under Brevo → Settings → Authorized IPs.", "account_used": from_email}
+        return {"success": False, "error": f"Auth failed for {smtp_user}. Check SMTP password / API key.", "account_used": from_email}
 
     except smtplib.SMTPRecipientsRefused as e:
         code = list(e.recipients.values())[0][0] if e.recipients else 550
@@ -550,10 +583,19 @@ def _make_smtp_connection(proxy_url: str | None, target_host: str = "smtp.gmail.
                 proxy_password=password,
                 timeout=30,
             )
-            conn = smtplib.SMTP(timeout=30)
-            conn.sock = sock
-            conn._host = target_host
-            return conn
+            if target_port == 465:
+                import ssl
+                context = ssl.create_default_context()
+                sock = context.wrap_socket(sock, server_hostname=target_host)
+                conn = smtplib.SMTP_SSL(timeout=30)
+                conn.sock = sock
+                conn._host = target_host
+                return conn
+            else:
+                conn = smtplib.SMTP(timeout=30)
+                conn.sock = sock
+                conn._host = target_host
+                return conn
         except ImportError:
             logger.warning("PySocks not installed — ignoring SOCKS proxy, falling back to direct connection.")
             return smtplib.SMTP(target_host, target_port, timeout=30)

@@ -1121,71 +1121,294 @@
         <section class="view-section" id="view-ip-nodes">
           <div class="page-header">
             <div>
-              <h1 class="page-title">IP Nodes & Residential Proxy Rotation</h1>
-              <p class="page-sub">Each connected browser session or phone proxy contributes its IP to the sending pool. Open the dashboard from any device and click Connect.</p>
+              <h1 class="page-title">IP Nodes & Residential Proxy Fleet</h1>
+              <p class="page-sub">Rotate cold outreach across 4G/5G mobile carriers and residential nodes. Zero blocklists, maximum ISP trust.</p>
             </div>
             <div style="display:flex;gap:10px;align-items:center;">
-              <div id="ip-node-my-ip-badge" style="font-size:12px;color:var(--text-muted);background:var(--bg-card);padding:6px 14px;border-radius:20px;border:1px solid var(--border-subtle);">Detecting your IP…</div>
-              <button class="btn-primary" id="btn-ip-connect" onclick="ipNodeConnect()">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
-                Connect My IP
+              <div id="ip-node-my-ip-badge" style="font-size:12px;color:var(--text-primary);background:rgba(255,255,255,0.04);padding:6px 14px;border-radius:20px;border:1px solid var(--border-subtle);display:flex;align-items:center;gap:6px;">
+                <span class="live-pulse-dot active" style="width:7px;height:7px;"></span>
+                <span id="ip-detected-text">Detecting IP…</span>
+              </div>
+              <button class="btn-ghost btn-sm" onclick="loadIpNodes()" title="Sync Nodes">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg>
+                Sync
               </button>
-              <button class="btn-ghost" id="btn-ip-disconnect" onclick="ipNodeDisconnect()" style="display:none;border-color:var(--red,#ef4444);color:var(--red,#ef4444);">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
-                Disconnect
+            </div>
+          </div>
+
+          <!-- 4 Metric Cards Grid -->
+          <div class="ip-stats-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px;margin-bottom:22px;">
+            <div class="card-panel stat-card" style="margin:0;position:relative;overflow:hidden;">
+              <div style="display:flex;justify-content:space-between;align-items:flex-start;">
+                <div>
+                  <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;color:var(--text-muted);">Active Sending Nodes</div>
+                  <div id="ip-stat-active-nodes" style="font-size:26px;font-weight:800;font-family:'Outfit',sans-serif;color:var(--text-primary);margin-top:4px;">0</div>
+                </div>
+                <div style="width:38px;height:38px;border-radius:10px;background:rgba(0,224,130,0.12);display:flex;align-items:center;justify-content:center;color:#00e082;font-size:18px;">
+                  📡
+                </div>
+              </div>
+              <div style="display:flex;align-items:center;gap:6px;margin-top:10px;font-size:11px;color:var(--text-muted);">
+                <span class="live-pulse-dot active" style="width:6px;height:6px;"></span>
+                <span id="ip-stat-nodes-sub">Live in rotation pool</span>
+              </div>
+            </div>
+
+            <div class="card-panel stat-card" style="margin:0;position:relative;overflow:hidden;">
+              <div style="display:flex;justify-content:space-between;align-items:flex-start;">
+                <div>
+                  <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;color:var(--text-muted);">Pool Daily Capacity</div>
+                  <div id="ip-stat-pool-capacity" style="font-size:26px;font-weight:800;font-family:'Outfit',sans-serif;color:#38bdf8;margin-top:4px;">0 / day</div>
+                </div>
+                <div style="width:38px;height:38px;border-radius:10px;background:rgba(56,189,248,0.12);display:flex;align-items:center;justify-content:center;color:#38bdf8;font-size:18px;">
+                  🚀
+                </div>
+              </div>
+              <div style="margin-top:10px;font-size:11px;color:var(--text-muted);">
+                Combined daily send limit
+              </div>
+            </div>
+
+            <div class="card-panel stat-card" style="margin:0;position:relative;overflow:hidden;">
+              <div style="display:flex;justify-content:space-between;align-items:flex-start;">
+                <div>
+                  <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;color:var(--text-muted);">Sent via Nodes Today</div>
+                  <div id="ip-stat-sent-today" style="font-size:26px;font-weight:800;font-family:'Outfit',sans-serif;color:#a78bfa;margin-top:4px;">0</div>
+                </div>
+                <div style="width:38px;height:38px;border-radius:10px;background:rgba(167,139,250,0.12);display:flex;align-items:center;justify-content:center;color:#a78bfa;font-size:18px;">
+                  📨
+                </div>
+              </div>
+              <div class="node-quota-bar-wrap" style="margin-top:10px;">
+                <div class="node-quota-bar" id="ip-stat-sent-bar" style="width:0%;"></div>
+              </div>
+            </div>
+
+            <div class="card-panel stat-card" style="margin:0;position:relative;overflow:hidden;">
+              <div style="display:flex;justify-content:space-between;align-items:flex-start;">
+                <div>
+                  <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;color:var(--text-muted);">Avg Node Latency</div>
+                  <div id="ip-stat-avg-latency" style="font-size:26px;font-weight:800;font-family:'Outfit',sans-serif;color:#34d399;margin-top:4px;">-- ms</div>
+                </div>
+                <div style="width:38px;height:38px;border-radius:10px;background:rgba(52,211,153,0.12);display:flex;align-items:center;justify-content:center;color:#34d399;font-size:18px;">
+                  ⚡
+                </div>
+              </div>
+              <div style="margin-top:10px;font-size:11px;color:#34d399;display:flex;align-items:center;gap:4px;">
+                <span>●</span> Real-time network speed
+              </div>
+            </div>
+          </div>
+
+          <!-- Connect Console & Status Bar with Localtonet & Browser Tabs -->
+          <div class="card-panel" style="margin-bottom:22px;border:1px solid rgba(0,224,130,0.25);background:linear-gradient(135deg,rgba(15,23,42,0.88) 0%,rgba(6,11,26,0.96) 100%);">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:12px;">
+              <div style="display:flex;align-items:center;gap:10px;">
+                <div style="width:38px;height:38px;border-radius:10px;background:rgba(56,189,248,0.15);display:flex;align-items:center;justify-content:center;color:#38bdf8;font-size:20px;">
+                  ⚡
+                </div>
+                <div>
+                  <h3 style="font-size:15px;font-weight:700;margin:0;color:var(--text-primary);">Connect Mobile Phone / Residential IP Fleet</h3>
+                  <p style="font-size:12px;color:var(--text-muted);margin:2px 0 0;">Save SOCKS5 / HTTP mobile tunnels in database for 24/7 outreach — stays active even after closing your browser!</p>
+                </div>
+              </div>
+              <div style="display:flex;align-items:center;gap:8px;">
+                <button class="btn-ghost btn-xs" onclick="openLocaltonetGuide()" style="border-color:rgba(56,189,248,0.3);color:#38bdf8;">
+                  📖 Localtonet Setup Guide
+                </button>
+                <div id="ip-my-connection-tag" style="display:none;background:rgba(0,224,130,0.12);color:#00e082;border:1px solid rgba(0,224,130,0.3);padding:4px 12px;border-radius:14px;font-size:11px;font-weight:600;align-items:center;gap:6px;">
+                  <span class="live-pulse-dot active" style="width:6px;height:6px;"></span>
+                  <span>Node Connected & Ready</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Mode Selector Tabs -->
+            <div style="display:flex;gap:8px;margin-bottom:18px;background:rgba(0,0,0,0.25);padding:4px;border-radius:10px;border:1px solid var(--border-subtle);width:fit-content;">
+              <button class="ip-tab-btn active" id="btn-tab-localtonet" onclick="switchIpConnectTab('localtonet')">
+                <span>⚡</span> Localtonet 24/7 Mobile Tunnel (No Browser Needed)
+              </button>
+              <button class="ip-tab-btn" id="btn-tab-browser" onclick="switchIpConnectTab('browser')">
+                <span>🌐</span> Current Browser Node (WebRTC)
               </button>
             </div>
+
+            <!-- ── TAB 1: Localtonet Persistent Mobile Tunnel (24/7 Background) ── -->
+            <div id="ip-tab-localtonet">
+              <div style="background:rgba(56,189,248,0.05);border:1px solid rgba(56,189,248,0.2);border-radius:10px;padding:12px 16px;margin-bottom:16px;font-size:12px;color:var(--text-secondary);display:flex;align-items:flex-start;gap:10px;">
+                <span style="font-size:18px;">💡</span>
+                <div>
+                  <strong style="color:#38bdf8;">24/7 Persistent Mobile Outreach:</strong> By connecting your phone's Localtonet SOCKS5 tunnel, credentials are saved securely in SQLite (<code>flinza.db</code>). Outbound emails route through your phone's 4G/5G residential IP continuously, even when your laptop is turned off or dashboard browser is closed!
+                </div>
+              </div>
+
+              <!-- Tunnel Inputs Grid -->
+              <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;margin-bottom:12px;">
+                <div class="form-group" style="margin:0;">
+                  <label class="form-label" style="font-size:11px;">Node Label / Device</label>
+                  <input type="text" class="form-input" id="lt-node-name" placeholder="e.g. Pixel 8 Jio 5G (Localtonet)" />
+                </div>
+
+                <div class="form-group" style="margin:0;">
+                  <label class="form-label" style="font-size:11px;">Tunnel Host / IP</label>
+                  <input type="text" class="form-input" id="lt-tunnel-host" placeholder="e.g. prx-us-1.localtonet.com" />
+                </div>
+
+                <div class="form-group" style="margin:0;">
+                  <label class="form-label" style="font-size:11px;">Tunnel Port</label>
+                  <input type="number" class="form-input" id="lt-tunnel-port" placeholder="e.g. 1080 or 12345" value="1080" />
+                </div>
+
+                <div class="form-group" style="margin:0;">
+                  <label class="form-label" style="font-size:11px;">Protocol</label>
+                  <select class="form-select" id="lt-tunnel-protocol">
+                    <option value="socks5">SOCKS5 (Recommended for Outreach)</option>
+                    <option value="http">HTTP / HTTPS</option>
+                  </select>
+                </div>
+              </div>
+
+              <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;margin-bottom:12px;">
+                <div class="form-group" style="margin:0;">
+                  <label class="form-label" style="font-size:11px;">Auth Username (Optional)</label>
+                  <input type="text" class="form-input" id="lt-auth-user" placeholder="Leave empty if none" />
+                </div>
+
+                <div class="form-group" style="margin:0;">
+                  <label class="form-label" style="font-size:11px;">Auth Password (Optional)</label>
+                  <input type="password" class="form-input" id="lt-auth-pass" placeholder="Leave empty if none" />
+                </div>
+
+                <div class="form-group" style="margin:0;">
+                  <label class="form-label" style="font-size:11px;">Carrier / ISP Provider</label>
+                  <select class="form-select" id="lt-provider">
+                    <option value="Jio 5G (Localtonet)">📱 Reliance Jio 5G</option>
+                    <option value="Airtel 5G (Localtonet)">📱 Bharti Airtel 4G/5G</option>
+                    <option value="Vi 4G (Localtonet)">📱 Vodafone Idea (Vi)</option>
+                    <option value="US Cellular (Localtonet)">🇺🇸 AT&T / Verizon / T-Mobile</option>
+                    <option value="Residential Fiber (Localtonet)">🏠 Home / Office Fiber</option>
+                    <option value="Localtonet Proxy">🌐 Other 4G/5G Mobile Proxy</option>
+                  </select>
+                </div>
+
+                <div class="form-group" style="margin:0;">
+                  <label class="form-label" style="font-size:11px;">Daily Send Limit (Cap)</label>
+                  <input type="number" class="form-input" id="lt-daily-limit" value="200" min="10" max="1500" />
+                </div>
+              </div>
+
+              <div style="display:grid;grid-template-columns:2fr 1fr;gap:12px;align-items:end;margin-bottom:16px;">
+                <div class="form-group" style="margin:0;">
+                  <label class="form-label" style="font-size:11px;">IP Rotation Webhook URL (Localtonet / MacroDroid Airplane Mode)</label>
+                  <input type="url" class="form-input" id="lt-rotation-webhook" placeholder="https://localtonet.com/api/v1/rotate?token=... or webhook URL" />
+                </div>
+
+                <div class="form-group" style="margin:0;">
+                  <label class="form-label" style="font-size:11px;">Auto-Rotate Schedule</label>
+                  <select class="form-select" id="lt-auto-rotate">
+                    <option value="0">Manual / 1-Click in Dashboard Only</option>
+                    <option value="10">Auto-Rotate Every 10 Emails</option>
+                    <option value="25">Auto-Rotate Every 25 Emails</option>
+                    <option value="50">Auto-Rotate Every 50 Emails</option>
+                  </select>
+                </div>
+              </div>
+
+              <!-- Action Buttons & Live Test Status -->
+              <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+                <button class="btn-ghost" id="btn-lt-test" onclick="testLocaltonetTunnel()" style="height:38px;padding:0 16px;border-color:rgba(56,189,248,0.4);color:#38bdf8;">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+                  Test Connection
+                </button>
+                <button class="btn-primary" id="btn-lt-save" onclick="saveLocaltonetTunnel()" style="height:38px;padding:0 22px;">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+                  Save & Activate 24/7 Mobile Tunnel
+                </button>
+                <span id="lt-test-status" style="font-size:12px;color:var(--text-muted);"></span>
+              </div>
+            </div>
+
+            <!-- ── TAB 2: Browser Device Node (WebRTC) ── -->
+            <div id="ip-tab-browser" style="display:none;">
+              <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr)) auto;gap:12px;align-items:end;">
+                <div class="form-group" style="margin:0;">
+                  <label class="form-label" style="font-size:11px;">Node Nickname / Label</label>
+                  <input type="text" class="form-input" id="ip-connect-name" placeholder="e.g. Pixel 7 Jio 5G, Delhi Fiber" />
+                </div>
+
+                <div class="form-group" style="margin:0;">
+                  <label class="form-label" style="font-size:11px;">Carrier / ISP Provider</label>
+                  <select class="form-select" id="ip-connect-provider">
+                    <option value="Jio 5G">📱 Reliance Jio 5G (Cellular)</option>
+                    <option value="Airtel 5G">📱 Bharti Airtel 4G/5G</option>
+                    <option value="Vi 4G">📱 Vodafone Idea (Vi)</option>
+                    <option value="US Cellular">🇺🇸 AT&T / Verizon / T-Mobile</option>
+                    <option value="Residential Fiber">🏠 Home / Office Fiber</option>
+                    <option value="Tailscale Mesh">🛡️ Tailscale / WireGuard Mesh</option>
+                    <option value="Custom Proxy">🌐 Other Proxy / VPN</option>
+                  </select>
+                </div>
+
+                <div class="form-group" style="margin:0;">
+                  <label class="form-label" style="font-size:11px;">Daily Send Limit (Cap)</label>
+                  <input type="number" class="form-input" id="ip-connect-limit" value="150" min="10" max="1000" />
+                </div>
+
+                <div style="display:flex;gap:8px;">
+                  <button class="btn-primary" id="btn-ip-connect" onclick="ipNodeConnect()" style="white-space:nowrap;height:40px;padding:0 20px;">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+                    Connect Node
+                  </button>
+                  <button class="btn-ghost" id="btn-ip-disconnect" onclick="ipNodeDisconnect()" style="display:none;color:#ef4444;border-color:rgba(239,68,68,0.4);height:40px;">
+                    Disconnect
+                  </button>
+                </div>
+              </div>
+
+              <!-- Connected Node Live Heartbeat Bar (Visible when connected) -->
+              <div id="ip-my-status-card" style="display:none;margin-top:16px;padding:12px 16px;background:rgba(0,224,130,0.06);border:1px solid rgba(0,224,130,0.25);border-radius:10px;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
+                <div style="display:flex;align-items:center;gap:10px;">
+                  <span class="live-pulse-dot active"></span>
+                  <span style="font-size:12px;font-weight:600;color:#00e082;" id="ip-my-status-detail">This device is active in the sending pool</span>
+                </div>
+                <div style="display:flex;align-items:center;gap:12px;font-size:11px;color:var(--text-muted);">
+                  <span>Heartbeat: <strong style="color:var(--text-primary);">Active (Every 30s)</strong></span>
+                  <span>•</span>
+                  <span id="ip-my-last-seen">Just now</span>
+                </div>
+              </div>
+            </div>
           </div>
 
-          <!-- My Status Card -->
-          <div id="ip-my-status-card" style="display:none;background:linear-gradient(135deg,rgba(0,224,130,0.08),rgba(0,163,255,0.06));border:1px solid rgba(0,224,130,0.3);border-radius:14px;padding:18px 22px;margin-bottom:20px;display:flex;align-items:center;gap:16px;">
-            <div style="width:42px;height:42px;border-radius:50%;background:rgba(0,224,130,0.15);display:flex;align-items:center;justify-content:center;">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#00e082" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
-            </div>
-            <div>
-              <div style="font-size:13px;font-weight:600;color:#00e082;">You are connected</div>
-              <div id="ip-my-status-detail" style="font-size:12px;color:var(--text-muted);margin-top:2px;">Your IP is in the sending pool</div>
-            </div>
-          </div>
-
-          <!-- How it works banner -->
-          <div style="background:var(--bg-card);border:1px solid var(--border-subtle);border-radius:12px;padding:16px 20px;margin-bottom:20px;display:grid;grid-template-columns:repeat(3,1fr);gap:16px;">
-            <div style="text-align:center;">
-              <div style="font-size:22px;margin-bottom:6px;">📱</div>
-              <div style="font-size:12px;font-weight:600;color:var(--text-primary);">Open from any device</div>
-              <div style="font-size:11px;color:var(--text-muted);margin-top:3px;">Laptop, phone, office WiFi</div>
-            </div>
-            <div style="text-align:center;">
-              <div style="font-size:22px;margin-bottom:6px;">🔌</div>
-              <div style="font-size:12px;font-weight:600;color:var(--text-primary);">Click Connect</div>
-              <div style="font-size:11px;color:var(--text-muted);margin-top:3px;">Your IP joins the pool</div>
-            </div>
-            <div style="text-align:center;">
-              <div style="font-size:22px;margin-bottom:6px;">🔄</div>
-              <div style="font-size:12px;font-weight:600;color:var(--text-primary);">Sends rotate across IPs</div>
-              <div style="font-size:11px;color:var(--text-muted);margin-top:3px;">Lower spam score per IP</div>
-            </div>
-          </div>
-
-          <!-- Connected Nodes Table -->
+          <!-- Connected Nodes Fleet Table -->
           <div class="card-panel">
-            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
-              <h3 style="font-size:14px;font-weight:600;margin:0;">Active Sending Nodes</h3>
-              <button class="btn-ghost btn-xs" onclick="loadIpNodes()">↺ Refresh</button>
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:10px;">
+              <div style="display:flex;align-items:center;gap:10px;">
+                <h3 style="font-size:14px;font-weight:700;margin:0;">IP Node Fleet</h3>
+                <span class="nav-badge cyan" id="badge-ip-nodes-total">0 nodes</span>
+              </div>
+              <div style="display:flex;align-items:center;gap:8px;">
+                <button class="btn-ghost btn-xs" onclick="loadIpNodes()">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg>
+                  Refresh Pool
+                </button>
+              </div>
             </div>
+
             <table class="data-table" id="ip-nodes-table">
               <thead>
                 <tr>
-                  <th>Status</th>
-                  <th>Name / IP</th>
-                  <th>Connected</th>
-                  <th>Last Seen</th>
-                  <th>Device</th>
-                  <th></th>
+                  <th style="width:110px;">Status</th>
+                  <th>Node & IP Address</th>
+                  <th>Provider / Carrier</th>
+                  <th style="min-width:160px;">Daily Quota</th>
+                  <th style="width:110px;">Latency</th>
+                  <th style="width:90px;">Last Seen</th>
+                  <th style="text-align:right;width:200px;">Actions</th>
                 </tr>
               </thead>
               <tbody id="ip-nodes-tbody">
-                <tr><td colspan="6" style="text-align:center;color:var(--text-muted);padding:30px;">No nodes connected yet. Click "Connect My IP" above.</td></tr>
+                <tr><td colspan="7" style="text-align:center;color:var(--text-muted);padding:35px;">Loading sending nodes…</td></tr>
               </tbody>
             </table>
           </div>
@@ -1566,7 +1789,134 @@
 
 
 
+  <!-- EDIT IP NODE MODAL -->
+  <div class="modal-overlay" id="backdrop-edit-ip-node">
+    <div class="modal-box" style="max-width: 480px;">
+      <div class="modal-header">
+        <div>
+          <h3>Edit IP Sending Node</h3>
+          <span style="font-size: 11.5px; color: var(--text-muted);">Update node identity, carrier routing, and daily limits</span>
+        </div>
+        <button class="icon-btn" onclick="closeModal('backdrop-edit-ip-node')">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+      <form id="form-edit-ip-node" onsubmit="event.preventDefault(); saveEditedIpNode();">
+        <input type="hidden" id="edit-node-id" />
+        <div class="form-field" style="margin-top: 10px;">
+          <label>IP Address</label>
+          <input type="text" id="edit-node-ip" class="form-input" disabled style="opacity:0.75;font-family:monospace;background:rgba(255,255,255,0.02);" />
+        </div>
+        <div class="form-field">
+          <label>Node Nickname / Label</label>
+          <input type="text" id="edit-node-name" class="form-input" placeholder="e.g. Delhi Pixel 7 Jio 5G" required />
+        </div>
+        <div class="form-field">
+          <label>Carrier / ISP Provider</label>
+          <select id="edit-node-provider" class="form-select">
+            <option value="Jio 5G">📱 Reliance Jio 5G</option>
+            <option value="Airtel 5G">📱 Bharti Airtel 4G/5G</option>
+            <option value="Vi 4G">📱 Vodafone Idea (Vi)</option>
+            <option value="US Cellular">🇺🇸 AT&T / Verizon / T-Mobile</option>
+            <option value="Residential Fiber">🏠 Home / Office Fiber</option>
+            <option value="Tailscale Mesh">🛡️ Tailscale / WireGuard Mesh</option>
+            <option value="Custom Proxy">🌐 Other Proxy / VPN</option>
+          </select>
+        </div>
+        <div class="form-field">
+          <label>Daily Sending Limit (Cap)</label>
+          <input type="number" id="edit-node-limit" class="form-input" min="10" max="2000" required />
+          <span style="font-size:11px;color:var(--text-muted);margin-top:4px;">Safe threshold recommended: 150-300 / day per IP node</span>
+        </div>
+        <div class="form-field" id="edit-node-webhook-wrap">
+          <label>IP Rotation Webhook URL (Localtonet / MacroDroid)</label>
+          <input type="url" id="edit-node-webhook" class="form-input" placeholder="https://localtonet.com/api/v1/rotate?token=..." />
+          <span style="font-size:11px;color:var(--text-muted);margin-top:4px;">Triggered on-demand or auto-rotated to cycle phone airplane mode</span>
+        </div>
+        <div class="modal-footer" style="margin-top: 18px;">
+          <button type="button" class="btn-ghost" onclick="closeModal('backdrop-edit-ip-node')">Cancel</button>
+          <button type="submit" class="btn-primary" style="padding:0 20px;height:38px;">Save Settings</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+
+  <!-- LOCALTONET PERSISTENT MOBILE PROXY SETUP GUIDE MODAL -->
+  <div class="modal-overlay" id="backdrop-localtonet-guide">
+    <div class="modal-box" style="max-width: 650px; max-height: 85vh; overflow-y: auto;">
+      <div class="modal-header">
+        <div style="display:flex;align-items:center;gap:10px;">
+          <div style="width:36px;height:36px;border-radius:10px;background:rgba(56,189,248,0.15);display:flex;align-items:center;justify-content:center;color:#38bdf8;font-size:18px;">
+            📱
+          </div>
+          <div>
+            <h3 style="margin:0;font-size:16px;">Turn Phone into a 24/7 Rotating Mobile Proxy (No Root)</h3>
+            <span style="font-size:11.5px;color:var(--text-muted);">Step-by-step setup using Localtonet persistent reverse tunnels</span>
+          </div>
+        </div>
+        <button class="icon-btn" onclick="closeModal('backdrop-localtonet-guide')">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+
+      <div style="margin-top:16px;display:flex;flex-direction:column;gap:14px;font-size:13px;line-height:1.6;color:var(--text-secondary);">
+        <div style="background:rgba(56,189,248,0.06);border:1px solid rgba(56,189,248,0.25);border-radius:10px;padding:12px 16px;">
+          <strong style="color:#38bdf8;">Why Mobile Carrier IPs?</strong> Cellular IP addresses (Jio 5G, Airtel 5G, AT&T, T-Mobile) are shared by thousands of real mobile phone users via CGNAT. Spam filters like Google Workspace, Office 365, and Yahoo practically <em>never</em> blacklist mobile IPs, ensuring maximum inbox deliverability!
+        </div>
+
+        <div style="border-left:3px solid #38bdf8;padding-left:14px;">
+          <h4 style="margin:0 0 4px;color:var(--text-primary);font-size:14px;">Step 1: Install Localtonet & Proxy on Your Phone</h4>
+          <p style="margin:0;">
+            1. Download and install the <strong>Localtonet</strong> app on your Android phone (from Google Play or <a href="https://localtonet.com" target="_blank" style="color:#38bdf8;">localtonet.com</a>).<br>
+            2. Install any free local proxy server app, such as <strong>Every Proxy</strong> or <strong>Proxy Server</strong> from Google Play.<br>
+            3. Open Every Proxy, turn ON the <strong>SOCKS5</strong> toggle (default port is usually <code>1080</code>).
+          </p>
+        </div>
+
+        <div style="border-left:3px solid #a855f7;padding-left:14px;">
+          <h4 style="margin:0 0 4px;color:var(--text-primary);font-size:14px;">Step 2: Create a Reverse TCP/SOCKS5 Tunnel</h4>
+          <p style="margin:0;">
+            1. Log into your <strong>Localtonet Dashboard</strong>.<br>
+            2. Go to <strong>My Tunnels → Create Tunnel</strong>.<br>
+            3. Select <strong>TCP / SOCKS5</strong> protocol.<br>
+            4. Set Local IP to <code>127.0.0.1</code> and Local Port to <code>1080</code>.<br>
+            5. Start the tunnel! Localtonet gives you a public Server Host (e.g. <code>prx-us-1.localtonet.com</code>) and an assigned Port (e.g. <code>12345</code>).
+          </p>
+        </div>
+
+        <div style="border-left:3px solid #34d399;padding-left:14px;">
+          <h4 style="margin:0 0 4px;color:var(--text-primary);font-size:14px;">Step 3: Copy Tunnel Credentials into Flinza</h4>
+          <p style="margin:0;">
+            1. Paste the Tunnel Host (e.g. <code>prx-us-1.localtonet.com</code>) and Port into the form above.<br>
+            2. Select <strong>SOCKS5</strong> protocol.<br>
+            3. Enter any Auth credentials if you enabled basic auth in Localtonet.<br>
+            4. Click <strong>Test Connection</strong> to verify live packet routing through your phone's 5G network!
+          </p>
+        </div>
+
+        <div style="border-left:3px solid #f59e0b;padding-left:14px;">
+          <h4 style="margin:0 0 4px;color:var(--text-primary);font-size:14px;">Step 4: Enable 1-Click Airplane Mode IP Rotation ✈️</h4>
+          <p style="margin:0;">
+            1. On Localtonet dashboard or using <strong>MacroDroid</strong> (free on Play Store), create an action to cycle <em>Airplane Mode for 5 seconds</em> when an HTTP webhook is received.<br>
+            2. Paste your Localtonet Webhook URL into the <strong>IP Rotation Webhook URL</strong> field.<br>
+            3. Now, whenever you click <strong>🔄 Rotate IP</strong> in Flinza, your carrier assigns a brand-new pristine residential IP automatically!
+          </p>
+        </div>
+
+        <div style="background:rgba(0,224,130,0.06);border:1px solid rgba(0,224,130,0.25);border-radius:10px;padding:12px 16px;">
+          <strong style="color:#00e082;">24/7 Stability Guarantee:</strong> Once saved, Flinza's backend daemon pings and maintains the Localtonet tunnel continuously in SQLite. You can shut down your laptop browser, and all cold email outreach schedules will continue dispatching without disconnecting!
+        </div>
+      </div>
+
+      <div class="modal-footer" style="margin-top:20px;">
+        <button type="button" class="btn-primary" onclick="closeModal('backdrop-localtonet-guide')" style="padding:0 24px;height:38px;">Got It, Let's Connect!</button>
+      </div>
+    </div>
+  </div>
+
+
   <!-- Core App SPA -->
-  <script src="/static/js/app.js?v=2.5"></script>
+  <script src="/static/js/app.js?v=2.6"></script>
 </body>
 </html>

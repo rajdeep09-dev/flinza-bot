@@ -505,15 +505,16 @@ def pick_best_account(lead_email: str = "", exclude: Optional[List[str]] = None)
             candidates.append({"source": "account", "health": health, "data": dict(a)})
 
     for al in aliases:
-        if al["alias"] in exclude:
+        al_dict = dict(al)
+        if al_dict["alias"] in exclude:
             continue
         # Treat alias health similarly
-        sent_today  = al.get("sent_today", 0) or 0
-        daily_limit = al.get("daily_limit", 20) or 20
+        sent_today  = al_dict.get("daily_sent", 0) or al_dict.get("sent_today", 0) or 0
+        daily_limit = al_dict.get("daily_limit", 20) or 20
         if sent_today >= daily_limit:
             continue
         capacity = (daily_limit - sent_today) / max(daily_limit, 1)
-        candidates.append({"source": "alias", "health": capacity, "data": dict(al)})
+        candidates.append({"source": "alias", "health": capacity, "data": al_dict})
 
     if not candidates:
         return None
