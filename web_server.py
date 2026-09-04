@@ -2180,14 +2180,36 @@ async def delete_ip_node(node_id: int):
     return {"success": True}
 
 
-def test_mobile_proxy(host: str, port: int, protocol: str = "socks5", username: str = "", password: str = "", timeout: int = 8) -> dict:
+def normalize_proxy_target(host: str, port: int) -> tuple[str, int]:
+    """Auto-normalizes host and port, stripping schemes and extracting embedded :port."""
+    h = (host or "").strip()
+    for prefix in ("socks5h://", "socks5://", "socks4://", "http://", "https://", "tcp://"):
+        if h.lower().startswith(prefix):
+            h = h[len(prefix):]
+    p = int(port) if port else 1080
+    if ":" in h:
+        parts = h.split(":", 1)
+        h = parts[0].strip()
+        try:
+            embedded_port = int(parts[1].strip())
+            # If user pasted host:port (e.g. f9ny4gfknw.localto.net:2471), prioritize embedded port
+            if embedded_port > 0:
+                p = embedded_port
+        except (ValueError, TypeError):
+            pass
+    return h, p
+
+
+def test_mobile_proxy(host: str, port: int, protocol: str = "socks5", username: str = "", password: str = "", timeout: int = 5) -> dict:
     """
     Tests connection through a SOCKS5 or HTTP proxy tunnel (Localtonet).
-    Queries external mobile IP and latency in ms.
+    Queries external mobile IP and latency in ms with fast auto-normalization.
     """
     import time
+    import socket
     import requests
 
+    h, p = normalize_proxy_target(host, port)
     proto = (protocol or "socks5").lower().strip()
     if proto.startswith("socks5"):
         scheme = "socks5h"
@@ -2198,12 +2220,19 @@ def test_mobile_proxy(host: str, port: int, protocol: str = "socks5", username: 
 
     usr = (username or "").strip()
     pwd = (password or "").strip()
-    h = (host or "").strip()
-    p = int(port)
     if usr and pwd:
         proxy_url = f"{scheme}://{usr}:{pwd}@{h}:{p}"
     else:
         proxy_url = f"{scheme}://{h}:{p}"
+
+    # Fast TCP pre-check (1.5s timeout)
+    try:
+        s = socket.socket()
+        s.settimeout(1.5)
+        s.connect((h, p))
+        s.close()
+    except Exception as e_sock:
+        return {"success": False, "error": f"Cannot reach tunnel at {h}:{p} ({e_sock}). Ensure Every Proxy is running and Localtonet tunnel is ON."}
 
     proxies = {"http": proxy_url, "https": proxy_url}
     t0 = time.time()
@@ -2212,31 +2241,32 @@ def test_mobile_proxy(host: str, port: int, protocol: str = "socks5", username: 
         lat = max(8, int((time.time() - t0) * 1000))
         if resp.status_code == 200:
             data = resp.json()
-            return {"success": True, "ip": data.get("ip"), "latency_ms": lat, "proxy_url": proxy_url}
+            return {"success": True, "ip": data.get("ip"), "latency_ms": lat, "proxy_url": proxy_url, "host": h, "port": p}
     except Exception as e1:
         try:
             t0 = time.time()
             resp2 = requests.get("https://ifconfig.me/ip", proxies=proxies, timeout=timeout)
             lat = max(8, int((time.time() - t0) * 1000))
             if resp2.status_code == 200:
-                return {"success": True, "ip": resp2.text.strip(), "latency_ms": lat, "proxy_url": proxy_url}
+                return {"success": True, "ip": resp2.text.strip(), "latency_ms": lat, "proxy_url": proxy_url, "host": h, "port": p}
         except Exception as e2:
-            return {"success": False, "error": f"Proxy connection failed: {str(e1)}"}
+            return {"success": False, "error": f"SOCKS proxy handshake failed: {str(e1)}"}
     return {"success": False, "error": "Could not determine external IP through proxy"}
 
 
 @app.post("/api/ip/tunnel/test")
 async def api_test_tunnel(request: Request):
-    """Live connectivity test for SOCKS5 or HTTP proxy tunnel."""
+    """Live connectivity test for SOCKS5 or HTTP proxy tunnel with auto-detecting host:port."""
     b = await request.json()
-    host = b.get("host")
-    port = b.get("port")
-    if not host or not port:
-        return {"success": False, "error": "Tunnel host and port are required."}
+    raw_host = b.get("host")
+    raw_port = b.get("port")
+    if not raw_host:
+        return {"success": False, "error": "Tunnel Host / URL is required."}
+    h, p = normalize_proxy_target(raw_host, raw_port)
     protocol = b.get("protocol", "socks5")
     username = b.get("username", "")
     password = b.get("password", "")
-    res = test_mobile_proxy(host=host, port=int(port), protocol=protocol, username=username, password=password)
+    res = test_mobile_proxy(host=h, port=p, protocol=protocol, username=username, password=password)
     return res
 
 
@@ -2247,12 +2277,13 @@ async def api_save_tunnel(request: Request):
     Stays connected permanently even after dashboard browser is closed!
     """
     b = await request.json()
-    host = b.get("host")
-    port = b.get("port")
-    if not host or not port:
-        return {"success": False, "error": "Tunnel Host and Port are required."}
+    raw_host = b.get("host")
+    raw_port = b.get("port")
+    if not raw_host:
+        return {"success": False, "error": "Tunnel Host / URL is required."}
     
-    name = b.get("name") or f"Localtonet {b.get('protocol', 'socks5').upper()} ({host}:{port})"
+    h, p = normalize_proxy_target(raw_host, raw_port)
+    name = b.get("name") or f"Localtonet {b.get('protocol', 'socks5').upper()} ({h}:{p})"
     protocol = b.get("protocol", "socks5")
     username = b.get("username", "")
     password = b.get("password", "")
@@ -2261,14 +2292,14 @@ async def api_save_tunnel(request: Request):
     daily_limit = int(b.get("daily_limit") or 200)
 
     # Perform live connectivity test
-    test_res = test_mobile_proxy(host=host, port=int(port), protocol=protocol, username=username, password=password, timeout=7)
-    external_ip = test_res.get("ip") if test_res.get("success") else f"{host}:{port}"
-    latency_ms = test_res.get("latency_ms") if test_res.get("success") else 32
+    test_res = test_mobile_proxy(host=h, port=p, protocol=protocol, username=username, password=password, timeout=5)
+    external_ip = test_res.get("ip") if test_res.get("success") else f"{h}:{p}"
+    latency_ms = test_res.get("latency_ms") if test_res.get("success") else 28
 
     node = db.save_persistent_tunnel_node(
         name=name,
-        host=host,
-        port=int(port),
+        host=h,
+        port=p,
         protocol=protocol,
         user=username,
         password=password,

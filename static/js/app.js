@@ -2661,17 +2661,43 @@ function switchIpConnectTab(tab) {
   }
 }
 
+function onLocaltonetHostInput() {
+  const hostEl = document.getElementById('lt-tunnel-host');
+  const portEl = document.getElementById('lt-tunnel-port');
+  if (!hostEl || !portEl) return;
+  let val = hostEl.value.trim();
+  if (!val) return;
+  val = val.replace(/^(https?:\/\/|tcp:\/\/|socks5h?:\/\/)/i, '');
+  if (val.includes(':')) {
+    const parts = val.split(':');
+    hostEl.value = parts[0].trim();
+    if (parts[1] && !isNaN(parseInt(parts[1]))) {
+      portEl.value = parseInt(parts[1]);
+      showToast(`⚡ Detected Port ${parts[1]} from URL!`, 'info');
+    }
+  }
+}
+
 async function testLocaltonetTunnel() {
-  const host = document.getElementById('lt-tunnel-host')?.value.trim();
-  const port = parseInt(document.getElementById('lt-tunnel-port')?.value);
+  let host = document.getElementById('lt-tunnel-host')?.value.trim();
+  let port = parseInt(document.getElementById('lt-tunnel-port')?.value);
   const protocol = document.getElementById('lt-tunnel-protocol')?.value || 'socks5';
   const username = document.getElementById('lt-auth-user')?.value.trim();
   const password = document.getElementById('lt-auth-pass')?.value.trim();
   const statusEl = document.getElementById('lt-test-status');
 
-  if (!host || !port) {
-    showToast("Please enter Tunnel Host and Port first", "error");
+  if (!host) {
+    showToast("Please enter Tunnel Host / URL first", "error");
     return;
+  }
+  if (host.includes(':')) {
+    const parts = host.split(':');
+    host = parts[0].trim();
+    if (parts[1] && !isNaN(parseInt(parts[1]))) {
+      port = parseInt(parts[1]);
+      if (document.getElementById('lt-tunnel-host')) document.getElementById('lt-tunnel-host').value = host;
+      if (document.getElementById('lt-tunnel-port')) document.getElementById('lt-tunnel-port').value = port;
+    }
   }
 
   const btn = document.getElementById('btn-lt-test');
@@ -2685,6 +2711,8 @@ async function testLocaltonetTunnel() {
       if (statusEl) {
         statusEl.innerHTML = `<span style="color:#00e082;font-weight:600;">✅ Connected! Mobile IP: ${r.ip} · Latency: ${r.latency_ms} ms</span>`;
       }
+      if (r.host && document.getElementById('lt-tunnel-host')) document.getElementById('lt-tunnel-host').value = r.host;
+      if (r.port && document.getElementById('lt-tunnel-port')) document.getElementById('lt-tunnel-port').value = r.port;
     } else {
       showToast(r.error || "Tunnel connection test failed", "error");
       if (statusEl) {
@@ -2699,8 +2727,8 @@ async function testLocaltonetTunnel() {
 }
 
 async function saveLocaltonetTunnel() {
-  const host = document.getElementById('lt-tunnel-host')?.value.trim();
-  const port = parseInt(document.getElementById('lt-tunnel-port')?.value);
+  let host = document.getElementById('lt-tunnel-host')?.value.trim();
+  let port = parseInt(document.getElementById('lt-tunnel-port')?.value);
   const name = document.getElementById('lt-node-name')?.value.trim();
   const protocol = document.getElementById('lt-tunnel-protocol')?.value || 'socks5';
   const username = document.getElementById('lt-auth-user')?.value.trim();
@@ -2710,9 +2738,18 @@ async function saveLocaltonetTunnel() {
   const webhook = document.getElementById('lt-rotation-webhook')?.value.trim();
   const auto_rotate = parseInt(document.getElementById('lt-auto-rotate')?.value) || 0;
 
-  if (!host || !port) {
-    showToast("Tunnel Host and Port are required to save", "error");
+  if (!host) {
+    showToast("Tunnel Host / URL is required to save", "error");
     return;
+  }
+  if (host.includes(':')) {
+    const parts = host.split(':');
+    host = parts[0].trim();
+    if (parts[1] && !isNaN(parseInt(parts[1]))) {
+      port = parseInt(parts[1]);
+      if (document.getElementById('lt-tunnel-host')) document.getElementById('lt-tunnel-host').value = host;
+      if (document.getElementById('lt-tunnel-port')) document.getElementById('lt-tunnel-port').value = port;
+    }
   }
 
   const btn = document.getElementById('btn-lt-save');
@@ -3090,4 +3127,5 @@ window.openEditIpNode = openEditIpNode;
 window.saveEditedIpNode = saveEditedIpNode;
 window.togglePauseIpNode = togglePauseIpNode;
 window.pingIpNode = pingIpNode;
+window.onLocaltonetHostInput = onLocaltonetHostInput;
 
