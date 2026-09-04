@@ -970,6 +970,33 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   });
 
+  // 1-Click: Generate All Leads CRM Emails and Queue Them for Campaign
+  on("btn-generate-and-queue", "click", async (e) => {
+    const btn = e.currentTarget;
+    btn.disabled = true;
+    const origText = btn.textContent;
+    btn.textContent = "⚡ Generating & Queuing…";
+    showToast("Generating personalized pitches & staging outbound sending queue…", "info");
+    try {
+      const d = await apiFetch("/api/leads/generate-and-queue", "POST", { stage: "all" });
+      if (d.success) {
+        showAlert(`⚡ ${d.message}`, "success", 7000);
+        showToast(`Staged ${d.queued_count} emails into campaign queue!`, "success");
+        setCampaignRunningState(false, d.total_queued);
+        loadLeads();
+        if (typeof pollCampaignStatus === "function") pollCampaignStatus();
+      } else {
+        showToast(d.message || "No leads queued", "warning");
+        showAlert(`⚠️ ${d.message || "No leads available to queue."}`, "warning", 5000);
+      }
+    } catch (err) {
+      showAlert(`Queue generation error: ${err}`, "error");
+    } finally {
+      btn.disabled = false;
+      btn.textContent = origText;
+    }
+  });
+
   // Deep Deliverability Audit for All Leads
   on("btn-deep-verify-all", "click", async (e) => {
     const btn = e.currentTarget;
@@ -1403,31 +1430,129 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   });
 
-  on("btn-launch-outreach", "click", async (e) => {
-    if (!confirm("Launch cold email campaign for all un-contacted leads?")) return;
-    const btn = e.currentTarget;
-    btn.disabled = true;
-    btn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="5 3 19 12 5 21 5 3"/></svg> Launching…`;
+  // ═══════════════════════════════════════════════════════
+  //  LIVE CAMPAIGN LAUNCH & STOP CONTROLLER
+  // ═══════════════════════════════════════════════════════
+  function setCampaignRunningState(isRunning, queuedCount = 0, statusMsg = "") {
+    const btnTopLaunch = g("btn-launch-outreach");
+    const btnTopStop = g("btn-stop-outreach");
+    const btnLeadsLaunch = g("btn-leads-launch-campaign");
+    const btnLeadsStop = g("btn-leads-stop-campaign");
+    const topDot = g("queue-dot");
+    const topText = g("queue-status-text");
+    const leadsDot = g("leads-queue-dot");
+    const leadsText = g("leads-queue-text");
+
+    if (isRunning) {
+      if (btnTopLaunch) btnTopLaunch.style.display = "none";
+      if (btnTopStop) btnTopStop.style.display = "inline-flex";
+      if (btnLeadsLaunch) btnLeadsLaunch.style.display = "none";
+      if (btnLeadsStop) btnLeadsStop.style.display = "inline-flex";
+
+      if (topDot) topDot.className = "status-dot running";
+      if (leadsDot) leadsDot.className = "status-dot running";
+
+      const txt = statusMsg || `Queue: Sending (${queuedCount} queued)`;
+      if (topText) topText.textContent = txt;
+      if (leadsText) leadsText.textContent = txt;
+    } else {
+      if (btnTopLaunch) btnTopLaunch.style.display = "inline-flex";
+      if (btnTopStop) btnTopStop.style.display = "none";
+      if (btnLeadsLaunch) btnLeadsLaunch.style.display = "inline-flex";
+      if (btnLeadsStop) btnLeadsStop.style.display = "none";
+
+      if (topDot) topDot.className = "status-dot";
+      if (leadsDot) leadsDot.className = "status-dot";
+
+      const txt = queuedCount > 0 ? `Queue: Idle (${queuedCount} queued)` : "Queue: Idle";
+      if (topText) topText.textContent = txt;
+      if (leadsText) leadsText.textContent = txt;
+    }
+  }
+
+  async function triggerLaunchCampaign() {
+    const btnLaunch = g("btn-launch-outreach");
+    const btnLeads = g("btn-leads-launch-campaign");
+    if (btnLaunch) btnLaunch.disabled = true;
+    if (btnLeads) btnLeads.disabled = true;
+
     try {
       const d = await apiFetch("/api/campaign/launch", "POST");
       if (d.success) {
-        showToast(`Campaign launched! ${d.queued_count} leads queued.`, "success");
-        showAlert(`🎉 Campaign Launched: ${d.queued_count} leads queued for smart rotation across mailbox pool with randomized jitter!`, "success", 7000);
-        const qd = g("queue-dot");
-        if (qd) qd.className = "status-dot running";
-        setEl("queue-status-text", `Queue: Running (${d.queued_count})`);
+        showToast(`🚀 Campaign started! Draining ${d.queued_count} queued emails...`, "success");
+        showAlert(`🎉 Campaign Active: Sending outreach across multi-node IP fleet with auto-rotation!`, "success", 7000);
+        setCampaignRunningState(true, d.queued_count);
+        await pollCampaignStatus();
         loadDashboard();
       } else {
-        showToast(d.message || "Notice: campaign already running.", "warning");
-        showAlert(`⚠️ ${d.message || "Campaign queue is already active or in progress."}`, "warning", 6000);
+        showToast(d.message || "Notice: could not launch.", "warning");
+        showAlert(`⚠️ ${d.message || "Campaign could not be started."}`, "warning", 6000);
       }
     } catch (err) {
       showAlert(`Launch error: ${err}`, "error", 8000);
     } finally {
-      btn.disabled = false;
-      btn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="5 3 19 12 5 21 5 3"/></svg> Launch Outreach`;
+      if (btnLaunch) btnLaunch.disabled = false;
+      if (btnLeads) btnLeads.disabled = false;
     }
-  });
+  }
+
+  async function triggerStopCampaign() {
+    const btnStop = g("btn-stop-outreach");
+    const btnLeadsStop = g("btn-leads-stop-campaign");
+    if (btnStop) btnStop.disabled = true;
+    if (btnLeadsStop) btnLeadsStop.disabled = true;
+
+    try {
+      const d = await apiFetch("/api/campaign/stop", "POST");
+      if (d.success) {
+        showToast("⏹️ Campaign sending stopped.", "info");
+        showAlert("⏹️ Campaign Stopped: Background sending engine halted gracefully.", "info", 5000);
+        setCampaignRunningState(false, d.queued_count);
+        await pollCampaignStatus();
+      }
+    } catch (err) {
+      showToast(`Stop error: ${err}`, "error");
+    } finally {
+      if (btnStop) btnStop.disabled = false;
+      if (btnLeadsStop) btnLeadsStop.disabled = false;
+    }
+  }
+
+  on("btn-launch-outreach", "click", triggerLaunchCampaign);
+  on("btn-leads-launch-campaign", "click", triggerLaunchCampaign);
+  on("btn-stop-outreach", "click", triggerStopCampaign);
+  on("btn-leads-stop-campaign", "click", triggerStopCampaign);
+
+  async function pollCampaignStatus() {
+    try {
+      const r = await apiFetch("/api/campaign/status");
+      if (r.success) {
+        setCampaignRunningState(r.is_running, r.queued_count, r.last_status);
+        if (r.fleet) {
+          const fleetText = g("leads-fleet-text");
+          if (fleetText && r.fleet) {
+            if (r.fleet.is_multi_node && r.fleet.nodes_summary) {
+              fleetText.innerHTML = `Active Fleet: <strong>${r.fleet.nodes_summary}</strong> <span style="opacity:0.8;font-size:11px;">(Balanced Pool)</span>`;
+            } else if (r.fleet.primary_node) {
+              fleetText.textContent = `Active Node: ${r.fleet.primary_name} (${r.fleet.primary_ip})`;
+            }
+          }
+          const rotBadge = g("leads-rotation-text");
+          if (rotBadge && r.fleet.primary_node) {
+            const rotEvery = r.fleet.primary_node.rotate_every_n || 5;
+            const sends = r.fleet.primary_node.sends_since_last_rotation || 0;
+            rotBadge.textContent = `Auto-Rotate: ${sends}/${rotEvery} sends (${r.fleet.total_rotations_performed || 0} rotated)`;
+          }
+        }
+      }
+    } catch (e) {
+      // background polling
+    }
+  }
+
+  // Periodic heartbeat every 4 seconds
+  setInterval(pollCampaignStatus, 4000);
+  setTimeout(pollCampaignStatus, 800);
 
   // ═══════════════════════════════════════════════════════
   //  GLOBAL NOTIFICATIONS & ALERTS SYSTEM
@@ -2450,7 +2575,13 @@ async function detectMyIp() {
     const d = await r.json();
     _myIpCache = d.ip;
     const txt = document.getElementById('ip-detected-text');
-    if (txt) txt.textContent = `Detected IP: ${_myIpCache}`;
+    if (txt) {
+      if (d.server_provider) {
+        txt.innerHTML = `Server IP: <strong>${_myIpCache}</strong> <span style="opacity:0.75;font-size:11px;">(${d.server_provider})</span>`;
+      } else {
+        txt.textContent = `Server IP: ${_myIpCache}`;
+      }
+    }
     const nameInput = document.getElementById('ip-connect-name');
     if (nameInput && !nameInput.value) {
       const isMobile = /iPhone|Android|iPad/i.test(navigator.userAgent);
@@ -2459,6 +2590,25 @@ async function detectMyIp() {
     return _myIpCache;
   } catch(e) { return null; }
 }
+
+async function autoRegisterServerNode() {
+  try {
+    showToast("Detecting and auto-setting Python Server IP…", "info");
+    const r = await apiFetch("/api/ip/auto-register-server", { method: "POST" });
+    if (r.success) {
+      showToast(r.message || "Python Server IP successfully registered!", "success");
+      await loadIpNodes();
+      await detectMyIp();
+      await loadIpStats();
+    } else {
+      showToast(r.error || "Failed to auto-register server IP", "error");
+    }
+  } catch (e) {
+    showToast("Error connecting to server IP detector: " + e.message, "error");
+  }
+}
+window.autoRegisterServerNode = autoRegisterServerNode;
+
 
 function timeSinceStr(isoStr) {
   if (!isoStr) return '—';
@@ -2575,22 +2725,30 @@ async function loadIpNodes() {
     const sent = n.sent_today || 0;
     const pct = Math.min(100, Math.round((sent / limit) * 100));
 
-    const carrierIcon = n.provider && n.provider.includes('Fiber') ? '🏠' : (n.provider && n.provider.includes('Mesh') ? '🛡️' : '📱');
     const isTunnel = n.is_persistent_tunnel === 1;
+    const isServer = (n.proxy_protocol === 'direct' || n.proxy_protocol === 'native' || (n.name && n.name.includes('Python Server')));
+    const carrierIcon = isServer ? '🖥️' : (n.provider && n.provider.includes('Fiber') ? '🏠' : (n.provider && n.provider.includes('Mesh') ? '🛡️' : '📱'));
 
     return `
-      <tr style="${isMe ? 'background:rgba(0,224,130,0.03);' : (isTunnel ? 'background:rgba(56,189,248,0.02);' : '')}">
+      <tr style="${isMe && !isServer ? 'background:rgba(0,224,130,0.03);' : (isServer ? 'background:rgba(168,85,247,0.03);' : (isTunnel ? 'background:rgba(56,189,248,0.02);' : ''))}">
         <td>${statusHtml}</td>
         <td>
           <div style="font-weight:600;font-size:13px;display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
             <span>${n.name || 'Unnamed Node'}</span>
-            ${isTunnel ? '<span class="tunnel-tag-badge">⚡ 24/7 TUNNEL</span>' : ''}
-            ${isMe ? '<span style="background:rgba(0,224,130,0.15);color:#00e082;border:1px solid rgba(0,224,130,0.3);padding:1px 6px;border-radius:10px;font-size:10px;font-weight:700;">THIS DEVICE</span>' : ''}
+            ${isServer ? '<span class="tunnel-tag-badge" style="background:rgba(168,85,247,0.18);color:#c084fc;border:1px solid rgba(168,85,247,0.35);">⚡ PYTHON SERVER (DIRECT IP)</span>' : (isTunnel ? '<span class="tunnel-tag-badge">⚡ 24/7 TUNNEL</span>' : '')}
+            ${isMe && !isServer ? '<span style="background:rgba(0,224,130,0.15);color:#00e082;border:1px solid rgba(0,224,130,0.3);padding:1px 6px;border-radius:10px;font-size:10px;font-weight:700;">THIS DEVICE</span>' : ''}
           </div>
           <div style="font-family:monospace;font-size:11px;color:var(--text-muted);margin-top:2px;cursor:pointer;" title="Click to copy IP" onclick="navigator.clipboard.writeText('${n.ip_address}');showToast('Copied IP: ${n.ip_address}','info');">
             ${n.ip_address} <span style="font-size:10px;opacity:0.7;">📋</span>
           </div>
-          ${isTunnel ? `<div style="font-family:monospace;font-size:10.5px;color:#38bdf8;margin-top:2px;">${(n.proxy_protocol||'socks5').toUpperCase()}://${n.proxy_host||''}:${n.proxy_port||1080}</div>` : ''}
+          ${isServer ? `<div style="font-family:monospace;font-size:10.5px;color:#c084fc;margin-top:2px;">DIRECT HIGH-DELIVERABILITY NATIVE SOCKET // INBOX REPUTATION</div>` : (isTunnel ? `<div style="font-family:monospace;font-size:10.5px;color:#38bdf8;margin-top:2px;">${(n.proxy_protocol||'socks5').toUpperCase()}://${n.proxy_host||''}:${n.proxy_port||1080}</div>` : '')}
+          ${(!isServer && (n.rotation_webhook || isTunnel)) ? `
+            <div style="font-size:11px;color:#a78bfa;margin-top:4px;display:flex;align-items:center;gap:5px;background:rgba(167,139,250,0.08);padding:2px 8px;border-radius:12px;border:1px solid rgba(167,139,250,0.2);width:fit-content;">
+              <span>🔄 Auto-Rotate:</span>
+              <strong>${n.sends_since_last_rotation || 0}/${n.rotate_every_n || 5} sends</strong>
+              ${(n.auto_rotate_count > 0) ? `<span style="opacity:0.8;font-size:10px;">(${n.auto_rotate_count} rot)</span>` : ''}
+            </div>
+          ` : ''}
         </td>
         <td>
           <div class="carrier-chip">
@@ -2618,14 +2776,14 @@ async function loadIpNodes() {
         </td>
         <td style="text-align:right;">
           <div style="display:inline-flex;gap:6px;align-items:center;">
-            ${(isTunnel || n.rotation_webhook) ? `
+            ${(!isServer && (isTunnel || n.rotation_webhook)) ? `
               <button class="node-action-btn rotate" id="btn-rotate-${n.id}" onclick="rotateIpNode(${n.id})" title="Force IP Rotation via Localtonet Webhook">🔄 Rotate</button>
             ` : ''}
             ${isPaused 
               ? `<button class="node-action-btn resume" onclick="togglePauseIpNode(${n.id})" title="Resume routing through this IP">▶ Resume</button>`
               : `<button class="node-action-btn pause" onclick="togglePauseIpNode(${n.id})" title="Pause using this IP for now">⏸ Pause</button>`
             }
-            <button class="node-action-btn" onclick="openEditIpNode(${n.id}, '${n.ip_address}', '${(n.name||'').replace(/'/g, "\\'")}', '${(n.provider||'Jio 5G').replace(/'/g, "\\'")}', ${limit}, '${(n.rotation_webhook||'').replace(/'/g, "\\'")}')" title="Edit Name, Provider & Limits">✏️ Edit</button>
+            <button class="node-action-btn" onclick="openEditIpNode(${n.id}, '${n.ip_address}', '${(n.name||'').replace(/'/g, "\\'")}', '${(n.provider||'Jio 5G').replace(/'/g, "\\'")}', ${limit}, '${(n.rotation_webhook||'').replace(/'/g, "\\'")}', ${n.rotate_every_n || 5})" title="Edit Name, Provider & Limits">✏️ Edit</button>
             <button class="node-action-btn ping" id="btn-ping-${n.id}" onclick="pingIpNode(${n.id})" title="Test Live Ping">⚡ Ping</button>
             <button class="node-action-btn" style="color:#ef4444;" onclick="deleteIpNode(${n.id})" title="Remove Node">🗑</button>
           </div>
@@ -2863,7 +3021,7 @@ async function togglePauseIpNode(id) {
   }
 }
 
-function openEditIpNode(id, ip, name, provider, limit, webhook) {
+function openEditIpNode(id, ip, name, provider, limit, webhook, rotateEveryN) {
   document.getElementById('edit-node-id').value = id;
   document.getElementById('edit-node-ip').value = ip;
   document.getElementById('edit-node-name').value = name || '';
@@ -2872,6 +3030,8 @@ function openEditIpNode(id, ip, name, provider, limit, webhook) {
   document.getElementById('edit-node-limit').value = limit || 150;
   const whInput = document.getElementById('edit-node-webhook');
   if (whInput) whInput.value = webhook || '';
+  const rotSel = document.getElementById('edit-node-rotate-every');
+  if (rotSel) rotSel.value = rotateEveryN || 5;
   openModal('backdrop-edit-ip-node');
 }
 
@@ -2882,17 +3042,19 @@ async function saveEditedIpNode() {
   const provider = document.getElementById('edit-node-provider')?.value;
   const dailyLimit = parseInt(document.getElementById('edit-node-limit')?.value) || 150;
   const webhook = document.getElementById('edit-node-webhook')?.value.trim() || '';
+  const rotateEveryN = parseInt(document.getElementById('edit-node-rotate-every')?.value) || 5;
 
-  const r = await apiFetch(`/api/ip/nodes/${id}/update`, "POST", {
+  const r = await apiFetch(`/api/ip/nodes/${id}/settings`, "POST", {
     name,
     provider,
     daily_limit: dailyLimit,
-    webhook,
+    rotation_webhook: webhook,
+    rotate_every_n: rotateEveryN
   });
 
   if (r.success) {
     closeModal('backdrop-edit-ip-node');
-    showToast("✅ Node settings updated", "success");
+    showToast("✅ Node settings & auto-rotation updated", "success");
     await loadIpNodes();
   } else {
     showToast(r.error || "Failed to update node", "error");

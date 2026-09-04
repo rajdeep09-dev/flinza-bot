@@ -150,12 +150,33 @@ def _process_loop(status_callback=None):
             lead_id   = email_row["lead_id"]
             msg_type  = email_row["message_type"]
 
-            account = db.get_next_available_account()
+            preferred_from = email_row.get("from_account")
+            account = None
+            if preferred_from:
+                all_accts = db.get_all_accounts()
+                for a in all_accts:
+                    if a.get("email") == preferred_from or a.get("from_email") == preferred_from:
+                        if (a.get("sent_today") or 0) < (a.get("daily_limit") or 50):
+                            account = dict(a)
+                            break
+            if not account:
+                account = db.get_next_available_account()
+
             if not account:
                 _notify(status_callback, "No accounts available — pausing")
                 break
 
-            _notify(status_callback, f"📤 Sending to {to_email} via {account['from_email']}…")
+            # Current active rotating IP node info
+            node_tag = ""
+            try:
+                import ip_rotator
+                cur_node = ip_rotator.peek_active_node()
+                if cur_node:
+                    node_tag = f" 📱 [{cur_node.get('name')}: {cur_node.get('ip_address')}]"
+            except Exception:
+                pass
+
+            _notify(status_callback, f"📤 Sending to {to_email} via {account['from_email']}{node_tag}…")
 
             result = email_sender.send_email_now(to_email, subject, body, account)
 
@@ -170,8 +191,8 @@ def _process_loop(status_callback=None):
                     # Schedule first followup if opener
                     if msg_type == "opener":
                         db.schedule_first_followup(lead_id)
-                db.log_activity("sent", f"To: {to_email} | From: {account['from_email']}")
-                _notify(status_callback, f"✅ Sent → {to_email}")
+                db.log_activity("sent", f"To: {to_email} | From: {account['from_email']}{node_tag}")
+                _notify(status_callback, f"✅ Sent → {to_email}{node_tag}")
             else:
                 db.mark_email_failed(email_id, result.get("error"))
                 _notify(status_callback, f"❌ Failed → {to_email}: {result.get('error')}")

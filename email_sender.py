@@ -309,26 +309,16 @@ def send_email_now(to_email: str, subject: str, body: str, account: dict, tracki
         # Build SMTP connection (with optional proxy, port 465 SSL vs port 587 STARTTLS)
         active_node = None
         if not proxy_url:
-            # Route outbound outreach through active IP node / persistent Localtonet tunnel pool
+            # Route outbound outreach through smart IP rotator fleet pool (multi-node balancing)
             try:
-                active_nodes = db.get_connected_nodes()
-                if active_nodes:
-                    # Prefer persistent 24/7 tunnels first, then check daily capacity
-                    avail = [n for n in active_nodes if (n.get("sent_today") or 0) < (n.get("daily_limit") or 150)]
-                    active_node = avail[0] if avail else active_nodes[0]
-                    if active_node.get("proxy_host"):
-                        p_proto = active_node.get("proxy_protocol") or "socks5"
-                        p_host = active_node.get("proxy_host")
-                        p_port = active_node.get("proxy_port") or 1080
-                        p_usr = active_node.get("proxy_user") or ""
-                        p_pwd = active_node.get("proxy_pass") or ""
-                        if p_usr and p_pwd:
-                            proxy_url = f"{p_proto}://{p_usr}:{p_pwd}@{p_host}:{p_port}"
-                        else:
-                            proxy_url = f"{p_proto}://{p_host}:{p_port}"
-                        logger.info(f"Routing outreach email via IP Node: {active_node.get('name')} ({p_proto}://{p_host}:{p_port})")
+                import ip_rotator
+                active_node = ip_rotator.select_next_node()
+                if active_node:
+                    proxy_url = ip_rotator.build_proxy_url(active_node)
+                    if proxy_url:
+                        logger.info(f"🔄 Routing outreach email via IP Node #{active_node.get('id')} '{active_node.get('name')}' ({proxy_url})")
             except Exception as e:
-                logger.warning(f"Failed resolving active IP node: {e}")
+                logger.warning(f"Failed resolving active IP node from rotator: {e}")
 
         smtp_conn = _make_smtp_connection(proxy_url, target_host=target_host, target_port=target_port)
 
@@ -344,8 +334,12 @@ def send_email_now(to_email: str, subject: str, body: str, account: dict, tracki
                 server.login(smtp_user, smtp_pass)
             server.sendmail(smtp_user, [to_email], msg.as_string())
 
-        if active_node and active_node.get("ip_address"):
-            db.record_ip_node_send(active_node["ip_address"])
+        if active_node and active_node.get("id"):
+            try:
+                import ip_rotator
+                ip_rotator.record_send_and_maybe_rotate(active_node["id"])
+            except Exception as e_rot:
+                logger.warning(f"Error recording IP node send / auto-rotate: {e_rot}")
 
         db.increment_account_sent(account["id"], is_alias=(acct_type == "alias"))
         return {"success": True, "account_used": from_email, "message_id": message_id, "provider": provider}

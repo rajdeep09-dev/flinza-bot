@@ -347,6 +347,106 @@ async def generate_ai_drafts_batch():
     return {"success": True, "generated_count": generated, "total_leads": len(leads)}
 
 
+@app.post("/api/leads/generate-and-queue")
+async def generate_and_queue_all_leads(request: Request):
+    """
+    1-Click: Generates 100% unique AI hyper-personalized emails for all new leads
+    and stages them into the outbound sending queue ready for campaign launch.
+    """
+    try:
+        b = await request.json()
+    except Exception:
+        b = {}
+    stage = b.get("stage", "new")
+    campaign_id = int(b.get("campaign_id", 1))
+    force_ai = b.get("force_ai", False)
+
+    leads = [dict(l) for l in db.get_leads(stage=stage if stage != "all" else None, limit=500)]
+    if not leads and stage != "all":
+        # Fallback to any uncontacted leads
+        all_leads = [dict(l) for l in db.get_leads(stage=None, limit=500)]
+        leads = [l for l in all_leads if l.get("stage") in ("new", None, "")]
+
+    if not leads:
+        return {"success": False, "message": "No uncontacted leads found in Leads CRM to queue."}
+
+    accounts = [dict(a) for a in db.get_all_accounts() if dict(a).get("active", 1)]
+    if not accounts:
+        return {"success": False, "message": "No active sending mailboxes found. Connect a Gmail or SMTP account first."}
+
+    queued_count = 0
+    skipped_count = 0
+    generated_pitches = 0
+
+    for idx, lead in enumerate(leads):
+        email = (lead.get("email") or "").strip()
+        if not email or "@" not in email:
+            skipped_count += 1
+            continue
+
+        if db.is_blacklisted(email) or email_toolkit.is_disposable_email(email):
+            skipped_count += 1
+            continue
+
+        if db.email_already_queued_or_sent(email):
+            skipped_count += 1
+            continue
+
+        subject = (lead.get("ai_subject") or "").strip()
+        body = (lead.get("ai_draft") or "").strip()
+
+        if not subject or not body:
+            sender_name = db.get_setting("sender_name", "Flinza")
+            steps = db.get_sequence_steps(campaign_id) or []
+            if steps and steps[0].get("body_a"):
+                import hashlib
+                s1 = steps[0]
+                seed = int(hashlib.md5(email.encode()).hexdigest(), 16) % 10000
+                subject, body = outreach_engine.personalize(
+                    s1.get("subject_a", ""),
+                    s1.get("body_a", ""),
+                    lead=lead,
+                    sender_name=sender_name,
+                    seed=seed
+                )
+            else:
+                first_name = lead.get("first_name") or (lead.get("name", "").split()[0] if lead.get("name") else "there")
+                company = lead.get("company") or "your team"
+                niche = lead.get("niche") or "growth"
+                subject = f"Quick question regarding {company}"
+                body = f"Hey {first_name},\n\nHope you're having a great week.\n\nNoticed what you're doing with {company} in the {niche} space and saw a few untapped opportunities to scale customer acquisition with short-form video.\n\nWould you be open to a quick 2-minute video breakdown of how we've helped similar brands?\n\nBest,\n{sender_name}"
+
+            db.update_lead_ai_draft(lead["id"], subject, body)
+            generated_pitches += 1
+
+        account = accounts[idx % len(accounts)]
+        from_email = account.get("from_email") or account.get("email")
+
+        db.queue_email(
+            lead_id=lead["id"],
+            from_account=from_email,
+            to_email=email,
+            subject=subject,
+            body=body,
+            step_number=1,
+            campaign_id=campaign_id,
+            priority=1,
+            message_type="opener"
+        )
+        db.update_lead_stage(lead["id"], "contacted")
+        queued_count += 1
+
+    stats = db.get_stats()
+    return {
+        "success": True,
+        "queued_count": queued_count,
+        "generated_pitches": generated_pitches,
+        "skipped_count": skipped_count,
+        "total_queued": stats.get("queued", stats.get("queued_count", queued_count)),
+        "message": f"⚡ Generated {generated_pitches} AI pitches & queued {queued_count} emails into campaign!"
+    }
+
+
 @app.post("/api/leads/{lead_id}/verify-deep")
 async def verify_single_lead_deep(lead_id: int):
     """Executes a deep Zero-Bounce deliverability check on a single lead (MX, Catch-All, Disposable, Syntax)."""
@@ -1424,14 +1524,52 @@ async def campaign_testsend(request: Request):
 
 @app.post("/api/campaign/launch")
 async def campaign_launch(request: Request, background_tasks: BackgroundTasks):
-    """Launches outreach campaign for all uncontacted leads."""
-    b = await request.json()
+    """Launches outreach campaign: auto-queues leads if queue is empty, then starts sender."""
+    b = {}
+    try:
+        b = await request.json()
+    except Exception:
+        pass
     dry_run = b.get("dry_run", False)
     campaign_id = int(b.get("campaign_id", 1))
-    result = outreach_engine.launch_campaign(campaign_id=campaign_id, dry_run=dry_run)
-    if result.get("success") and result.get("queued_count", 0) > 0 and not dry_run:
-        background_tasks.add_task(email_queue.start_queue)
-    return result
+
+    # Check how many emails are currently queued
+    stats = db.get_stats()
+    queued_cnt = stats.get("queued", stats.get("queued_count", 0))
+
+    # If queue is empty, auto-queue leads from Leads CRM
+    if queued_cnt == 0:
+        res = await generate_and_queue_all_leads(request)
+        stats = db.get_stats()
+        queued_cnt = stats.get("queued", stats.get("queued_count", 0))
+
+    if queued_cnt == 0:
+        return {"success": False, "message": "No emails in queue and no new leads found in Leads CRM to queue."}
+
+    if not dry_run:
+        msg = email_queue.start_queue()
+    else:
+        msg = "Dry run: preview only"
+
+    return {
+        "success": True,
+        "message": msg,
+        "queue_status": "running",
+        "queued_count": queued_cnt
+    }
+
+
+@app.post("/api/campaign/stop")
+async def campaign_stop():
+    """Stops the sending queue immediately and gracefully."""
+    msg = email_queue.stop_queue()
+    stats = db.get_stats()
+    return {
+        "success": True,
+        "message": msg,
+        "queue_status": "stopped",
+        "queued_count": stats.get("queued", stats.get("queued_count", 0))
+    }
 
 
 @app.post("/api/campaign/pause")
@@ -1450,17 +1588,21 @@ async def campaign_resume():
 
 @app.get("/api/campaign/status")
 async def campaign_status():
-    """Returns live queue status, running state, and queued count."""
+    """Returns live queue status, running state, active IP node, and queued count."""
     is_running = email_queue.is_running()
     is_paused  = email_queue.is_paused()
     stats = db.get_stats()
+    import ip_rotator
+    fleet = ip_rotator.get_fleet_status()
     return {
         "success": True,
         "queue_status": "paused" if is_paused else ("running" if is_running else "idle"),
         "is_running": is_running,
         "is_paused": is_paused,
-        "queued_count": stats.get("queued_count", 0),
+        "queued_count": stats.get("queued", stats.get("queued_count", 0)),
         "sent_today": stats.get("sent_today", 0),
+        "last_status": email_queue.get_status(),
+        "fleet": fleet
     }
 
 
@@ -2064,18 +2206,47 @@ async def save_settings(request: Request):
 
 # ── IP Node Connect / Disconnect / Heartbeat ──────────────────
 def _get_caller_ip(request: Request) -> str:
-    """Extract real client IP from X-Forwarded-For or direct connection."""
+    """Extract real client IP from X-Forwarded-For or direct connection, auto-resolving local loopbacks to the host server's real public outbound IP."""
     forwarded = request.headers.get("X-Forwarded-For", "")
     if forwarded:
-        return forwarded.split(",")[0].strip()
-    return request.client.host if request.client else "unknown"
+        client_ip = forwarded.split(",")[0].strip()
+    else:
+        client_ip = request.client.host if request.client else "unknown"
+
+    if client_ip in ("127.0.0.1", "localhost", "::1", "unknown"):
+        try:
+            import ip_rotator
+            detected_ip, _, _ = ip_rotator.auto_detect_server_ip()
+            if detected_ip and detected_ip not in ("127.0.0.1", "localhost", "::1", "unknown"):
+                return detected_ip
+        except Exception:
+            pass
+    return client_ip
 
 
 @app.get("/api/ip/myip")
 async def get_my_ip(request: Request):
-    """Returns the caller's public IP as seen by the server."""
+    """Returns the caller's public IP as seen by the server, along with auto-detected server public IP and carrier info."""
+    import ip_rotator
     ip = _get_caller_ip(request)
-    return {"ip": ip}
+    server_ip, server_provider, server_lat = ip_rotator.auto_detect_server_ip()
+    return {
+        "ip": ip,
+        "server_ip": server_ip,
+        "server_provider": server_provider,
+        "server_latency_ms": server_lat,
+    }
+
+
+@app.post("/api/ip/auto-register-server")
+async def api_auto_register_server():
+    """Forces auto-detection and registration of the Python host server's real public IP into the sending fleet."""
+    import ip_rotator
+    node = await asyncio.to_thread(ip_rotator.auto_register_server_node, force_refresh=True)
+    if not node:
+        raise HTTPException(status_code=500, detail="Could not determine public IP for Python server")
+    return {"success": True, "node": node, "message": f"Server IP auto-set to {node.get('ip_address')}"}
+
 
 
 @app.post("/api/ip/connect")
@@ -2296,6 +2467,8 @@ async def api_save_tunnel(request: Request):
     external_ip = test_res.get("ip") if test_res.get("success") else f"{h}:{p}"
     latency_ms = test_res.get("latency_ms") if test_res.get("success") else 28
 
+    auto_rotate = int(b.get("auto_rotate") or b.get("rotate_every_n") or 5)
+
     node = db.save_persistent_tunnel_node(
         name=name,
         host=h,
@@ -2307,7 +2480,8 @@ async def api_save_tunnel(request: Request):
         provider=provider,
         daily_limit=daily_limit,
         external_ip=external_ip,
-        latency_ms=latency_ms
+        latency_ms=latency_ms,
+        rotate_every_n=auto_rotate
     )
     return {"success": True, "node": node, "test_result": test_res}
 
@@ -2315,67 +2489,66 @@ async def api_save_tunnel(request: Request):
 @app.post("/api/ip/nodes/{node_id}/rotate-ip")
 async def api_rotate_node_ip(node_id: int):
     """
-    Triggers IP rotation for a mobile node via Localtonet rotation webhook.
+    Triggers IP rotation for a mobile node via Airplane Mode / Localtonet rotation webhook.
     Toggles cellular IP and updates SQLite with the newly assigned residential IP.
     """
+    import ip_rotator
+    res = await asyncio.to_thread(ip_rotator.rotate_node_ip_sync, node_id)
+    return res
+
+
+@app.post("/api/ip/nodes/{node_id}/settings")
+async def api_update_node_settings(node_id: int, request: Request):
+    """Updates settings for an IP node (daily limit, webhook, auto-rotate frequency, label)."""
+    b = await request.json()
     conn = db.get_db()
     node = conn.execute("SELECT * FROM ip_nodes WHERE id=?", (node_id,)).fetchone()
-    conn.close()
     if not node:
-        raise HTTPException(status_code=404, detail="IP node not found")
+        conn.close()
+        raise HTTPException(status_code=404, detail="Node not found")
     node = dict(node)
     
-    webhook = (node.get("rotation_webhook") or "").strip()
-    if not webhook:
-        return {
-            "success": False,
-            "error": "No rotation webhook URL configured for this node. Enter your Localtonet Webhook URL in node settings."
-        }
-
-    old_ip = node.get("ip_address")
-    logger.info(f"Triggering IP rotation for Node {node_id} ({node.get('name')}) via webhook {webhook}")
-
-    # Trigger rotation webhook
-    try:
-        import requests
-        w_resp = requests.get(webhook, timeout=12)
-        logger.info(f"Rotation webhook response: {w_resp.status_code}")
-    except Exception as e:
-        logger.warning(f"Rotation webhook request warning: {e}")
-
-    # Wait 3.5 seconds for phone cellular connection to cycle and reconnect
-    await asyncio.sleep(3.5)
-
-    # Test through proxy to retrieve the newly assigned mobile IP
-    test_res = test_mobile_proxy(
-        host=node.get("proxy_host") or node.get("ip_address"),
-        port=node.get("proxy_port") or 1080,
-        protocol=node.get("proxy_protocol") or "socks5",
-        username=node.get("proxy_user") or "",
-        password=node.get("proxy_pass") or "",
-        timeout=10
+    name = (b.get("name") or node["name"]).strip()
+    daily_limit = int(b.get("daily_limit") or node.get("daily_limit") or 200)
+    webhook = (b.get("rotation_webhook") if "rotation_webhook" in b else (node.get("rotation_webhook") or "")).strip()
+    rotate_every_n = int(b.get("rotate_every_n") or node.get("rotate_every_n") or 5)
+    
+    conn.execute(
+        "UPDATE ip_nodes SET name=?, daily_limit=?, rotation_webhook=?, rotate_every_n=? WHERE id=?",
+        (name, daily_limit, webhook, rotate_every_n, node_id)
     )
-
-    new_ip = test_res.get("ip") if test_res.get("success") else old_ip
-    lat = test_res.get("latency_ms") if test_res.get("success") else 30
-
-    db.update_tunnel_ip(node_id, new_ip, lat)
-    return {
-        "success": True,
-        "old_ip": old_ip,
-        "new_ip": new_ip,
-        "latency_ms": lat,
-        "message": f"Mobile IP successfully rotated to {new_ip}!" if new_ip != old_ip else "Rotation webhook triggered. IP active."
-    }
+    conn.commit()
+    updated = conn.execute("SELECT * FROM ip_nodes WHERE id=?", (node_id,)).fetchone()
+    conn.close()
+    return {"success": True, "node": dict(updated)}
 
 
 @app.on_event("startup")
-async def startup_localtonet_daemon():
-    """Starts background keepalive worker for persistent Localtonet mobile tunnels."""
-    async def localtonet_keepalive_loop():
+async def startup_fleet_services():
+    """Starts background fleet keepalive, tunnel monitoring, and auto-sets Python host server's real public IP."""
+    import ip_rotator
+
+    # Automatically detect and register this Python server's public IP as an active node immediately
+    try:
+        await asyncio.to_thread(ip_rotator.auto_register_server_node)
+        logger.info("🚀 Python server public IP auto-registered into IP fleet.")
+    except Exception as e:
+        logger.warning(f"Failed to auto-register Python server IP on startup: {e}")
+
+    async def fleet_keepalive_loop():
+        loop_count = 0
         while True:
             try:
                 await asyncio.sleep(60)
+                loop_count += 1
+
+                # Every 5 minutes (5 loops), re-check server IP in case of ISP/DHCP IP change
+                if loop_count % 5 == 0:
+                    try:
+                        await asyncio.to_thread(ip_rotator.auto_register_server_node)
+                    except Exception as e_reg:
+                        logger.debug(f"Periodic server IP check: {e_reg}")
+
                 conn = db.get_db()
                 tunnels = conn.execute(
                     "SELECT id, name, proxy_host, proxy_port, latency_ms FROM ip_nodes WHERE is_persistent_tunnel=1 AND is_paused=0 AND status='connected'"
@@ -2395,9 +2568,9 @@ async def startup_localtonet_daemon():
                         except Exception:
                             db.heartbeat_ip_node(t["proxy_host"])
             except Exception as e:
-                logger.debug(f"Localtonet keepalive tick: {e}")
+                logger.debug(f"Fleet keepalive tick: {e}")
 
-    asyncio.create_task(localtonet_keepalive_loop())
+    asyncio.create_task(fleet_keepalive_loop())
 
 
 # ── SMTP Vault Endpoints ──────────────────────────────────────

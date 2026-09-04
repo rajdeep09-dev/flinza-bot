@@ -187,6 +187,10 @@
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="5 3 19 12 5 21 5 3"/></svg>
             Launch Campaign
           </button>
+          <button class="btn-stop" id="btn-stop-outreach" style="display:none;background:linear-gradient(135deg,#ef4444,#dc2626);color:#fff;border:1px solid rgba(239,68,68,0.4);padding:7px 15px;border-radius:9999px;font-weight:700;font-size:13px;cursor:pointer;align-items:center;gap:6px;box-shadow:0 2px 10px rgba(239,68,68,0.35);transition:all 0.2s ease;" title="Stop Outreach Campaign sending queue">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>
+            Stop Campaign
+          </button>
         </div>
       </header>
 
@@ -415,9 +419,39 @@
               <button class="btn-ghost-sm" id="btn-download-sample-csv" title="Download template CSV with AI personalization columns">📥 Example CSV</button>
               <button class="btn-ghost-sm" id="btn-upload-leads-csv" title="Upload leads CSV with custom hooks">📤 Import CSV</button>
               <input type="file" id="input-leads-file" accept=".csv" style="display:none;" />
+              <button class="btn-primary-sm" id="btn-generate-and-queue" style="background:linear-gradient(135deg,#10b981,#059669);color:#fff;font-weight:700;box-shadow:0 2px 10px rgba(16,185,129,0.35);" title="Generate 100% unique personalized pitches for all leads and stage them in outbound sending queue">⚡ Generate All & Queue</button>
               <button class="btn-ghost-sm" id="btn-generate-ai-batch" title="Generate 100% unique AI hyper-personalized emails for all leads">⚡ Generate AI Emails (All)</button>
               <button class="btn-ghost-sm" id="btn-deep-verify-all" title="Full Zero-Bounce MX & Catch-All audit">🛡️ Deep Verify</button>
               <button class="btn-primary-sm" id="btn-open-add-lead">+ Add Lead</button>
+            </div>
+          </div>
+
+          <!-- Live Campaign & IP Node Action Bar -->
+          <div class="campaign-control-bar" style="display:flex;align-items:center;justify-content:space-between;background:linear-gradient(135deg,rgba(15,23,42,0.85),rgba(6,11,26,0.95));border:1px solid rgba(56,189,248,0.2);border-radius:12px;padding:10px 16px;margin-bottom:14px;flex-wrap:wrap;gap:12px;box-shadow:0 4px 20px rgba(0,0,0,0.25);">
+            <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;">
+              <div style="display:flex;align-items:center;gap:8px;">
+                <span class="status-dot" id="leads-queue-dot" style="width:8px;height:8px;"></span>
+                <span id="leads-queue-text" style="font-weight:700;font-size:13px;color:var(--text-primary);">Campaign Queue: Idle</span>
+              </div>
+              <span style="color:var(--text-muted);font-size:12px;">•</span>
+              <div id="leads-fleet-info" style="font-size:12px;color:#38bdf8;display:flex;align-items:center;gap:6px;background:rgba(56,189,248,0.08);padding:4px 10px;border-radius:20px;border:1px solid rgba(56,189,248,0.2);">
+                <span>📱</span>
+                <span id="leads-fleet-text">Active Node: Loading…</span>
+              </div>
+              <div id="leads-rotation-badge" style="font-size:11px;color:#a78bfa;display:flex;align-items:center;gap:4px;background:rgba(167,139,250,0.08);padding:4px 10px;border-radius:20px;border:1px solid rgba(167,139,250,0.2);">
+                <span>🔄</span>
+                <span id="leads-rotation-text">Auto-Rotate: Every 5 sends</span>
+              </div>
+            </div>
+            <div style="display:flex;gap:8px;align-items:center;">
+              <button class="btn-primary-sm" id="btn-leads-launch-campaign" style="background:linear-gradient(135deg,#00e082,#00a86b);font-weight:700;display:inline-flex;align-items:center;gap:6px;box-shadow:0 2px 10px rgba(0,224,130,0.3);">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                Launch Campaign
+              </button>
+              <button class="btn-danger-sm" id="btn-leads-stop-campaign" style="display:none;background:linear-gradient(135deg,#ef4444,#dc2626);color:#fff;border:none;padding:7px 14px;border-radius:6px;font-size:12px;font-weight:700;cursor:pointer;align-items:center;gap:6px;box-shadow:0 2px 10px rgba(239,68,68,0.35);">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>
+                Stop Campaign
+              </button>
             </div>
           </div>
           <!-- Stage Filter Tabs -->
@@ -1129,6 +1163,10 @@
                 <span class="live-pulse-dot active" style="width:7px;height:7px;"></span>
                 <span id="ip-detected-text">Detecting IP…</span>
               </div>
+              <button class="btn-ghost btn-sm" onclick="autoRegisterServerNode()" title="Auto-Detect & Register Python Server Real Public IP" style="border-color:rgba(168,85,247,0.4);color:#c084fc;">
+                <span>🖥️</span>
+                Auto-Set Server IP
+              </button>
               <button class="btn-ghost btn-sm" onclick="loadIpNodes()" title="Sync Nodes">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg>
                 Sync
@@ -1307,10 +1345,11 @@
                 <div class="form-group" style="margin:0;">
                   <label class="form-label" style="font-size:11px;">Auto-Rotate Schedule</label>
                   <select class="form-select" id="lt-auto-rotate">
-                    <option value="0">Manual / 1-Click in Dashboard Only</option>
+                    <option value="5" selected>Auto-Rotate Every 5 Emails (High IP Diversity)</option>
                     <option value="10">Auto-Rotate Every 10 Emails</option>
                     <option value="25">Auto-Rotate Every 25 Emails</option>
                     <option value="50">Auto-Rotate Every 50 Emails</option>
+                    <option value="0">Manual / 1-Click in Dashboard Only</option>
                   </select>
                 </div>
               </div>
@@ -1833,6 +1872,17 @@
           <label>IP Rotation Webhook URL (Localtonet / MacroDroid)</label>
           <input type="url" id="edit-node-webhook" class="form-input" placeholder="https://localtonet.com/api/v1/rotate?token=..." />
           <span style="font-size:11px;color:var(--text-muted);margin-top:4px;">Triggered on-demand or auto-rotated to cycle phone airplane mode</span>
+        </div>
+        <div class="form-field" id="edit-node-rotate-wrap">
+          <label>Auto-Rotate via Airplane Mode Frequency</label>
+          <select id="edit-node-rotate-every" class="form-select">
+            <option value="5">Auto-Rotate Every 5 Emails Sent (High IP Diversity)</option>
+            <option value="10">Auto-Rotate Every 10 Emails Sent</option>
+            <option value="25">Auto-Rotate Every 25 Emails Sent</option>
+            <option value="50">Auto-Rotate Every 50 Emails Sent</option>
+            <option value="0">Manual 1-Click Only (No Auto-Rotation)</option>
+          </select>
+          <span style="font-size:11px;color:var(--text-muted);margin-top:4px;">Automatically cycles phone airplane mode after sending N emails through this node</span>
         </div>
         <div class="modal-footer" style="margin-top: 18px;">
           <button type="button" class="btn-ghost" onclick="closeModal('backdrop-edit-ip-node')">Cancel</button>

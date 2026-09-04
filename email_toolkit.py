@@ -28,6 +28,13 @@ ROLE_PREFIXES = {
     "sales", "abuse", "postmaster", "webmaster", "security",
 }
 
+def is_disposable_email(email: str) -> bool:
+    """Checks if an email domain belongs to known disposable/temporary providers."""
+    if not email or "@" not in email:
+        return False
+    domain = email.split("@", 1)[1].lower().strip()
+    return domain in DISPOSABLE_DOMAINS
+
 # ─── 2. SPAM TRIGGER WORDS ───────────────────────────────────────
 SPAM_TRIGGERS = {
     "high_risk": [

@@ -459,6 +459,8 @@ def _init_default_settings(conn):
         "ALTER TABLE ip_nodes ADD COLUMN rotation_webhook TEXT DEFAULT ''",
         "ALTER TABLE ip_nodes ADD COLUMN auto_rotate_count INTEGER DEFAULT 0",
         "ALTER TABLE ip_nodes ADD COLUMN last_rotated_at TEXT DEFAULT ''",
+        "ALTER TABLE ip_nodes ADD COLUMN rotate_every_n INTEGER DEFAULT 5",
+        "ALTER TABLE ip_nodes ADD COLUMN sends_since_last_rotation INTEGER DEFAULT 0",
     ]:
         try:
             conn.execute(col_def)
@@ -1019,6 +1021,21 @@ def log_email(lead_id, from_account, to_email, subject, body,
     eid = cur.lastrowid
     conn.close()
     return eid
+
+
+def queue_email(lead_id, from_account, to_email, subject, body,
+                step_number=1, campaign_id=None, priority=1, message_type="opener"):
+    """Queues an outbound email ready for dispatch by the background sending engine."""
+    return log_email(
+        lead_id=lead_id,
+        from_account=from_account,
+        to_email=to_email,
+        subject=subject,
+        body=body,
+        message_type=message_type,
+        status="queued",
+        campaign_id=campaign_id
+    )
 
 
 def mark_email_sent(email_id: int, message_id: str = None, from_account: str = None):
@@ -1910,6 +1927,9 @@ def get_campaign_sequences(campaign_id: int):
     conn.close()
     return [dict(r) for r in rows]
 
+# Alias for sequence steps retrieval
+get_sequence_steps = get_campaign_sequences
+
 
 def delete_sequence_step(sequence_id: int):
     conn = get_db()
@@ -2070,20 +2090,85 @@ def update_ip_node(node_id: int, name: str = None, provider: str = None, daily_l
     return dict(updated)
 
 
-def record_ip_node_send(ip_address: str):
-    """Increments the sent_today counter for an IP node."""
+def record_ip_node_send(node_id_or_ip) -> dict:
+    """
+    Increments sent_today and sends_since_last_rotation for an IP node.
+    Returns the updated node dict so caller can inspect rotation thresholds.
+    """
     conn = get_db()
     today = date.today().isoformat()
-    conn.execute(
-        """UPDATE ip_nodes 
-           SET sent_today = CASE WHEN last_reset_date = ? THEN sent_today + 1 ELSE 1 END,
-               last_reset_date = ?,
-               last_seen = ?
-           WHERE ip_address = ?""",
-        (today, today, datetime.utcnow().isoformat(), ip_address)
-    )
+    now = datetime.utcnow().isoformat()
+    
+    if isinstance(node_id_or_ip, int) or (isinstance(node_id_or_ip, str) and node_id_or_ip.isdigit()):
+        node_id = int(node_id_or_ip)
+        conn.execute(
+            """UPDATE ip_nodes 
+               SET sent_today = CASE WHEN last_reset_date = ? THEN sent_today + 1 ELSE 1 END,
+                   sends_since_last_rotation = COALESCE(sends_since_last_rotation, 0) + 1,
+                   last_reset_date = ?,
+                   last_seen = ?
+               WHERE id = ?""",
+            (today, today, now, node_id)
+        )
+        row = conn.execute("SELECT * FROM ip_nodes WHERE id=?", (node_id,)).fetchone()
+    else:
+        ip_addr = str(node_id_or_ip).strip()
+        conn.execute(
+            """UPDATE ip_nodes 
+               SET sent_today = CASE WHEN last_reset_date = ? THEN sent_today + 1 ELSE 1 END,
+                   sends_since_last_rotation = COALESCE(sends_since_last_rotation, 0) + 1,
+                   last_reset_date = ?,
+                   last_seen = ?
+               WHERE ip_address = ?""",
+            (today, today, now, ip_addr)
+        )
+        row = conn.execute("SELECT * FROM ip_nodes WHERE ip_address=?", (ip_addr,)).fetchone()
+
     conn.commit()
     conn.close()
+    return dict(row) if row else {}
+
+
+def reset_node_rotation_counter(node_id: int, new_ip: str = None, latency_ms: int = None) -> bool:
+    """Resets sends_since_last_rotation to 0, increments auto_rotate_count, and updates IP/latency."""
+    conn = get_db()
+    now = datetime.utcnow().isoformat()
+    if new_ip and latency_ms is not None:
+        conn.execute(
+            """UPDATE ip_nodes 
+               SET sends_since_last_rotation=0,
+                   auto_rotate_count = COALESCE(auto_rotate_count, 0) + 1,
+                   ip_address = ?,
+                   latency_ms = ?,
+                   last_rotated_at = ?,
+                   last_seen = ?
+               WHERE id=?""",
+            (new_ip.strip(), int(latency_ms), now, now, node_id)
+        )
+    elif new_ip:
+        conn.execute(
+            """UPDATE ip_nodes 
+               SET sends_since_last_rotation=0,
+                   auto_rotate_count = COALESCE(auto_rotate_count, 0) + 1,
+                   ip_address = ?,
+                   last_rotated_at = ?,
+                   last_seen = ?
+               WHERE id=?""",
+            (new_ip.strip(), now, now, node_id)
+        )
+    else:
+        conn.execute(
+            """UPDATE ip_nodes 
+               SET sends_since_last_rotation=0,
+                   auto_rotate_count = COALESCE(auto_rotate_count, 0) + 1,
+                   last_rotated_at = ?,
+                   last_seen = ?
+               WHERE id=?""",
+            (now, now, node_id)
+        )
+    conn.commit()
+    conn.close()
+    return True
 
 
 def update_ip_node_latency(node_id: int, latency_ms: int):
@@ -2162,7 +2247,8 @@ def save_persistent_tunnel_node(
     provider: str = "Cellular 5G (Localtonet)",
     daily_limit: int = 200,
     external_ip: str = "",
-    latency_ms: int = 28
+    latency_ms: int = 28,
+    rotate_every_n: int = 5
 ) -> dict:
     """
     Saves or updates a persistent 24/7 mobile SOCKS5 / HTTP proxy tunnel (Localtonet).
@@ -2185,20 +2271,20 @@ def save_persistent_tunnel_node(
                SET name=?, ip_address=?, status='connected', is_paused=0,
                    provider=?, daily_limit=?, latency_ms=?, last_seen=?,
                    is_persistent_tunnel=1, proxy_protocol=?, proxy_host=?, proxy_port=?,
-                   proxy_user=?, proxy_pass=?, rotation_webhook=?
+                   proxy_user=?, proxy_pass=?, rotation_webhook=?, rotate_every_n=?
                WHERE id=?""",
             (label, ip_addr, prov, int(daily_limit), int(latency_ms), now,
-             protocol.lower(), host.strip(), int(port), user.strip(), password.strip(), webhook.strip(), node_id)
+             protocol.lower(), host.strip(), int(port), user.strip(), password.strip(), webhook.strip(), int(rotate_every_n), node_id)
         )
     else:
         cur = conn.execute(
             """INSERT INTO ip_nodes (
                 name, ip_address, status, user_agent, provider, daily_limit, sent_today, latency_ms,
                 is_paused, connected_at, last_seen, is_persistent_tunnel, proxy_protocol,
-                proxy_host, proxy_port, proxy_user, proxy_pass, rotation_webhook
-               ) VALUES (?, ?, 'connected', 'Localtonet-Daemon/1.0', ?, ?, 0, ?, 0, ?, ?, 1, ?, ?, ?, ?, ?, ?)""",
+                proxy_host, proxy_port, proxy_user, proxy_pass, rotation_webhook, rotate_every_n, sends_since_last_rotation
+               ) VALUES (?, ?, 'connected', 'Localtonet-Daemon/1.0', ?, ?, 0, ?, 0, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, 0)""",
             (label, ip_addr, prov, int(daily_limit), int(latency_ms), now, now,
-             protocol.lower(), host.strip(), int(port), user.strip(), password.strip(), webhook.strip())
+             protocol.lower(), host.strip(), int(port), user.strip(), password.strip(), webhook.strip(), int(rotate_every_n))
         )
         node_id = cur.lastrowid
 
