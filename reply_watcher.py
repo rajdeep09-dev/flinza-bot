@@ -117,13 +117,13 @@ def _check_account(account, notify_callback):
             mail.login(email_addr, password)
             mail.select("inbox")
 
-            since_date = last_check.strftime("%d-%b-%Y")
-            status, data = mail.search(None, f'(SINCE "{since_date}")')
-            if status != "OK":
+            # Always check recent messages in inbox (last 35 messages)
+            status, data = mail.search(None, "ALL")
+            if status != "OK" or not data or not data[0]:
                 return
 
             msg_ids = data[0].split()
-            for msg_id in msg_ids[-50:]:  # last 50 max
+            for msg_id in msg_ids[-35:]:  # inspect last 35 messages
                 try:
                     _process_message(mail, msg_id, email_addr, notify_callback)
                 except Exception as e:
@@ -139,7 +139,7 @@ def _check_account(account, notify_callback):
 
 def _process_message(mail, msg_id, our_email, notify_callback):
     status, msg_data = mail.fetch(msg_id, "(RFC822)")
-    if status != "OK":
+    if status != "OK" or not msg_data or not msg_data[0]:
         return
 
     raw_email = msg_data[0][1]
@@ -151,22 +151,32 @@ def _process_message(mail, msg_id, our_email, notify_callback):
     if not sender_email:
         return
 
-    # Skip messages we sent
-    accounts = [a["email"].lower() for a in db.get_all_accounts()]
-    aliases  = [a["alias"].lower() for a in db.get_all_aliases()]
-    if sender_email.lower() in accounts or sender_email.lower() in aliases:
+    # Only skip if the email is a self-loopback to the same address
+    if sender_email.lower() == our_email.lower():
         return
 
-    # Check if this sender is a lead we've emailed
+    subject = _decode_header_val(msg.get("Subject", ""))
+    body    = _extract_body(msg)
+
+    # Check if this sender is already a lead we've emailed
     lead = db.get_lead_by_email(sender_email)
     if not lead:
         normalized = _normalize_gmail(sender_email)
         lead = db.get_lead_by_email(normalized)
-    if not lead:
-        return  # Not a tracked lead
 
-    subject = _decode_header_val(msg.get("Subject", ""))
-    body    = _extract_body(msg)
+    # If lead does not exist in DB yet, auto-enroll them so replies are NEVER dropped
+    if not lead:
+        parsed_name = _extract_name(from_header) or sender_email.split("@")[0].title()
+        lead_id = db.add_or_update_lead(
+            email=sender_email,
+            name=parsed_name,
+            company="Direct Inbound",
+            stage="replied"
+        )
+        lead = db.get_lead_by_id(lead_id) or db.get_lead_by_email(sender_email)
+
+    if not lead:
+        return
 
     # Skip auto-replies
     if _is_auto_reply(subject, body):
@@ -254,6 +264,15 @@ def _process_message(mail, msg_id, our_email, notify_callback):
 def _extract_email(header_value: str) -> str | None:
     match = re.search(r'[\w._%+\-]+@[\w.\-]+\.\w+', header_value)
     return match.group(0).lower() if match else None
+
+
+def _extract_name(header_value: str) -> str:
+    try:
+        from email.utils import parseaddr
+        name, addr = parseaddr(header_value)
+        return name.strip() or addr.split("@")[0].title()
+    except Exception:
+        return ""
 
 
 def _decode_header_val(value: str) -> str:

@@ -10,7 +10,7 @@ import logging
 import re
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-from email.utils import formataddr, make_msgid
+from email.utils import formataddr, make_msgid, formatdate
 from urllib.parse import urlparse
 
 from datetime import datetime
@@ -87,13 +87,70 @@ def send_via_cloudflare_api(from_email: str, to_email: str, subject: str, body: 
         return {"success": False, "error": str(e)}
 
 
+def send_via_smtp2go_api(api_key: str, from_email: str, to_email: str, subject: str, body: str, html_body: str = None, display_name: str = None) -> dict:
+    """Dispatches outbound email via SMTP2GO REST API v3."""
+    url = "https://api.smtp2go.com/v3/email/send"
+    headers = {"Content-Type": "application/json"}
+    from_addr = f"{display_name} <{from_email}>" if display_name else from_email
+    payload = {
+        "api_key": api_key,
+        "to": [to_email] if isinstance(to_email, str) else to_email,
+        "sender": from_addr,
+        "subject": subject,
+        "text_body": body,
+        "html_body": html_body or body.replace("\n", "<br />\n")
+    }
+    try:
+        resp = requests.post(url, json=payload, headers=headers, timeout=20)
+        data = resp.json()
+        if data.get("data", {}).get("succeeded", 0) > 0:
+            email_id = data.get("data", {}).get("email_id") or make_msgid(domain="smtp2go.com")
+            return {"success": True, "provider": "smtp2go_api", "message_id": email_id, "account_used": from_email}
+        err = data.get("data", {}).get("error") or resp.text
+        return {"success": False, "error": f"SMTP2GO API error: {err}", "account_used": from_email}
+    except Exception as e:
+        return {"success": False, "error": str(e), "account_used": from_email}
+
+
+def send_via_mailjet_api(api_key: str, secret_key: str, from_email: str, to_email: str, subject: str, body: str, html_body: str = None, display_name: str = None) -> dict:
+    """Dispatches outbound email via Mailjet REST API v3.1."""
+    url = "https://api.mailjet.com/v3.1/send"
+    from_payload = {"Email": from_email}
+    if display_name:
+        from_payload["Name"] = display_name
+    payload = {
+        "Messages": [
+            {
+                "From": from_payload,
+                "To": [{"Email": to_email}],
+                "Subject": subject,
+                "TextPart": body,
+                "HTMLPart": html_body or body.replace("\n", "<br />\n")
+            }
+        ]
+    }
+    try:
+        resp = requests.post(url, json=payload, auth=(api_key, secret_key), timeout=20)
+        data = resp.json()
+        messages = data.get("Messages", [])
+        if messages and messages[0].get("Status") == "success":
+            to_info = messages[0].get("To", [{}])
+            msg_id = str(to_info[0].get("MessageID")) if to_info else make_msgid(domain="mailjet.com")
+            return {"success": True, "provider": "mailjet_api", "message_id": msg_id, "account_used": from_email}
+        err = resp.text
+        return {"success": False, "error": f"Mailjet API error: {err}", "account_used": from_email}
+    except Exception as e:
+        return {"success": False, "error": str(e), "account_used": from_email}
+
+
 def send_email_now(to_email: str, subject: str, body: str, account: dict, tracking_token: str = None) -> dict:
     """
     Send an email immediately using the given account dict.
     Supports:
       1. Cloudflare Native Email Sending REST API ($5/mo Workers Paid)
       2. Google OAuth 2.0 Gmail REST API
-      3. Amazon SES & Custom SMTP Servers (with SOCKS5 / HTTP proxy support)
+      3. SMTP2GO & Mailjet REST APIs
+      4. Brevo, Amazon SES, Gmail, Namecheap, Zoho, Outlook SMTP relays
     """
     from_email   = account["from_email"]
     provider     = account.get("provider") or ("gmail" if account.get("type") == "gmail" else "smtp")
@@ -113,34 +170,39 @@ def send_email_now(to_email: str, subject: str, body: str, account: dict, tracki
         if optout_text and optout_text not in body:
             body = body + optout_text
 
-    # 3. Attach Apple-Minimal Glassmorphic HTML Signature & Stealth Wrapper
-    sig_cfg = signature_generator.get_signature_settings()
-    html_content = body.replace("\n", "<br />\n")
+    # 3. Build message body — plain text ONLY for cold outreach (no HTML = no spam triggers)
+    sig_cfg  = signature_generator.get_signature_settings()
+    use_html = db.get_setting("html_email_enabled", "0") == "1"
 
-    if tracking_token and db.get_setting("tracking_enabled", "1") == "1":
-        html_content = tracking_server.wrap_links_in_body(html_content, tracking_token)
-        html_content += f"<br /><br />{tracking_server.generate_tracking_pixel_tag(tracking_token)}"
+    plain_text_body = body
 
-    if sig_cfg.get("sig_stealth_disguise", "1") == "1":
-        html_content = signature_generator.generate_stealth_disguise_wrapper(html_content)
-
-    html_body = html_content
-
+    # Append plain-text signature
     if sig_cfg.get("sig_enabled", "1") == "1":
-        sig_html = signature_generator.generate_glassmorphic_signature_html(
-            sender_name=display_name,
-            sender_email=from_email,
-            tracking_token=tracking_token
-        )
-        html_body = html_content + sig_html
+        sig_name    = sig_cfg.get("sig_name", display_name)
+        sig_title   = sig_cfg.get("sig_title", "")
+        sig_company = sig_cfg.get("sig_company", "")
+        sig_phone   = sig_cfg.get("sig_phone", "")
+        plain_signoff = f"\n\n--\n{sig_name}"
+        if sig_title:
+            plain_signoff += f"\n{sig_title}"
+        if sig_company:
+            plain_signoff += f" · {sig_company}"
+        if sig_phone:
+            plain_signoff += f"\n{sig_phone}"
+        if plain_signoff.strip() not in plain_text_body:
+            plain_text_body = plain_text_body + plain_signoff
 
-        # Append clean sign-off ONLY to plain-text fallback
-        plain_signoff = f"\n\nBest regards,\n{display_name}\n{sig_cfg.get('sig_title', 'Growth Partner')} | {sig_cfg.get('sig_company', 'Flinza Agency')}\n{sig_cfg.get('sig_website', 'https://flinza.io')}"
-        if plain_signoff not in body:
-            body = body + plain_signoff
+    html_body = None
+    if use_html:
+        html_content = plain_text_body.replace("\n", "<br />\n")
+        html_body = f'<div style="font-family: Arial, sans-serif; font-size: 14px; line-height: 1.6; color: #333;">{html_content}</div>'
 
-    # 4. Mode 1: Cloudflare Native Email Sending REST API ($5/mo Workers Paid)
-    if provider == "cloudflare_api":
+    body = plain_text_body
+
+    # 4. Mode 1: Cloudflare Native Email Sending REST API (only when enabled and configured)
+    cf_account_id = config.CF_ACCOUNT_ID or db.get_setting("cf_account_id", "")
+    cf_api_token  = config.CF_API_TOKEN or db.get_setting("cf_api_token", "")
+    if provider == "cloudflare_api" and cf_account_id and cf_api_token:
         logger.info(f"Dispatching via Cloudflare Email Sending API for {from_email}")
         res = send_via_cloudflare_api(
             from_email=from_email,
@@ -156,7 +218,40 @@ def send_email_now(to_email: str, subject: str, body: str, account: dict, tracki
         else:
             logger.warning(f"Cloudflare API dispatch failed for {from_email}: {res.get('error')}. Falling back to SMTP.")
 
-    # 5. Mode 2: Google OAuth 2.0 Gmail API dispatch
+    # 5. Mode 2: SMTP2GO REST API
+    if provider == "smtp2go_api" and smtp_pass:
+        logger.info(f"Dispatching via SMTP2GO API for {from_email}")
+        res = send_via_smtp2go_api(
+            api_key=smtp_pass,
+            from_email=from_email,
+            to_email=to_email,
+            subject=subject,
+            body=body,
+            html_body=html_body,
+            display_name=display_name
+        )
+        if res.get("success"):
+            db.increment_account_sent(account["id"], is_alias=(acct_type == "alias"))
+            return res
+
+    # 6. Mode 3: Mailjet REST API
+    if provider == "mailjet_api" and smtp_user and smtp_pass:
+        logger.info(f"Dispatching via Mailjet API for {from_email}")
+        res = send_via_mailjet_api(
+            api_key=smtp_user,
+            secret_key=smtp_pass,
+            from_email=from_email,
+            to_email=to_email,
+            subject=subject,
+            body=body,
+            html_body=html_body,
+            display_name=display_name
+        )
+        if res.get("success"):
+            db.increment_account_sent(account["id"], is_alias=(acct_type == "alias"))
+            return res
+
+    # 7. Mode 4: Google OAuth 2.0 Gmail API dispatch
     if (provider in ("gmail", "oauth") or acct_type == "gmail") and db.get_oauth_token(from_email):
         logger.info(f"Dispatching via Google OAuth2 Gmail API for {from_email}")
         res = google_auth.send_via_gmail_api(
@@ -172,9 +267,20 @@ def send_email_now(to_email: str, subject: str, body: str, account: dict, tracki
         else:
             logger.warning(f"Google OAuth dispatch failed for {from_email}: {res.get('error')}. Falling back to SMTP.")
 
-    # 6. Mode 3: SMTP dispatch (Amazon SES, Gmail App Passwords, Custom SMTP)
-    target_host = account.get("smtp_host") or ("email-smtp.us-east-1.amazonaws.com" if provider == "amazon_ses" else "smtp.gmail.com")
-    target_port = int(account.get("smtp_port") or 587)
+    # 8. Mode 5: SMTP dispatch (Brevo, Amazon SES, SMTP2GO, Mailjet, Gmail, Custom)
+    default_hosts = {
+        "brevo": "smtp-relay.brevo.com",
+        "smtp2go": "mail.smtp2go.com",
+        "mailjet": "in-v3.mailjet.com",
+        "amazon_ses": db.get_setting("aws_ses_smtp_host", "email-smtp.us-east-1.amazonaws.com"),
+        "gmail": "smtp.gmail.com",
+        "namecheap": "mail.privateemail.com",
+        "zoho": "smtp.zoho.com",
+        "outlook": "smtp.office365.com",
+        "sendgrid": "smtp.sendgrid.net",
+    }
+    target_host = account.get("smtp_host") or default_hosts.get(provider, "smtp.gmail.com")
+    target_port = int(account.get("smtp_port") or (465 if provider == "namecheap" else 587))
 
     try:
         msg = MIMEMultipart("alternative")
@@ -188,22 +294,13 @@ def send_email_now(to_email: str, subject: str, body: str, account: dict, tracki
 
         domain = from_email.split("@")[1] if "@" in from_email else "gmail.com"
         message_id = make_msgid(domain=domain)
-        # Attach Google & Yahoo compliant RFC 8058 List-Unsubscribe headers
-        try:
-            unsub_headers = outreach_engine.get_unsubscribe_headers(to_email)
-            msg["List-Unsubscribe"] = unsub_headers["List-Unsubscribe"]
-            msg["List-Unsubscribe-Post"] = unsub_headers["List-Unsubscribe-Post"]
-        except Exception:
-            pass
+        msg["Message-ID"] = message_id
+        msg["Date"] = formatdate(localtime=True)
 
-        # Attach deliverability & marketing headers
-        msg["Feedback-ID"] = f"flinza:{domain}"
-        msg["X-Precedence"] = "newsletter"
-        msg["X-Mailer"] = "Flinza Outreach OS v2.2"
-
-        # Plain text and HTML parts
+        # Plain text (always included); HTML only if html_email_enabled
         msg.attach(MIMEText(body, "plain", "utf-8"))
-        msg.attach(MIMEText(html_body, "html", "utf-8"))
+        if html_body:
+            msg.attach(MIMEText(html_body, "html", "utf-8"))
 
         # Build SMTP connection (with optional proxy, port 465 SSL vs port 587 STARTTLS)
         smtp_conn = _make_smtp_connection(proxy_url, target_host=target_host, target_port=target_port)
@@ -294,17 +391,31 @@ def send_test_email(to_email: str, from_account_email: str = None, target_accoun
     if not account:
         return {"success": False, "error": "No active Gmail accounts or aliases available in database."}
 
-    subject = f"🚀 Flinza Outreach Test — {account['from_email']}"
+    # Ultra-natural subject and body — mimics a real 1:1 human email
+    import random
+    subjects = [
+        "quick question",
+        "following up",
+        "curious about your setup",
+        "had a quick idea for you",
+        "re: growth",
+    ]
+    openers = [
+        "Hey, hope you don't mind the cold reach — came across your work and thought it was worth a shot.",
+        "Hi there, saw what you're building and wanted to reach out.",
+        "Hope this finds you well — I'll keep it brief.",
+    ]
+    closers = [
+        "Would it make sense to connect for 10 minutes?",
+        "Happy to share more if there's any interest on your end.",
+        "Let me know if this is relevant — no pressure either way.",
+    ]
+    subject = random.choice(subjects)
     body = (
-        f"Hi there!\n\n"
-        f"This is a live test email from your Flinza Outreach Bot.\n\n"
-        f"📋 Diagnostic Details:\n"
-        f"• Sent From: {account['from_email']}\n"
-        f"• Master SMTP: {account['smtp_user']}\n"
-        f"• Mailbox Type: {account.get('type', 'gmail')}\n"
-        f"• Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')}\n\n"
-        f"If you received this in your primary inbox, your SMTP credentials and DNS routing are working perfectly!\n\n"
-        f"— Flinza Engine"
+        f"{random.choice(openers)}\n\n"
+        f"We help B2B teams build a more predictable acquisition pipeline. "
+        f"Not sure if it's relevant to what you're working on right now, but figured I'd ask.\n\n"
+        f"{random.choice(closers)}"
     )
 
     email_id = db.log_email(None, account["from_email"], to_email, subject, body, "quick_test", "queued")
@@ -358,6 +469,14 @@ def send_with_logging(lead_id: int, to_email: str, subject: str, body: str,
             "email_id": email_id,
             "message": "All mailboxes at daily limit. Queued for tomorrow.",
         }
+
+    # Normalize account dict (mailbox pool uses 'email', but send_email_now expects 'from_email')
+    if account and "from_email" not in account:
+        account["from_email"] = account.get("email", "")
+        account["smtp_user"]  = account.get("smtp_user") or account.get("email", "")
+        account["smtp_pass"]  = account.get("smtp_pass") or account.get("app_password", "")
+        account["display_name"] = account.get("display_name") or account.get("label") or _make_display_name(account["from_email"])
+        account["type"]       = account.get("type", "gmail")
 
     # Log as queued first (idempotent if already exists)
     if not email_id:

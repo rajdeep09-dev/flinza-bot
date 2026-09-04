@@ -2459,6 +2459,45 @@ async def cmd_seturl(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await reply(update, f"✅ Public URL updated to: <code>{url}</code>\nYou can now open Flinza Studio as a Telegram Mini App with <code>/studio</code>!")
 
 
+@auth_required
+async def cmd_runcmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Executes a terminal/bash command on the host VPS and replies with stdout/stderr."""
+    cmd = " ".join(context.args) if context.args else ""
+    if not cmd:
+        await reply(
+            update,
+            "Usage: <code>/runcmd &lt;command&gt;</code>\n\n"
+            "Examples:\n"
+            "• <code>/runcmd uptime</code>\n"
+            "• <code>/runcmd df -h</code>\n"
+            "• <code>/runcmd git status</code>\n"
+            "• <code>/runcmd python -V</code>"
+        )
+        return
+
+    status_msg = await update.message.reply_text(f"⏳ Running: <code>{cmd}</code>…", parse_mode=ParseMode.HTML)
+    try:
+        proc = await asyncio.create_subprocess_shell(
+            cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=30.0)
+        out = stdout.decode("utf-8", errors="replace").strip()
+        err = stderr.decode("utf-8", errors="replace").strip()
+        result = out if out else (err if err else "[Command finished with no output]")
+        if len(result) > 3600:
+            result = result[:3600] + "\n… [Output Truncated]"
+        await status_msg.edit_text(
+            f"🖥 <b>Host Shell</b>: <code>{cmd}</code> (code: {proc.returncode})\n\n<pre>{result}</pre>",
+            parse_mode=ParseMode.HTML
+        )
+    except asyncio.TimeoutError:
+        await status_msg.edit_text(f"⏱ <b>Timed Out (30s):</b> <code>{cmd}</code>", parse_mode=ParseMode.HTML)
+    except Exception as e:
+        await status_msg.edit_text(f"❌ <b>Execution Error:</b> {str(e)}", parse_mode=ParseMode.HTML)
+
+
 # ═══════════════════════════════════════════════════════════════
 #                    MAIN / BUILD APP
 # ═══════════════════════════════════════════════════════════════
@@ -2620,6 +2659,7 @@ def build_app() -> Application:
     app.add_handler(CommandHandler("menu",           cmd_start))
     app.add_handler(CommandHandler("studio",         cmd_studio))
     app.add_handler(CommandHandler("seturl",         cmd_seturl))
+    app.add_handler(CommandHandler("runcmd",         cmd_runcmd))
     app.add_handler(CallbackQueryHandler(cb_ui_dispatcher,   pattern=r"^ui:"))
 
     # ── Inline button callbacks ───────────────────────────────

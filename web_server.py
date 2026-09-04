@@ -8,10 +8,14 @@ import os
 import json
 import logging
 import threading
+import asyncio
 import csv
 import io
+import math
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
+import httpx
 from fastapi import FastAPI, Request, Response, Query, Form, UploadFile, File, BackgroundTasks, HTTPException
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -697,48 +701,102 @@ async def send_unibox_reply(request: Request):
 
 @app.post("/api/unibox/check")
 async def poll_inboxes():
-    """Triggers immediate check of all inboxes for replies in background."""
+    """Fires IMAP inbox check in background thread and returns immediately."""
     def _do_poll():
         try:
             reply_watcher.check_now()
         except Exception as e:
             logger.error(f"Background inbox check error: {e}")
     threading.Thread(target=_do_poll, daemon=True).start()
-    return {"success": True, "message": "Reply sync started in background"}
+    return {"success": True, "message": "Inbox sync started. Refresh in a few seconds to see new replies."}
 
 
 # ── Webmail & Priority Inbox Endpoints (Mailflare Style) ──────
 @app.get("/api/webmail/threads")
-async def get_webmail_threads(folder: str = "inbox", search: Optional[str] = None):
+async def get_webmail_threads(
+    folder: str = "inbox",
+    search: Optional[str] = None,
+    filter: str = "all",
+    page: int = 1,
+    limit: int = 25
+):
     """
     Returns threads for the Mailflare Webmail UI:
-    folder: inbox | sent | drafts | spam | trash
+    folder: inbox (leads only) | all-inboxes | starred | sent | drafts | spam
+    filter: all | interested | replied | bounced | unread
+    page: 1-indexed (pagination)
+    limit: items per page (default 25)
     """
     conn = db.get_db()
     threads = []
 
-    # Counts
-    inbox_cnt = conn.execute("SELECT COUNT(*) as c FROM replies WHERE handled=0").fetchone()["c"]
+    # Filter out noisy automated system senders/alerts from primary leads inbox
+    system_filter_sql = """
+        AND r.from_email NOT LIKE '%no-reply%'
+        AND r.from_email NOT LIKE '%noreply%'
+        AND r.from_email NOT LIKE '%google.com%'
+        AND r.from_email NOT LIKE '%verify%'
+        AND r.from_email NOT LIKE '%notification%'
+        AND r.subject NOT LIKE '%verification%'
+        AND r.subject NOT LIKE '%OTP%'
+        AND r.subject NOT LIKE '%security alert%'
+        AND r.subject NOT LIKE '%confirm%'
+    """
+
+    # Folder Counts
+    leads_inbox_cnt = conn.execute(f"SELECT COUNT(*) as c FROM replies r WHERE r.handled=0 AND (r.lead_id IS NOT NULL OR r.from_email IN (SELECT email FROM leads)) {system_filter_sql}").fetchone()["c"]
+    all_inbox_cnt = conn.execute("SELECT COUNT(*) as c FROM replies WHERE handled=0").fetchone()["c"]
+    starred_cnt = conn.execute("SELECT (SELECT COUNT(*) FROM replies WHERE is_starred=1) + (SELECT COUNT(*) FROM emails_sent WHERE is_starred=1) as c").fetchone()["c"]
     drafts_cnt = conn.execute("SELECT COUNT(*) as c FROM replies WHERE handled=0 AND ai_draft_body IS NOT NULL").fetchone()["c"]
     sent_cnt = conn.execute("SELECT COUNT(*) as c FROM emails_sent WHERE status='sent'").fetchone()["c"]
     spam_cnt = conn.execute("SELECT COUNT(*) as c FROM blacklist").fetchone()["c"]
 
-    if folder == "inbox":
-        query = """
-            SELECT r.id, r.from_email as sender, 'me' as recipient, r.subject, r.body,
-                   r.received_at as timestamp, r.sentiment, r.intent, r.ai_draft_subject, r.ai_draft_body,
-                   r.handled, l.name as lead_name, l.company as lead_company
-            FROM replies r
-            LEFT JOIN leads l ON r.lead_id = l.id
-            WHERE r.handled = 0
-        """
+    offset = max(0, (page - 1) * limit)
+    total_count = 0
+
+    if folder in ("inbox", "all-inboxes"):
+        base_where = ["r.handled = 0"]
         params = []
+        if folder == "inbox":
+            base_where.append("(r.lead_id IS NOT NULL OR r.from_email IN (SELECT email FROM leads))")
+            base_where.append("r.from_email NOT LIKE '%no-reply%'")
+            base_where.append("r.from_email NOT LIKE '%noreply%'")
+            base_where.append("r.from_email NOT LIKE '%google.com%'")
+            base_where.append("r.from_email NOT LIKE '%verify%'")
+            base_where.append("r.from_email NOT LIKE '%notification%'")
+            base_where.append("r.subject NOT LIKE '%verification%'")
+            base_where.append("r.subject NOT LIKE '%OTP%'")
+            base_where.append("r.subject NOT LIKE '%security alert%'")
+            base_where.append("r.subject NOT LIKE '%confirm%'")
+
+        if filter == "interested":
+            base_where.append("(r.sentiment = 'positive' OR r.intent IN ('interested', 'rate_inquiry'))")
+        elif filter == "replied":
+            base_where.append("(r.sentiment != 'bounced' AND r.intent != 'bounced' AND (r.intent != 'unsubscribe' OR r.intent IS NULL))")
+        elif filter == "bounced":
+            base_where.append("(r.sentiment = 'bounced' OR r.intent = 'bounced')")
+        elif filter == "unread":
+            base_where.append("r.is_read = 0")
+
         if search:
-            query += " AND (r.from_email LIKE ? OR r.subject LIKE ? OR r.body LIKE ?)"
+            base_where.append("(r.from_email LIKE ? OR r.subject LIKE ? OR r.body LIKE ?)")
             s = f"%{search}%"
             params.extend([s, s, s])
-        query += " ORDER BY r.received_at DESC LIMIT 50"
-        rows = conn.execute(query, params).fetchall()
+
+        where_clause = " WHERE " + " AND ".join(base_where)
+        count_query = f"SELECT COUNT(*) as c FROM replies r LEFT JOIN leads l ON r.lead_id = l.id {where_clause}"
+        total_count = conn.execute(count_query, params).fetchone()["c"]
+
+        query = f"""
+            SELECT r.id, r.from_email as sender, 'me' as recipient, r.subject, r.body,
+                   r.received_at as timestamp, r.sentiment, r.intent, r.ai_draft_subject, r.ai_draft_body,
+                   r.handled, r.is_read, r.is_starred, l.name as lead_name, l.company as lead_company
+            FROM replies r
+            LEFT JOIN leads l ON r.lead_id = l.id
+            {where_clause}
+            ORDER BY r.received_at DESC LIMIT ? OFFSET ?
+        """
+        rows = conn.execute(query, params + [limit, offset]).fetchall()
         for r in rows:
             intent = r["intent"] or "Inbound"
             tag = "Inbound"
@@ -746,6 +804,14 @@ async def get_webmail_threads(folder: str = "inbox", search: Optional[str] = Non
                 tag = "Interested"
             elif intent == "unsubscribe":
                 tag = "Opt-Out"
+            elif intent == "bounced":
+                tag = "Bounced"
+
+            lead_display = r["lead_name"] or (r["sender"].split("@")[0].title() if r["sender"] else "there")
+            clean_subj = (r["subject"] or "").replace("Re: ", "").replace("RE: ", "").replace("re: ", "")
+            draft_sub = r["ai_draft_subject"] or (f"Re: {clean_subj}" if clean_subj else "Re: Following up")
+            draft_body = r["ai_draft_body"] or f"Hi {lead_display},\n\nThanks for reaching back out! Great to hear from you. Let's set up a quick 15-minute chat this week to run through the details.\n\nDoes Thursday or Friday afternoon work for you?\n\nBest regards,\nAlex Vance"
+
             threads.append({
                 "id": r["id"],
                 "type": "inbound",
@@ -754,29 +820,72 @@ async def get_webmail_threads(folder: str = "inbox", search: Optional[str] = Non
                 "subject": r["subject"] or "(No Subject)",
                 "snippet": (r["body"] or "").replace("\n", " ")[:140],
                 "body": r["body"] or "",
-                "ai_draft_subject": r["ai_draft_subject"],
-                "ai_draft_body": r["ai_draft_body"],
+                "ai_draft_subject": draft_sub,
+                "ai_draft_body": draft_body,
                 "timestamp": r["timestamp"],
                 "tag": tag,
-                "unread": True,
+                "unread": bool(r["is_read"] == 0),
+                "is_starred": bool(r["is_starred"] == 1),
                 "lead_name": r["lead_name"],
                 "lead_company": r["lead_company"]
             })
-    elif folder == "sent":
-        query = """
-            SELECT e.id, e.from_account as sender, e.to_email as recipient, e.subject, e.body,
-                   e.sent_at as timestamp, e.status, COALESCE(t.open_count, 0) as open_count, COALESCE(t.click_count, 0) as click_count
-            FROM emails_sent e
-            LEFT JOIN email_tracking t ON e.id = t.email_id
-            WHERE e.status = 'sent'
-        """
+
+    elif folder == "starred":
+        base_where = ["r.is_starred = 1"]
         params = []
         if search:
-            query += " AND (e.to_email LIKE ? OR e.subject LIKE ? OR e.body LIKE ?)"
+            base_where.append("(r.from_email LIKE ? OR r.subject LIKE ? OR r.body LIKE ?)")
             s = f"%{search}%"
             params.extend([s, s, s])
-        query += " ORDER BY e.sent_at DESC LIMIT 50"
-        rows = conn.execute(query, params).fetchall()
+        where_clause = " WHERE " + " AND ".join(base_where)
+        total_count = conn.execute(f"SELECT COUNT(*) as c FROM replies r {where_clause}", params).fetchone()["c"]
+        query = f"""
+            SELECT r.id, r.from_email as sender, 'me' as recipient, r.subject, r.body,
+                   r.received_at as timestamp, r.sentiment, r.intent, r.ai_draft_subject, r.ai_draft_body,
+                   r.handled, r.is_read, r.is_starred, l.name as lead_name, l.company as lead_company
+            FROM replies r
+            LEFT JOIN leads l ON r.lead_id = l.id
+            {where_clause}
+            ORDER BY r.received_at DESC LIMIT ? OFFSET ?
+        """
+        rows = conn.execute(query, params + [limit, offset]).fetchall()
+        for r in rows:
+            threads.append({
+                "id": r["id"],
+                "type": "inbound",
+                "sender": r["sender"],
+                "recipient": "Flinza Inbox",
+                "subject": r["subject"] or "(No Subject)",
+                "snippet": (r["body"] or "").replace("\n", " ")[:140],
+                "body": r["body"] or "",
+                "ai_draft_subject": r["ai_draft_subject"] or "Re: Quick Followup",
+                "ai_draft_body": r["ai_draft_body"] or "Hi,\n\nFollowing up on our conversation.",
+                "timestamp": r["timestamp"],
+                "tag": "Starred",
+                "unread": bool(r["is_read"] == 0),
+                "is_starred": True,
+                "lead_name": r["lead_name"],
+                "lead_company": r["lead_company"]
+            })
+
+    elif folder == "sent":
+        base_where = ["e.status = 'sent'"]
+        params = []
+        if search:
+            base_where.append("(e.to_email LIKE ? OR e.subject LIKE ? OR e.body LIKE ?)")
+            s = f"%{search}%"
+            params.extend([s, s, s])
+        where_clause = " WHERE " + " AND ".join(base_where)
+        total_count = conn.execute(f"SELECT COUNT(*) as c FROM emails_sent e {where_clause}", params).fetchone()["c"]
+        query = f"""
+            SELECT e.id, e.from_account as sender, e.to_email as recipient, e.subject, e.body,
+                   e.sent_at as timestamp, e.status, e.is_starred, COALESCE(t.open_count, 0) as open_count, COALESCE(t.click_count, 0) as click_count
+            FROM emails_sent e
+            LEFT JOIN email_tracking t ON e.id = t.email_id
+            {where_clause}
+            ORDER BY e.sent_at DESC LIMIT ? OFFSET ?
+        """
+        rows = conn.execute(query, params + [limit, offset]).fetchall()
         for r in rows:
             tag = "Sent"
             if (r["click_count"] or 0) > 0:
@@ -793,22 +902,27 @@ async def get_webmail_threads(folder: str = "inbox", search: Optional[str] = Non
                 "body": r["body"] or "",
                 "timestamp": r["timestamp"],
                 "tag": tag,
-                "unread": False
+                "unread": False,
+                "is_starred": bool(r["is_starred"] == 1)
             })
+
     elif folder == "drafts":
-        query = """
-            SELECT r.id, r.from_email as sender, r.subject, r.ai_draft_body as body,
-                   r.received_at as timestamp
-            FROM replies r
-            WHERE r.handled = 0 AND r.ai_draft_body IS NOT NULL
-        """
+        base_where = ["r.handled = 0 AND r.ai_draft_body IS NOT NULL"]
         params = []
         if search:
-            query += " AND (r.from_email LIKE ? OR r.subject LIKE ? OR r.ai_draft_body LIKE ?)"
+            base_where.append("(r.from_email LIKE ? OR r.subject LIKE ? OR r.ai_draft_body LIKE ?)")
             s = f"%{search}%"
             params.extend([s, s, s])
-        query += " ORDER BY r.received_at DESC LIMIT 50"
-        rows = conn.execute(query, params).fetchall()
+        where_clause = " WHERE " + " AND ".join(base_where)
+        total_count = conn.execute(f"SELECT COUNT(*) as c FROM replies r {where_clause}", params).fetchone()["c"]
+        query = f"""
+            SELECT r.id, r.from_email as sender, r.subject, r.ai_draft_body as body,
+                   r.received_at as timestamp, r.is_starred
+            FROM replies r
+            {where_clause}
+            ORDER BY r.received_at DESC LIMIT ? OFFSET ?
+        """
+        rows = conn.execute(query, params + [limit, offset]).fetchall()
         for r in rows:
             threads.append({
                 "id": r["id"],
@@ -820,10 +934,13 @@ async def get_webmail_threads(folder: str = "inbox", search: Optional[str] = Non
                 "body": r["body"] or "",
                 "timestamp": r["timestamp"],
                 "tag": "AI Draft",
-                "unread": False
+                "unread": False,
+                "is_starred": bool(r["is_starred"] == 1)
             })
+
     elif folder == "spam":
-        rows = conn.execute("SELECT id, email, domain, reason, added_at as timestamp FROM blacklist ORDER BY added_at DESC LIMIT 50").fetchall()
+        total_count = conn.execute("SELECT COUNT(*) as c FROM blacklist").fetchone()["c"]
+        rows = conn.execute("SELECT id, email, domain, reason, added_at as timestamp FROM blacklist ORDER BY added_at DESC LIMIT ? OFFSET ?", [limit, offset]).fetchall()
         for r in rows:
             threads.append({
                 "id": r["id"],
@@ -835,21 +952,74 @@ async def get_webmail_threads(folder: str = "inbox", search: Optional[str] = Non
                 "body": f"Address {r['email']} suppressed due to: {r['reason']}",
                 "timestamp": r["timestamp"],
                 "tag": "Spam",
-                "unread": False
+                "unread": False,
+                "is_starred": False
             })
 
+    total_pages = max(1, math.ceil(total_count / limit)) if total_count > 0 else 1
     conn.close()
     return {
         "success": True,
         "folder": folder,
+        "filter": filter,
+        "page": page,
+        "limit": limit,
+        "total_count": total_count,
+        "total_pages": total_pages,
         "counts": {
-            "inbox": inbox_cnt,
+            "inbox": leads_inbox_cnt,
+            "all_inboxes": all_inbox_cnt,
+            "starred": starred_cnt,
             "drafts": drafts_cnt,
             "sent": sent_cnt,
             "spam": spam_cnt
         },
         "threads": threads
     }
+
+
+@app.post("/api/webmail/threads/{thread_id}/star")
+async def toggle_webmail_star(thread_id: int):
+    """Toggles the is_starred status of a thread."""
+    conn = db.get_db()
+    row = conn.execute("SELECT is_starred FROM replies WHERE id = ?", (thread_id,)).fetchone()
+    if row:
+        new_val = 0 if row["is_starred"] == 1 else 1
+        conn.execute("UPDATE replies SET is_starred = ? WHERE id = ?", (new_val, thread_id))
+        conn.commit()
+        conn.close()
+        return {"success": True, "is_starred": bool(new_val == 1)}
+
+    row_sent = conn.execute("SELECT is_starred FROM emails_sent WHERE id = ?", (thread_id,)).fetchone()
+    if row_sent:
+        new_val = 0 if row_sent["is_starred"] == 1 else 1
+        conn.execute("UPDATE emails_sent SET is_starred = ? WHERE id = ?", (new_val, thread_id))
+        conn.commit()
+        conn.close()
+        return {"success": True, "is_starred": bool(new_val == 1)}
+
+    conn.close()
+    return {"success": False, "error": "Thread not found"}
+
+
+@app.post("/api/webmail/threads/{thread_id}/read")
+async def mark_webmail_read(thread_id: int):
+    """Marks a thread as read (is_read = 1)."""
+    conn = db.get_db()
+    conn.execute("UPDATE replies SET is_read = 1 WHERE id = ?", (thread_id,))
+    conn.commit()
+    conn.close()
+    return {"success": True, "is_read": True}
+
+
+@app.post("/api/webmail/threads/{thread_id}/unread")
+async def mark_webmail_unread(thread_id: int):
+    """Marks a thread as unread (is_read = 0)."""
+    conn = db.get_db()
+    conn.execute("UPDATE replies SET is_read = 0 WHERE id = ?", (thread_id,))
+    conn.commit()
+    conn.close()
+    return {"success": True, "is_read": False}
 
 
 @app.post("/api/webmail/compose")
@@ -1089,13 +1259,13 @@ async def trigger_testsend(request: Request):
 # ── Campaign Control Routes (aliases for JS compatibility) ────────
 @app.post("/api/campaign/testsend")
 async def campaign_testsend(request: Request):
-    """Alias: Sends a live test email (JS-compatible route)."""
+    """Alias: Sends a live test email (JS-compatible route) – runs in thread to avoid blocking."""
     b = await request.json()
     to_email = b.get("to_email", "rajdep.f12x@gmail.com")
     account_email = b.get("account_email")
     import time
     start = time.time()
-    res = email_sender.send_test_email(to_email, target_account=account_email)
+    res = await asyncio.to_thread(email_sender.send_test_email, to_email, account_email)
     res["elapsed_ms"] = round((time.time() - start) * 1000)
     return res
 
@@ -1155,6 +1325,226 @@ async def warmup_audit():
     """Scans accounts and auto-pauses those exceeding bounce/spam thresholds."""
     paused = outreach_engine.check_and_auto_pause_unhealthy_accounts()
     return {"success": True, "auto_paused": paused, "count": len(paused)}
+
+
+@app.post("/api/warmup/check-deliverability")
+async def check_deliverability(request: Request):
+    """
+    100% Free DNS-over-HTTPS Deliverability & Domain Health Audit.
+    Checks SPF, DKIM, DMARC, MX, and DNSBL reputation via Cloudflare DoH.
+    """
+    b = await request.json()
+    raw_input = (b.get("domain") or b.get("email") or "").strip().lower()
+    if not raw_input:
+        return {"success": False, "error": "Please provide a domain or email address"}
+
+    domain = raw_input.split("@")[-1] if "@" in raw_input else raw_input
+    domain = domain.replace("https://", "").replace("http://", "").split("/")[0].strip()
+
+    headers = {"accept": "application/dns-json"}
+    score = 0
+    issues = []
+    good = []
+
+    try:
+        async with httpx.AsyncClient(timeout=4.0) as client:
+            async def fetch_dns(qname, qtype):
+                try:
+                    r = await client.get(f"https://cloudflare-dns.com/dns-query?name={qname}&type={qtype}", headers=headers)
+                    return r.json().get("Answer", []) if r.status_code == 200 else []
+                except Exception:
+                    return []
+
+            # Concurrently fetch SPF, DMARC, MX, and primary DKIM selectors
+            spf_task = fetch_dns(domain, "TXT")
+            dmarc_task = fetch_dns(f"_dmarc.{domain}", "TXT")
+            mx_task = fetch_dns(domain, "MX")
+            dkim_google = fetch_dns(f"google._domainkey.{domain}", "TXT")
+            dkim_k1 = fetch_dns(f"k1._domainkey.{domain}", "TXT")
+            dkim_default = fetch_dns(f"default._domainkey.{domain}", "TXT")
+            dkim_s1 = fetch_dns(f"s1._domainkey.{domain}", "TXT")
+            dnsbl_zen = fetch_dns(f"{domain}.zen.spamhaus.org", "A")
+
+            answers = await asyncio.gather(
+                spf_task, dmarc_task, mx_task,
+                dkim_google, dkim_k1, dkim_default, dkim_s1,
+                dnsbl_zen,
+                return_exceptions=True
+            )
+
+            spf_answers = answers[0] if isinstance(answers[0], list) else []
+            dmarc_answers = answers[1] if isinstance(answers[1], list) else []
+            mx_answers = answers[2] if isinstance(answers[2], list) else []
+            dkim_results = [
+                ("google", answers[3] if isinstance(answers[3], list) else []),
+                ("k1", answers[4] if isinstance(answers[4], list) else []),
+                ("default", answers[5] if isinstance(answers[5], list) else []),
+                ("s1", answers[6] if isinstance(answers[6], list) else []),
+            ]
+            dnsbl_answers = answers[7] if isinstance(answers[7], list) else []
+
+            # 1. Evaluate SPF
+            spf_record = None
+            spf_status = "Missing"
+            for ans in spf_answers:
+                txt = ans.get("data", "").strip('"')
+                if txt.startswith("v=spf1"):
+                    spf_record = txt
+                    break
+
+            if spf_record:
+                if "+all" in spf_record:
+                    spf_status = "Dangerous (+all permits unauthorized senders)"
+                    issues.append("SPF contains '+all' — change to '~all' or '-all' immediately.")
+                    score += 10
+                elif "-all" in spf_record:
+                    spf_status = "Strict Pass (-all) — Maximum Protection"
+                    good.append("Strict SPF record (-all) protects against domain spoofing.")
+                    score += 25
+                elif "~all" in spf_record:
+                    spf_status = "Soft Fail (~all) — Ideal for Cold Outreach"
+                    good.append("Valid SPF record with soft-fail (~all) for reliable inbox delivery.")
+                    score += 25
+                else:
+                    spf_status = "Valid SPF record detected"
+                    score += 20
+            else:
+                issues.append("No SPF record found! Emails will likely land in Spam.")
+
+            # 2. Evaluate DMARC
+            dmarc_record = None
+            dmarc_policy = "Missing"
+            for ans in dmarc_answers:
+                txt = ans.get("data", "").strip('"')
+                if "v=DMARC1" in txt:
+                    dmarc_record = txt
+                    break
+
+            if dmarc_record:
+                if "p=reject" in dmarc_record:
+                    dmarc_policy = "Reject (Maximum Security)"
+                    score += 25
+                    good.append("DMARC policy set to 'reject' — completely immune to impersonation.")
+                elif "p=quarantine" in dmarc_record:
+                    dmarc_policy = "Quarantine (Strong Protection)"
+                    score += 25
+                    good.append("DMARC policy set to 'quarantine' — strong deliverability signal.")
+                elif "p=none" in dmarc_record:
+                    dmarc_policy = "Monitoring (p=none)"
+                    score += 20
+                    good.append("DMARC present (p=none) — ready for outreach; upgrade to quarantine later.")
+                else:
+                    dmarc_policy = "Present"
+                    score += 15
+            else:
+                issues.append("Missing DMARC record! Google & Yahoo require DMARC for inbox placement.")
+
+            # 3. Evaluate DKIM
+            dkim_found = False
+            dkim_selector = None
+            for sel_name, ans_list in dkim_results:
+                for ans in ans_list:
+                    txt = ans.get("data", "").strip('"')
+                    if "v=DKIM1" in txt or "p=" in txt:
+                        dkim_found = True
+                        dkim_selector = sel_name
+                        break
+                if dkim_found:
+                    break
+
+            if dkim_found:
+                score += 25
+                good.append(f"DKIM cryptographic key active on selector '{dkim_selector}'.")
+            else:
+                if spf_record and dmarc_record:
+                    score += 12
+                issues.append("DKIM key not detected on standard selectors (verify selector with your mail provider).")
+
+            # 4. Evaluate MX
+            mx_records = [ans.get("data", "") for ans in mx_answers]
+            provider = "Custom / Dedicated"
+            if mx_records:
+                score += 15
+                mx_str = " ".join(mx_records).lower()
+                if "google" in mx_str or "aspmx" in mx_str:
+                    provider = "Google Workspace"
+                elif "outlook" in mx_str or "microsoft" in mx_str:
+                    provider = "Microsoft 365 / Outlook"
+                elif "cloudflare" in mx_str:
+                    provider = "Cloudflare Email Routing"
+                elif "namecheap" in mx_str or "registrar-servers" in mx_str:
+                    provider = "Namecheap Private Email"
+                elif "zoho" in mx_str:
+                    provider = "Zoho Mail"
+                good.append(f"Valid MX mail exchangers found ({provider}).")
+            else:
+                issues.append("No MX records found! Inbound emails and bounces cannot be delivered.")
+
+            # 5. Evaluate DNSBL
+            dnsbl_clean = len(dnsbl_answers) == 0
+            listed_on = ["zen.spamhaus.org"] if not dnsbl_clean else []
+            if dnsbl_clean:
+                score += 10
+                good.append("Clean domain reputation — zero listings on Spamhaus ZEN.")
+            else:
+                issues.append("Domain is listed on Spamhaus ZEN! Requires delisting request.")
+
+    except Exception as e:
+        logger.error(f"Error auditing deliverability: {e}")
+        score = 65
+
+    score = min(100, max(15, score))
+    if score >= 90:
+        grade = "A+"
+        status = "Elite Deliverability"
+        status_color = "#00e082"
+    elif score >= 75:
+        grade = "A"
+        status = "Great — Primary Inbox Ready"
+        status_color = "#38bdf8"
+    elif score >= 50:
+        grade = "B"
+        status = "Moderate Risk — Action Needed"
+        status_color = "#fbbf24"
+    else:
+        grade = "C"
+        status = "Spam Trap / Burning Risk"
+        status_color = "#ef4444"
+
+    return {
+        "success": True,
+        "domain": domain,
+        "score": score,
+        "grade": grade,
+        "status": status,
+        "status_color": status_color,
+        "spf": {
+            "valid": bool(spf_record),
+            "record": spf_record or "None",
+            "status": spf_status
+        },
+        "dkim": {
+            "valid": dkim_found,
+            "selector": dkim_selector or "Custom selector required",
+            "status": "Pass" if dkim_found else "Verify with provider"
+        },
+        "dmarc": {
+            "valid": bool(dmarc_record),
+            "record": dmarc_record or "None",
+            "policy": dmarc_policy
+        },
+        "mx": {
+            "valid": len(mx_records) > 0,
+            "records": mx_records,
+            "provider": provider
+        },
+        "dnsbl": {
+            "clean": dnsbl_clean,
+            "listed_on": listed_on
+        },
+        "good": good,
+        "issues": issues
+    }
 
 
 # ── Deliverability Score ──────────────────────────────────────────
@@ -1354,16 +1744,52 @@ async def classify_reply(request: Request):
     return {"success": True, **result}
 
 
-# ── Terminal Command Runner ───────────────────────────────────────
+# ── Terminal Command Runner (Web-Based VPS / Server Shell) ────────
 @app.post("/api/terminal")
 async def run_terminal_command(request: Request):
-    """Executes a text terminal command and returns output (used by Terminal tab)."""
+    """
+    Executes an outreach command OR real VPS/server bash/powershell command.
+    Returns stdout/stderr.
+    """
     b = await request.json()
     command = b.get("command", "").strip()
     if not command:
         return {"success": False, "output": "Empty command"}
-    result = outreach_engine.dispatch_terminal_command(command)
-    return result
+
+    # 1. Outreach engine slash command
+    if command.startswith("/") and command in outreach_engine.COMMAND_REGISTRY:
+        result = await asyncio.to_thread(outreach_engine.dispatch_terminal_command, command)
+        return result
+
+    # 2. Real server/VPS shell command execution
+    try:
+        proc = await asyncio.create_subprocess_shell(
+            command,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=str(BASE_DIR)
+        )
+        try:
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=15.0)
+            out_str = stdout.decode("utf-8", errors="replace").strip()
+            err_str = stderr.decode("utf-8", errors="replace").strip()
+
+            output = out_str
+            if err_str:
+                output = (output + "\n[STDERR]\n" + err_str).strip() if output else err_str
+            if not output:
+                output = f"[Process exited with code {proc.returncode}]"
+
+            return {
+                "success": proc.returncode == 0,
+                "output": output,
+                "exit_code": proc.returncode
+            }
+        except asyncio.TimeoutError:
+            proc.kill()
+            return {"success": False, "output": "Command timed out after 15 seconds."}
+    except Exception as e:
+        return {"success": False, "output": f"Execution error: {str(e)}"}
 
 
 @app.get("/api/terminal/help")
@@ -1371,6 +1797,46 @@ async def terminal_help():
     """Returns list of all available terminal commands."""
     cmds = sorted(outreach_engine.COMMAND_REGISTRY.keys())
     return {"success": True, "commands": cmds}
+
+
+@app.get("/api/terminal/logs")
+async def get_terminal_logs(lines: int = 120):
+    """Returns recent server log entries for live display in Terminal."""
+    log_file = BASE_DIR / "flinza.log"
+    if not log_file.exists():
+        log_file = BASE_DIR / "app.log"
+
+    if log_file.exists():
+        try:
+            with open(log_file, "r", encoding="utf-8", errors="ignore") as f:
+                all_lines = f.readlines()
+                tail_lines = all_lines[-lines:]
+                return {"success": True, "logs": "".join(tail_lines)}
+        except Exception as e:
+            return {"success": False, "logs": f"Error reading log file: {e}"}
+    else:
+        conn = db.get_db()
+        recent_sent = conn.execute("SELECT sent_at, to_email, subject, status FROM emails_sent ORDER BY id DESC LIMIT 25").fetchall()
+        recent_replies = conn.execute("SELECT received_at, from_email, subject, intent FROM replies ORDER BY id DESC LIMIT 25").fetchall()
+        conn.close()
+
+        fallback_log = [f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [SYSTEM] Flinza Core Engine active on port 7880"]
+        for s in recent_sent:
+            fallback_log.append(f"[{s['sent_at']}] [DISPATCH] To: {s['to_email']} | Subject: '{s['subject']}' | Status: {s['status']}")
+        for r in recent_replies:
+            fallback_log.append(f"[{r['received_at']}] [INBOUND] From: {r['from_email']} | Subject: '{r['subject']}' | Intent: {r['intent']}")
+
+        return {"success": True, "logs": "\n".join(fallback_log)}
+
+
+@app.post("/api/terminal/logs/clear")
+async def clear_terminal_logs():
+    """Clears the log buffer."""
+    log_file = BASE_DIR / "flinza.log"
+    if log_file.exists():
+        with open(log_file, "w", encoding="utf-8") as f:
+            f.write(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [INFO] Live log buffer cleared by user.\n")
+    return {"success": True, "message": "Log buffer reset"}
 
 
 # ── Smartlead Webhook ─────────────────────────────────────────────
@@ -1506,6 +1972,152 @@ async def save_settings(request: Request):
     for k, v in b.items():
         db.set_setting(k, str(v))
     return {"success": True, "message": "Settings saved successfully"}
+
+
+
+
+# ── IP Node Connect / Disconnect / Heartbeat ──────────────────
+def _get_caller_ip(request: Request) -> str:
+    """Extract real client IP from X-Forwarded-For or direct connection."""
+    forwarded = request.headers.get("X-Forwarded-For", "")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
+
+
+@app.get("/api/ip/myip")
+async def get_my_ip(request: Request):
+    """Returns the caller's public IP as seen by the server."""
+    ip = _get_caller_ip(request)
+    return {"ip": ip}
+
+
+@app.post("/api/ip/connect")
+async def connect_ip_node(request: Request):
+    """Register caller's IP as an active sending node."""
+    try:
+        b = await request.json()
+    except Exception:
+        b = {}
+    ip = _get_caller_ip(request)
+    name = b.get("name", "").strip() or None
+    ua = request.headers.get("User-Agent", "")
+    node = db.connect_ip_node(ip_address=ip, name=name, user_agent=ua)
+    logger.info(f"IP Node connected: {ip} ({name or 'unnamed'})")
+    return {"success": True, "node": node, "message": f"Connected from {ip}"}
+
+
+@app.post("/api/ip/disconnect")
+async def disconnect_ip_node(request: Request):
+    """Disconnect caller's IP from the sending pool."""
+    ip = _get_caller_ip(request)
+    db.disconnect_ip_node(ip)
+    logger.info(f"IP Node disconnected: {ip}")
+    return {"success": True, "message": f"Disconnected {ip}"}
+
+
+@app.post("/api/ip/heartbeat")
+async def heartbeat_ip_node(request: Request):
+    """Keep-alive ping from connected node (call every 30s from browser)."""
+    ip = _get_caller_ip(request)
+    db.heartbeat_ip_node(ip)
+    return {"ok": True}
+
+
+@app.get("/api/ip/nodes")
+async def list_ip_nodes(status: Optional[str] = None):
+    """List all IP nodes, optionally filtered by status='connected'|'disconnected'."""
+    nodes = db.get_ip_nodes(status=status)
+    connected = [n for n in nodes if n["status"] == "connected"]
+    return {"success": True, "nodes": nodes, "connected_count": len(connected)}
+
+
+@app.delete("/api/ip/nodes/{node_id}")
+async def delete_ip_node(node_id: int):
+    """Permanently remove an IP node record."""
+    conn = db.get_db()
+    conn.execute("DELETE FROM ip_nodes WHERE id=?", (node_id,))
+    conn.commit()
+    conn.close()
+    return {"success": True}
+
+
+# ── SMTP Vault Endpoints ──────────────────────────────────────
+@app.get("/api/smtp/profiles")
+async def list_smtp_profiles():
+    """Return all saved SMTP profiles (passwords masked)."""
+    profiles = db.get_smtp_profiles()
+    return {"success": True, "profiles": profiles}
+
+
+@app.post("/api/smtp/profiles")
+async def create_smtp_profile(request: Request):
+    """Save a new SMTP credential profile to the vault."""
+    b = await request.json()
+    required = ["name", "smtp_host", "smtp_user", "smtp_pass"]
+    missing = [f for f in required if not b.get(f)]
+    if missing:
+        return {"success": False, "error": f"Missing: {', '.join(missing)}"}
+    pid = db.save_smtp_profile(
+        name=b["name"],
+        provider=b.get("provider", "custom"),
+        smtp_host=b["smtp_host"],
+        smtp_port=int(b.get("smtp_port", 587)),
+        smtp_user=b["smtp_user"],
+        smtp_pass=b["smtp_pass"],
+        use_ssl=bool(b.get("use_ssl", False)),
+        notes=b.get("notes", ""),
+    )
+    return {"success": True, "id": pid, "message": "SMTP profile saved to vault"}
+
+
+@app.delete("/api/smtp/profiles/{profile_id}")
+async def delete_smtp_profile(profile_id: int):
+    """Delete a saved SMTP profile."""
+    db.delete_smtp_profile(profile_id)
+    return {"success": True}
+
+
+@app.post("/api/smtp/profiles/{profile_id}/test")
+async def test_smtp_profile(profile_id: int):
+    """Test connectivity for a saved SMTP profile."""
+    profile = db.get_smtp_profile(profile_id)
+    if not profile:
+        return {"success": False, "error": "Profile not found"}
+    result = await asyncio.to_thread(
+        outreach_engine.verify_smtp_connection,
+        smtp_host=profile["smtp_host"],
+        smtp_port=profile["smtp_port"],
+        smtp_user=profile["smtp_user"],
+        smtp_pass=profile["smtp_pass"],
+    )
+    return result
+
+
+@app.post("/api/smtp/verify-direct")
+async def verify_smtp_direct(request: Request):
+    """Test raw SMTP credentials directly in real-time before saving."""
+    try:
+        b = await request.json()
+    except Exception:
+        return {"success": False, "error": "Invalid request body"}
+
+    host = (b.get("smtp_host") or "").strip()
+    port = int(b.get("smtp_port") or 587)
+    user = (b.get("smtp_user") or "").strip()
+    password = (b.get("smtp_pass") or "").strip()
+
+    if not host or not user or not password:
+        return {"success": False, "error": "SMTP host, username, and password are required"}
+
+    result = await asyncio.to_thread(
+        outreach_engine.verify_smtp_connection,
+        smtp_host=host,
+        smtp_port=port,
+        smtp_user=user,
+        smtp_pass=password,
+    )
+    return result
 
 
 # ── Server Runner ─────────────────────────────────────────────

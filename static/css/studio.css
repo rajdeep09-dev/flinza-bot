@@ -60,8 +60,171 @@
   --font-mono:    'JetBrains Mono', monospace;
 }
 
-/* ─── RESET ─── */
+/* ─── RESET & UNIVERSAL SCROLLBARS ─── */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+/* ══════════════════════════════════════════════════════════
+   CUSTOM AESTHETIC SCROLLBARS — ULTRA SLEEK GLASSMORPHIC
+   Replaces ugly native Windows scrollbars with 5px glowing bars
+══════════════════════════════════════════════════════════ */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.16) transparent;
+}
+
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.14);
+  border-radius: 9999px;
+  transition: all 0.25s ease;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, #00d2ff 0%, #9333ea 100%);
+  box-shadow: 0 0 10px rgba(0, 210, 255, 0.6);
+}
+
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* ─── GLOBAL FORM CONTROLS & INPUT RESET ─── */
+input[type="text"],
+input[type="password"],
+input[type="email"],
+input[type="number"],
+input[type="search"],
+textarea,
+select,
+.form-input,
+.form-control,
+.form-select,
+.form-select-sm {
+  background: var(--bg-input, #0f1018);
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.08));
+  border-radius: var(--radius-sm, 8px);
+  color: var(--text-primary, #f0f1f8);
+  font-family: var(--font-body, 'Inter', sans-serif);
+  font-size: 13px;
+  padding: 8px 12px;
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
+  box-sizing: border-box;
+}
+
+input:focus,
+textarea:focus,
+select:focus,
+.form-input:focus,
+.form-control:focus,
+.form-select:focus {
+  border-color: var(--brand-cyan, #7ECECE);
+  box-shadow: 0 0 0 3px rgba(126, 206, 206, 0.15);
+  background: rgba(15, 16, 24, 0.95);
+}
+
+select,
+.form-select,
+.form-select-sm,
+.alias-route-select {
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%237ECECE' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  padding-right: 32px !important;
+  cursor: pointer;
+}
+
+select option {
+  background: #11121a;
+  color: #f0f1f8;
+  padding: 8px;
+}
+
+.form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.form-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary, #8b8fa8);
+  letter-spacing: 0.3px;
+}
+
+/* ─── MISSING BUTTONS & PANELS ─── */
+.btn-primary {
+  background: var(--brand-grad, linear-gradient(135deg, #7ECECE 0%, #c8e8e8 60%, #ffffff 100%));
+  color: #08090f;
+  border: none;
+  border-radius: var(--radius-sm, 8px);
+  padding: 8px 16px;
+  font-family: var(--font-body);
+  font-size: 13px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow: 0 2px 10px rgba(126, 206, 206, 0.25);
+  white-space: nowrap;
+}
+.btn-primary:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 18px rgba(126, 206, 206, 0.45);
+  filter: brightness(1.06);
+}
+.btn-primary:active {
+  transform: translateY(0);
+}
+
+.card-panel {
+  background: var(--bg-card, #111219);
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.07));
+  border-radius: var(--radius-md, 12px);
+  padding: 20px;
+  margin-bottom: 20px;
+  box-shadow: var(--shadow-sm);
+  transition: border-color 0.2s ease;
+}
+.card-panel:hover {
+  border-color: var(--border-med, rgba(255, 255, 255, 0.12));
+}
+
+.page-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 20px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--border);
+}
+.page-title {
+  font-family: var(--font-display, 'Outfit', sans-serif);
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--text-primary);
+  letter-spacing: -0.3px;
+}
+.page-sub {
+  font-size: 13px;
+  color: var(--text-secondary);
+  margin-top: 4px;
+}
 
 html, body {
   height: 100%;
@@ -97,6 +260,19 @@ html, body {
   padding: 16px 10px;
   overflow-y: auto;
   overflow-x: hidden;
+}
+.sidebar::-webkit-scrollbar {
+  width: 4px;
+}
+.sidebar::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 9999px;
+}
+.sidebar:hover::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.2);
+}
+.sidebar::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, #00d2ff 0%, #9333ea 100%);
 }
 
 /* Brand */
@@ -816,6 +992,103 @@ html, body {
 .chip-sent       { background: rgba(167,139,250,0.15); color: var(--violet); }
 .chip-draft      { background: rgba(251,191,36,0.15);  color: var(--amber); }
 .chip-admin      { background: rgba(255,255,255,0.06); color: var(--text-secondary); }
+
+/* ── Webmail Unread vs Read High-Contrast Boldness ── */
+.mail-row.unread {
+  background: rgba(0, 210, 255, 0.04);
+  border-left: 3px solid var(--brand-cyan, #00d2ff);
+}
+.mail-row.unread .mail-sender {
+  font-weight: 800;
+  color: #ffffff;
+}
+.mail-row.unread .mail-subject {
+  font-weight: 700;
+  color: #f8fafc;
+}
+.mail-row.unread .mail-snippet {
+  color: #cbd5e1;
+}
+
+.mail-row.read {
+  background: transparent;
+  border-left: 3px solid transparent;
+  opacity: 0.85;
+}
+.mail-row.read .mail-sender {
+  font-weight: 500;
+  color: #94a3b8;
+}
+.mail-row.read .mail-subject {
+  font-weight: 400;
+  color: #94a3b8;
+}
+.mail-row.read .mail-snippet {
+  color: #64748b;
+}
+
+.mail-unread-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--brand-cyan, #00d2ff);
+  box-shadow: 0 0 8px rgba(0, 210, 255, 0.8);
+  display: inline-block;
+  margin-right: 4px;
+}
+
+.mail-star-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 15px;
+  padding: 2px 4px;
+  line-height: 1;
+  color: rgba(255, 255, 255, 0.25);
+  transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1), filter 0.2s ease;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.mail-star-btn:hover {
+  transform: scale(1.35) rotate(6deg);
+  background: linear-gradient(135deg, #00d2ff 0%, #7ECECE 50%, #9333ea 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  filter: drop-shadow(0 0 8px rgba(0, 210, 255, 0.8));
+}
+.mail-star-btn.starred {
+  background: linear-gradient(135deg, #00d2ff 0%, #7ECECE 45%, #a855f7 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  filter: drop-shadow(0 0 6px rgba(0, 210, 255, 0.75)) drop-shadow(0 0 10px rgba(168, 85, 247, 0.5));
+  transform: scale(1.15);
+}
+
+/* ── Webmail Filter Pills ── */
+.filter-pill {
+  background: var(--bg-card, #111827);
+  border: 1px solid var(--border-subtle, rgba(255,255,255,0.08));
+  color: var(--text-secondary, #94a3b8);
+  font-size: 11.5px;
+  font-weight: 600;
+  padding: 5px 11px;
+  border-radius: 14px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+.filter-pill:hover {
+  background: var(--bg-hover, rgba(255,255,255,0.05));
+  color: #fff;
+  border-color: rgba(255,255,255,0.2);
+}
+.filter-pill.active {
+  background: rgba(0, 210, 255, 0.12);
+  color: var(--brand-cyan, #00d2ff);
+  border-color: rgba(0, 210, 255, 0.4);
+  font-weight: 700;
+}
 
 /* Inbox Empty / Loading */
 .inbox-empty-state {

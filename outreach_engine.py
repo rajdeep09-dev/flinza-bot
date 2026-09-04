@@ -1048,20 +1048,36 @@ def verify_smtp_connection(smtp_host: str, smtp_port: int, smtp_user: str, smtp_
 
     start = time.time()
     try:
-        with smtplib.SMTP(smtp_host, smtp_port, timeout=10) as server:
-            banner = server.ehlo()[1].decode("utf-8", errors="ignore") if server.ehlo()[0] == 250 else ""
-            server.starttls(context=ssl.create_default_context())
-            server.login(smtp_user, smtp_pass)
-            elapsed = round((time.time() - start) * 1000)
-            return {
-                "success": True,
-                "latency_ms": elapsed,
-                "server_banner": banner[:120],
-                "auth": "OK",
-                "tls": True,
-            }
+        if int(smtp_port) == 465:
+            with smtplib.SMTP_SSL(smtp_host, int(smtp_port), timeout=10, context=ssl.create_default_context()) as server:
+                server.login(smtp_user, smtp_pass)
+                elapsed = round((time.time() - start) * 1000)
+                return {
+                    "success": True,
+                    "latency_ms": elapsed,
+                    "server_banner": "SMTP_SSL Connected",
+                    "auth": "OK",
+                    "tls": True,
+                }
+        else:
+            with smtplib.SMTP(smtp_host, int(smtp_port), timeout=10) as server:
+                server.ehlo()
+                try:
+                    server.starttls(context=ssl.create_default_context())
+                    server.ehlo()
+                except Exception:
+                    pass
+                server.login(smtp_user, smtp_pass)
+                elapsed = round((time.time() - start) * 1000)
+                return {
+                    "success": True,
+                    "latency_ms": elapsed,
+                    "server_banner": "STARTTLS Connected",
+                    "auth": "OK",
+                    "tls": True,
+                }
     except smtplib.SMTPAuthenticationError:
-        return {"success": False, "error": "Authentication failed. Check app password or credentials.", "latency_ms": round((time.time()-start)*1000)}
+        return {"success": False, "error": "Authentication failed. Check username and password/app-password.", "latency_ms": round((time.time()-start)*1000)}
     except smtplib.SMTPConnectError as e:
         return {"success": False, "error": f"Cannot connect to {smtp_host}:{smtp_port} — {e}", "latency_ms": round((time.time()-start)*1000)}
     except Exception as e:

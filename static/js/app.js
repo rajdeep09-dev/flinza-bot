@@ -19,12 +19,20 @@ document.addEventListener("DOMContentLoaded", () => {
 
     if (viewName.startsWith("webmail-")) {
       const folder = viewName.replace("webmail-", "");
-      currentFolder = folder;
+      currentWebmailFolder = folder;
       viewSections.forEach(s => s.classList.toggle("active", s.id === "view-webmail"));
       // Update title
-      const folderTitles = { inbox: "Inbox", sent: "Sent", drafts: "Drafts", spam: "Spam" };
+      const folderTitles = {
+        inbox: "Leads Inbox",
+        "all-inboxes": "All Inboxes",
+        starred: "Starred Emails",
+        sent: "Sent Mail",
+        drafts: "Drafts",
+        spam: "Spam / Blacklist"
+      };
       setEl("webmail-folder-title", folderTitles[folder] || "Inbox");
-      loadWebmailThreads(folder, activeSearchQuery);
+      currentWebmailPage = 1;
+      loadWebmailThreads(folder, activeSearchQuery, currentWebmailPage, currentWebmailFilter);
       return;
     }
 
@@ -45,6 +53,8 @@ document.addEventListener("DOMContentLoaded", () => {
       history:          loadHistory,
       analytics:        loadAnalytics,
       terminal:         loadTerminal,
+      "ip-nodes":       loadIpNodes,
+      "smtp-vault":     loadSmtpVault,
     };
     if (viewName === "webmail-sent") {
       switchView("history");
@@ -82,21 +92,39 @@ document.addEventListener("DOMContentLoaded", () => {
   // ═══════════════════════════════════════════════════════
   let currentLoadedThreads = [];
   let selectedThreadId = null;
+  let currentWebmailFolder = "inbox";
+  let currentWebmailFilter = "all";
+  let currentWebmailPage = 1;
+  let totalWebmailPages = 1;
 
-  async function loadWebmailThreads(folder = "inbox", search = "") {
+  async function loadWebmailThreads(folder = currentWebmailFolder, search = activeSearchQuery, page = currentWebmailPage, filter = currentWebmailFilter) {
+    currentWebmailFolder = folder;
+    currentWebmailPage = page;
+    currentWebmailFilter = filter;
+
     const rowsList = g("mail-rows-list");
     setEl("webmail-thread-counter", "…");
 
     try {
-      const data = await apiFetch(`/api/webmail/threads?folder=${folder}&search=${encodeURIComponent(search)}`);
+      const data = await apiFetch(`/api/webmail/threads?folder=${folder}&search=${encodeURIComponent(search)}&filter=${filter}&page=${page}&limit=20`);
       if (!data.success) return;
 
       currentLoadedThreads = data.threads || [];
-      setEl("webmail-thread-counter", currentLoadedThreads.length);
+      totalWebmailPages = data.total_pages || 1;
+
+      setEl("webmail-thread-counter", data.total_count ?? currentLoadedThreads.length);
+      setEl("webmail-page-indicator", `Page ${data.page || page} of ${totalWebmailPages}`);
+
+      const btnPrev = g("btn-webmail-prev");
+      const btnNext = g("btn-webmail-next");
+      if (btnPrev) btnPrev.disabled = currentWebmailPage <= 1;
+      if (btnNext) btnNext.disabled = currentWebmailPage >= totalWebmailPages;
 
       // Sidebar badge updates
       if (data.counts) {
         setEl("badge-webmail-inbox", data.counts.inbox ?? 0);
+        setEl("badge-webmail-all-inboxes", data.counts.all_inboxes ?? 0);
+        setEl("badge-webmail-starred", data.counts.starred ?? 0);
         setEl("badge-webmail-sent",  data.counts.sent  ?? 0);
         setEl("badge-webmail-drafts",data.counts.drafts?? 0);
         setEl("badge-webmail-spam",  data.counts.spam  ?? 0);
@@ -110,7 +138,7 @@ document.addEventListener("DOMContentLoaded", () => {
             <div class="empty-icon">
               <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2" opacity="0.3"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
             </div>
-            <p>No emails in ${folder}. Incoming messages will show here automatically.</p>
+            <p>No emails found in ${folder} (filter: ${filter}).</p>
           </div>`;
         return;
       }
@@ -120,14 +148,18 @@ document.addEventListener("DOMContentLoaded", () => {
         const tag = t.tag || "Inbound";
         const tagClass = tagToClass(tag);
         const time = t.timestamp ? formatTime(t.timestamp) : "";
+        const isUnread = !!t.unread;
+        const isStarred = !!t.is_starred;
         return `
-          <div class="mail-row ${selectedThreadId === t.id ? 'active' : ''}" data-id="${t.id}">
+          <div class="mail-row ${isUnread ? 'unread' : 'read'} ${selectedThreadId === t.id ? 'active' : ''}" data-id="${t.id}">
             <div class="mail-row-avatar">${initials}</div>
             <div class="mail-row-body">
               <div class="mail-row-top">
+                ${isUnread ? '<span class="mail-unread-dot" title="Unread"></span>' : ''}
                 <span class="mail-sender">${esc(t.sender || "Unknown")}</span>
+                <button class="mail-star-btn ${isStarred ? 'starred' : ''}" data-id="${t.id}" title="${isStarred ? 'Unstar' : 'Star'}">${isStarred ? '⭐' : '☆'}</button>
               </div>
-              <div class="mail-subject"><b>${esc(t.subject || "(No Subject)")}</b>${t.snippet ? ` — ${esc(t.snippet)}` : ""}</div>
+              <div class="mail-subject"><b>${esc(t.subject || "(No Subject)")}</b>${t.snippet ? ` — <span class="mail-snippet">${esc(t.snippet)}</span>` : ""}</div>
             </div>
             <div class="mail-meta">
               <span class="mail-time">${time}</span>
@@ -140,15 +172,50 @@ document.addEventListener("DOMContentLoaded", () => {
         row.addEventListener("click", () => openThreadDetail(parseInt(row.dataset.id)));
       });
 
+      // Starring toggle
+      rowsList.querySelectorAll(".mail-star-btn").forEach(btn => {
+        btn.addEventListener("click", async (e) => {
+          e.stopPropagation();
+          const tid = parseInt(btn.dataset.id);
+          try {
+            const res = await apiFetch(`/api/webmail/threads/${tid}/star`, "POST", {});
+            if (res.success) {
+              const nowStarred = res.is_starred;
+              btn.classList.toggle("starred", nowStarred);
+              btn.textContent = nowStarred ? "⭐" : "☆";
+              btn.title = nowStarred ? "Unstar" : "Star";
+              const th = currentLoadedThreads.find(x => x.id === tid);
+              if (th) th.is_starred = nowStarred;
+              if (currentWebmailFolder === "starred" && !nowStarred) {
+                loadWebmailThreads();
+              }
+            }
+          } catch(err) {
+            console.error("Star toggle error:", err);
+          }
+        });
+      });
+
     } catch (err) {
       console.error("Error loading webmail threads:", err);
     }
   }
 
-  function openThreadDetail(id) {
+  async function openThreadDetail(id) {
     selectedThreadId = id;
     const thread = currentLoadedThreads.find(t => t.id === id);
     if (!thread) return;
+
+    // Immediately update UI to read state & remove cyan dot
+    const rowEl = document.querySelector(`.mail-row[data-id="${id}"]`);
+    if (rowEl && rowEl.classList.contains("unread")) {
+      rowEl.classList.remove("unread");
+      rowEl.classList.add("read");
+      const dot = rowEl.querySelector(".mail-unread-dot");
+      if (dot) dot.remove();
+      thread.unread = false;
+      apiFetch(`/api/webmail/threads/${id}/read`, "POST", {}).catch(() => {});
+    }
 
     document.querySelectorAll(".mail-row").forEach(r =>
       r.classList.toggle("active", parseInt(r.dataset.id) === id)
@@ -1456,6 +1523,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const res = await fetch(url, opts);
     return res.json();
   }
+  window.apiFetch = apiFetch;
 
   function openModal(id) {
     const el = g(id);
@@ -2075,12 +2143,47 @@ document.addEventListener("DOMContentLoaded", () => {
   // ═══════════════════════════════════════════════════════
   //  COMMAND TERMINAL MODULE
   // ═══════════════════════════════════════════════════════
+  // ═══════════════════════════════════════════════════════
+  //  COMMAND TERMINAL MODULE (VPS & ENGINE SHELL)
+  // ═══════════════════════════════════════════════════════
   let cmdHistory = [];
   let historyIdx = -1;
+  let _terminalLogsTimer = null;
 
   function loadTerminal() {
     const input = g("terminal-cli-input");
     if (input) input.focus();
+    fetchTerminalLogs();
+    if (!_terminalLogsTimer) {
+      _terminalLogsTimer = setInterval(() => {
+        const chk = g("chk-auto-refresh-logs");
+        if (chk && chk.checked) {
+          fetchTerminalLogs();
+        }
+      }, 3000);
+    }
+  }
+
+  async function fetchTerminalLogs() {
+    try {
+      const d = await apiFetch("/api/terminal/logs?lines=100");
+      const logsEl = g("terminal-live-logs");
+      if (logsEl && d.success) {
+        logsEl.textContent = d.logs || "No logs available.";
+        logsEl.scrollTop = logsEl.scrollHeight;
+      }
+    } catch (err) {
+      console.error("Error fetching logs:", err);
+    }
+  }
+
+  async function clearTerminalLogs() {
+    if (!confirm("Clear server log buffer?")) return;
+    try {
+      await apiFetch("/api/terminal/logs/clear", "POST", {});
+      showToast("Log buffer cleared", "info");
+      await fetchTerminalLogs();
+    } catch(e) {}
   }
 
   // Quick Action Chips in Terminal
@@ -2132,14 +2235,12 @@ document.addEventListener("DOMContentLoaded", () => {
     const screen = g("terminal-screen");
     if (!screen) return;
 
-    // Add to history
     cmdHistory.push(cmd);
     historyIdx = -1;
 
-    // Append user command line
     const cmdLine = document.createElement("div");
     cmdLine.className = "term-line cmd-entry";
-    cmdLine.textContent = `flinza@outreach:~$ ${cmd}`;
+    cmdLine.textContent = `flinza@vps:~$ ${cmd}`;
     screen.appendChild(cmdLine);
 
     try {
@@ -2147,13 +2248,14 @@ document.addEventListener("DOMContentLoaded", () => {
       const respLine = document.createElement("div");
       respLine.className = "term-line";
       respLine.style.color = d.success ? "#e6edf3" : "#fb7185";
+      respLine.style.whiteSpace = "pre-wrap";
       respLine.textContent = d.output || "(no output)";
       screen.appendChild(respLine);
     } catch (err) {
       const errLine = document.createElement("div");
       errLine.className = "term-line";
       errLine.style.color = "var(--rose)";
-      errLine.textContent = `Network error: ${err}`;
+      errLine.textContent = `Execution error: ${err}`;
       screen.appendChild(errLine);
     }
 
@@ -2165,11 +2267,130 @@ document.addEventListener("DOMContentLoaded", () => {
     if (screen) {
       screen.innerHTML = `
         <div class="term-line banner">
-          <span>⚡ FLINZA ENTERPRISE OUTREACH OS — COMMAND SHELL v2.0</span>
-          <span>Screen cleared. Type /help to list commands.</span>
+          <span>⚡ FLINZA WEB-BASED VPS & ENGINE COMMAND SHELL</span>
+          <span>Screen cleared. Enter any shell command (uptime, df, python, whoami) or outreach command (/stats).</span>
         </div>`;
     }
   });
+
+  // Webmail Filter Pills Listener
+  document.querySelectorAll("#webmail-filter-tabs .filter-pill").forEach(btn => {
+    btn.addEventListener("click", () => {
+      document.querySelectorAll("#webmail-filter-tabs .filter-pill").forEach(b => b.classList.remove("active"));
+      btn.classList.add("active");
+      currentWebmailFilter = btn.dataset.filter || "all";
+      currentWebmailPage = 1;
+      loadWebmailThreads(currentWebmailFolder, activeSearchQuery, currentWebmailPage, currentWebmailFilter);
+    });
+  });
+
+  // Webmail Pagination Listeners
+  on("btn-webmail-prev", "click", () => {
+    if (currentWebmailPage > 1) {
+      currentWebmailPage--;
+      loadWebmailThreads(currentWebmailFolder, activeSearchQuery, currentWebmailPage, currentWebmailFilter);
+    }
+  });
+
+  on("btn-webmail-next", "click", () => {
+    if (currentWebmailPage < totalWebmailPages) {
+      currentWebmailPage++;
+      loadWebmailThreads(currentWebmailFolder, activeSearchQuery, currentWebmailPage, currentWebmailFilter);
+    }
+  });
+
+  // ═══════════════════════════════════════════════════════
+  //  FREE DOMAIN DELIVERABILITY CHECKER
+  // ═══════════════════════════════════════════════════════
+  async function runDomainDeliverabilityAudit() {
+    const input = g("audit-domain-input");
+    let domain = input ? input.value.trim() : "";
+    if (!domain) {
+      domain = prompt("Enter domain or email to audit (e.g. yourdomain.com):") || "";
+      if (input && domain) input.value = domain;
+    }
+    if (!domain) return;
+
+    const btn = g("btn-audit-deliverability");
+    if (btn) {
+      btn.disabled = true;
+      btn.innerHTML = `⚡ Auditing DNS…`;
+    }
+
+    try {
+      const res = await apiFetch("/api/warmup/check-deliverability", "POST", { domain });
+      if (!res.success) {
+        showToast(res.error || "Deliverability audit failed", "error");
+        return;
+      }
+
+      const resultsCard = g("deliverability-audit-results");
+      if (resultsCard) resultsCard.style.display = "block";
+
+      setEl("audit-score-num", `${res.score}%`);
+      const scoreNumEl = g("audit-score-num");
+      if (scoreNumEl) scoreNumEl.style.color = res.status_color || "#00e082";
+
+      setEl("audit-score-grade", `Grade ${res.grade}`);
+      setEl("audit-score-status", res.status);
+
+      // SPF
+      const spfEl = g("audit-res-spf");
+      if (spfEl) {
+        spfEl.textContent = res.spf.valid ? "✓ Valid Pass" : "⚠️ Missing";
+        spfEl.style.color = res.spf.valid ? "#00e082" : "#ef4444";
+      }
+      setEl("audit-desc-spf", res.spf.record || "No SPF TXT record");
+
+      // DMARC
+      const dmarcEl = g("audit-res-dmarc");
+      if (dmarcEl) {
+        dmarcEl.textContent = res.dmarc.valid ? `✓ ${res.dmarc.policy}` : "⚠️ Missing DMARC";
+        dmarcEl.style.color = res.dmarc.valid ? "#00e082" : "#ef4444";
+      }
+      setEl("audit-desc-dmarc", res.dmarc.record || "No _dmarc TXT record found");
+
+      // DKIM
+      const dkimEl = g("audit-res-dkim");
+      if (dkimEl) {
+        dkimEl.textContent = res.dkim.valid ? `✓ Key Active` : "⚠️ Check Selector";
+        dkimEl.style.color = res.dkim.valid ? "#00e082" : "#fbbf24";
+      }
+      setEl("audit-desc-dkim", res.dkim.valid ? `Selector: ${res.dkim.selector}` : "Verify selector with mail host");
+
+      // MX
+      const mxEl = g("audit-res-mx");
+      if (mxEl) {
+        mxEl.textContent = res.mx.valid ? `✓ ${res.mx.provider}` : "⚠️ No MX Found";
+        mxEl.style.color = res.mx.valid ? "#00e082" : "#ef4444";
+      }
+      setEl("audit-desc-mx", res.dnsbl.clean ? "Clean reputation (zero blacklist hits)" : "⚠️ Blacklist listed");
+
+      // Recommendations list
+      const recsEl = g("audit-recommendations");
+      if (recsEl) {
+        let html = `<div style="font-weight:700;margin-bottom:6px;color:#fff;">Deliverability Breakdown & Action Items:</div>`;
+        if (res.good && res.good.length) {
+          html += res.good.map(g => `<div style="color:#34d399;margin-bottom:3px;">✓ ${esc(g)}</div>`).join("");
+        }
+        if (res.issues && res.issues.length) {
+          html += res.issues.map(i => `<div style="color:#fbbf24;margin-bottom:3px;">⚠️ ${esc(i)}</div>`).join("");
+        }
+        recsEl.innerHTML = html;
+      }
+
+      showToast(`Audit complete: ${res.score}% (${res.grade})`, "success");
+
+    } catch (err) {
+      showToast(`Audit error: ${err}`, "error");
+    } finally {
+      if (btn) {
+        btn.disabled = false;
+        btn.innerHTML = `⚡ Audit Deliverability`;
+      }
+    }
+  }
+
   loadWebmailThreads("inbox");
   loadDashboard();
 
@@ -2182,3 +2403,323 @@ document.addEventListener("DOMContentLoaded", () => {
   document.head.appendChild(styleEl);
 
 });
+
+// ═══════════════════════════════════════════════════════════════
+//  IP NODES MODULE
+// ═══════════════════════════════════════════════════════════════
+let _myIpCache = null;
+let _ipConnected = false;
+let _ipHeartbeatTimer = null;
+
+async function detectMyIp() {
+  try {
+    const r = await fetch('/api/ip/myip');
+    const d = await r.json();
+    _myIpCache = d.ip;
+    const badge = document.getElementById('ip-node-my-ip-badge');
+    if (badge) badge.textContent = `Your IP: ${_myIpCache}`;
+    return _myIpCache;
+  } catch(e) { return null; }
+}
+
+function timeSinceStr(isoStr) {
+  if (!isoStr) return '—';
+  const secs = Math.floor((Date.now() - new Date(isoStr + 'Z').getTime()) / 1000);
+  if (secs < 60) return `${secs}s ago`;
+  if (secs < 3600) return `${Math.floor(secs/60)}m ago`;
+  if (secs < 86400) return `${Math.floor(secs/3600)}h ago`;
+  return `${Math.floor(secs/86400)}d ago`;
+}
+
+function parseDeviceName(ua) {
+  if (!ua) return '—';
+  if (/iPhone|iPad/.test(ua)) return '📱 iOS';
+  if (/Android/.test(ua)) return '📱 Android';
+  if (/Windows/.test(ua)) return '🖥️ Windows';
+  if (/Mac/.test(ua)) return '💻 macOS';
+  if (/Linux/.test(ua)) return '🐧 Linux';
+  return '🌐 Browser';
+}
+
+async function loadIpNodes() {
+  await detectMyIp();
+  const r = await apiFetch('/api/ip/nodes');
+  if (!r.success) return;
+  const nodes = r.nodes || [];
+  const connected = nodes.filter(n => n.status === 'connected');
+  const badge = document.getElementById('badge-ip-nodes');
+  if (badge) badge.textContent = connected.length;
+
+  const myNode = nodes.find(n => n.ip_address === _myIpCache && n.status === 'connected');
+  _ipConnected = !!myNode;
+  updateIpConnectButton();
+
+  const statusCard = document.getElementById('ip-my-status-card');
+  if (statusCard) {
+    statusCard.style.display = myNode ? 'flex' : 'none';
+    if (myNode) {
+      const detail = document.getElementById('ip-my-status-detail');
+      if (detail) detail.textContent = `${_myIpCache} · Connected ${timeSinceStr(myNode.connected_at)}`;
+    }
+  }
+
+  const tbody = document.getElementById('ip-nodes-tbody');
+  if (!tbody) return;
+  if (!nodes.length) {
+    tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--text-muted);padding:30px;">No nodes connected yet. Click "Connect My IP" above.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = nodes.map(n => {
+    const isMe = n.ip_address === _myIpCache;
+    const statusHtml = n.status === 'connected'
+      ? '<span style="display:inline-flex;align-items:center;gap:5px;"><span style="width:8px;height:8px;border-radius:50%;background:#00e082;box-shadow:0 0 6px #00e08266;"></span> Connected</span>'
+      : '<span style="display:inline-flex;align-items:center;gap:5px;"><span style="width:8px;height:8px;border-radius:50%;background:#64748b;"></span> Offline</span>';
+    return `<tr style="${isMe ? 'background:rgba(0,224,130,0.04);' : ''}">
+      <td>${statusHtml}</td>
+      <td>
+        <div style="font-weight:600;font-size:13px;">${n.name || n.ip_address}</div>
+        <div style="font-size:11px;color:var(--text-muted);">${n.ip_address}${isMe ? ' · <span style="color:#00e082;">You</span>' : ''}</div>
+      </td>
+      <td style="font-size:12px;color:var(--text-muted);">${timeSinceStr(n.connected_at)}</td>
+      <td style="font-size:12px;color:var(--text-muted);">${timeSinceStr(n.last_seen)}</td>
+      <td style="font-size:12px;">${parseDeviceName(n.user_agent)}</td>
+      <td><button class="btn-ghost btn-xs" style="color:#ef4444;" onclick="deleteIpNode(${n.id})">Remove</button></td>
+    </tr>`;
+  }).join('');
+}
+
+function updateIpConnectButton() {
+  const btnConnect = document.getElementById('btn-ip-connect');
+  const btnDisconnect = document.getElementById('btn-ip-disconnect');
+  if (!btnConnect || !btnDisconnect) return;
+  btnConnect.style.display = _ipConnected ? 'none' : '';
+  btnDisconnect.style.display = _ipConnected ? '' : 'none';
+}
+
+async function ipNodeConnect() {
+  const name = prompt("Name this connection (optional):", "My Device") || "";
+  const r = await apiFetch("/api/ip/connect", "POST", { name });
+  if (r.success) {
+    _ipConnected = true;
+    showToast(`✅ Connected from ${r.node.ip_address}`, "success");
+    startIpHeartbeat();
+    await loadIpNodes();
+  } else {
+    showToast("Failed: " + (r.error || "Unknown error"), "error");
+  }
+}
+
+async function ipNodeDisconnect() {
+  const r = await apiFetch("/api/ip/disconnect", "POST", {});
+  if (r.success) {
+    _ipConnected = false;
+    stopIpHeartbeat();
+    showToast("Disconnected from sending pool", "info");
+    const card = document.getElementById("ip-my-status-card");
+    if (card) card.style.display = "none";
+    await loadIpNodes();
+  }
+}
+
+async function deleteIpNode(id) {
+  if (!confirm("Remove this node from the list?")) return;
+  await apiFetch(`/api/ip/nodes/${id}`, "DELETE");
+  await loadIpNodes();
+}
+function startIpHeartbeat() {
+  stopIpHeartbeat();
+  _ipHeartbeatTimer = setInterval(async () => {
+    if (_ipConnected) {
+      try { await fetch('/api/ip/heartbeat', { method: 'POST', headers: {'Content-Type':'application/json'}, body: '{}' }); } catch(e) {}
+    }
+  }, 30000); // ping every 30 seconds
+}
+
+function stopIpHeartbeat() {
+  if (_ipHeartbeatTimer) { clearInterval(_ipHeartbeatTimer); _ipHeartbeatTimer = null; }
+}
+
+// Auto-detect IP silently on page load
+(async () => { try { await detectMyIp(); } catch(e) {} })();
+
+
+// ═══════════════════════════════════════════════════════════════
+//  SMTP VAULT MODULE
+// ═══════════════════════════════════════════════════════════════
+const SMTP_PRESETS = {
+  brevo:       { host: 'smtp-relay.brevo.com',                port: 587, ssl: false },
+  smtp2go:     { host: 'mail.smtp2go.com',                    port: 587, ssl: false },
+  mailjet:     { host: 'in-v3.mailjet.com',                   port: 587, ssl: false },
+  gmail:       { host: 'smtp.gmail.com',                      port: 587, ssl: false },
+  amazon_ses:  { host: 'email-smtp.us-east-1.amazonaws.com',  port: 587, ssl: false },
+  namecheap:   { host: 'mail.privateemail.com',               port: 465, ssl: true  },
+  zoho:        { host: 'smtp.zoho.com',                       port: 587, ssl: false },
+  outlook:     { host: 'smtp.office365.com',                  port: 587, ssl: false },
+  sendgrid:    { host: 'smtp.sendgrid.net',                   port: 587, ssl: false },
+};
+
+function smtpVaultProviderPreset() {
+  const provider = document.getElementById('svp-provider')?.value;
+  const preset = SMTP_PRESETS[provider];
+  if (preset) {
+    document.getElementById('svp-host').value  = preset.host;
+    document.getElementById('svp-port').value  = preset.port;
+    document.getElementById('svp-ssl').checked = preset.ssl;
+  }
+}
+
+async function loadSmtpVault() {
+  const r = await apiFetch('/api/smtp/profiles');
+  if (!r.success) return;
+  const profiles = r.profiles || [];
+  const badge = document.getElementById('badge-smtp-profiles');
+  if (badge) badge.textContent = profiles.length;
+
+  const tbody = document.getElementById('smtp-vault-tbody');
+  if (!tbody) return;
+  if (!profiles.length) {
+    tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--text-muted);padding:30px;">No SMTP profiles saved yet.</td></tr>';
+    return;
+  }
+  const icons = { brevo:'🚀', smtp2go:'⚡', mailjet:'✈️', gmail:'📧', amazon_ses:'🟠', namecheap:'💙', zoho:'🟣', outlook:'🔵', sendgrid:'🟢', custom:'⚙️' };
+  tbody.innerHTML = profiles.map(p => `
+    <tr>
+      <td style="font-weight:600;">${p.name}</td>
+      <td>${icons[p.provider] || '⚙️'} ${p.provider}</td>
+      <td style="font-family:monospace;font-size:12px;">${p.smtp_host}</td>
+      <td style="font-size:12px;">${p.smtp_port}${p.use_ssl ? ' (SSL)' : ''}</td>
+      <td style="font-size:12px;color:var(--text-muted);">${p.smtp_user}</td>
+      <td style="font-size:12px;color:var(--text-muted);">${p.notes || '—'}</td>
+      <td>
+        <div style="display:flex;gap:6px;">
+          <button class="btn-ghost btn-xs" onclick="testSmtpProfile(${p.id})">Test</button>
+          <button class="btn-ghost btn-xs" style="color:#ef4444;" onclick="deleteSmtpProfile(${p.id})">Delete</button>
+        </div>
+      </td>
+    </tr>`).join('');
+}
+
+async function saveSmtpProfile() {
+  const payload = {
+    name:      document.getElementById('svp-name').value.trim(),
+    provider:  document.getElementById('svp-provider').value,
+    smtp_host: document.getElementById('svp-host').value.trim(),
+    smtp_port: parseInt(document.getElementById('svp-port').value) || 587,
+    smtp_user: document.getElementById('svp-user').value.trim(),
+    smtp_pass: document.getElementById('svp-pass').value,
+    use_ssl:   document.getElementById('svp-ssl').checked,
+    notes:     document.getElementById('svp-notes').value.trim(),
+  };
+  if (!payload.name || !payload.smtp_host || !payload.smtp_user || !payload.smtp_pass) {
+    showToast('Fill in Name, Host, Username and Password', 'error'); return;
+  }
+  const r = await apiFetch('/api/smtp/profiles', 'POST', payload);
+  if (r.success) {
+    showToast('✅ SMTP profile saved to vault', 'success');
+    document.getElementById('smtp-vault-form').style.display = 'none';
+    ['svp-name','svp-host','svp-user','svp-pass','svp-notes'].forEach(id => {
+      const el = document.getElementById(id); if (el) el.value = '';
+    });
+    document.getElementById('svp-port').value = '587';
+    await loadSmtpVault();
+  } else {
+    showToast('Error: ' + (r.error || 'Save failed'), 'error');
+  }
+}
+
+async function testSmtpProfile(profileId) {
+  showToast('Testing SMTP connection…', 'info');
+  const r = await apiFetch(`/api/smtp/profiles/${profileId}/test`, 'POST', {});
+  if (r.success) {
+    showToast(`✅ Connected! Latency: ${r.latency_ms || '?'}ms`, 'success');
+  } else {
+    showToast(`❌ ${r.error || 'Connection failed'}`, 'error');
+  }
+}
+
+async function deleteSmtpProfile(profileId) {
+  if (!confirm('Delete this SMTP profile from the vault?')) return;
+  await apiFetch(`/api/smtp/profiles/${profileId}`, 'DELETE');
+  showToast('Profile deleted', 'info');
+  await loadSmtpVault();
+}
+
+async function verifySmtpDirect() {
+  const host = document.getElementById('svp-host')?.value.trim();
+  const port = parseInt(document.getElementById('svp-port')?.value) || 587;
+  const user = document.getElementById('svp-user')?.value.trim();
+  const pass = document.getElementById('svp-pass')?.value;
+  const use_ssl = document.getElementById('svp-ssl')?.checked;
+  const badge = document.getElementById('smtp-verify-status-badge');
+  const btn = document.getElementById('btn-verify-smtp-direct');
+
+  if (!host || !user || !pass) {
+    if (badge) {
+      badge.style.display = 'inline-block';
+      badge.style.background = 'rgba(239, 68, 68, 0.15)';
+      badge.style.color = '#ef4444';
+      badge.style.border = '1px solid rgba(239, 68, 68, 0.3)';
+      badge.innerHTML = '⚠️ Please fill in Host, Username, and Password';
+    }
+    return;
+  }
+
+  if (btn) btn.disabled = true;
+  if (badge) {
+    badge.style.display = 'inline-block';
+    badge.style.background = 'rgba(6, 182, 212, 0.15)';
+    badge.style.color = '#06b6d4';
+    badge.style.border = '1px solid rgba(6, 182, 212, 0.3)';
+    badge.innerHTML = '⏳ Testing handshake & auth…';
+  }
+
+  try {
+    const r = await apiFetch('/api/smtp/verify-direct', 'POST', {
+      smtp_host: host,
+      smtp_port: port,
+      smtp_user: user,
+      smtp_pass: pass,
+      use_ssl: use_ssl
+    });
+
+    if (r.success) {
+      badge.style.background = 'rgba(16, 185, 129, 0.15)';
+      badge.style.color = '#10b981';
+      badge.style.border = '1px solid rgba(16, 185, 129, 0.3)';
+      badge.innerHTML = '✅ <strong>Verified!</strong> Connected (' + (r.latency_ms || '?') + 'ms) — Auth Accepted';
+      showToast('✅ SMTP Verified (' + (r.latency_ms || '?') + 'ms)! Ready to save.', 'success');
+    } else {
+      badge.style.background = 'rgba(239, 68, 68, 0.15)';
+      badge.style.color = '#ef4444';
+      badge.style.border = '1px solid rgba(239, 68, 68, 0.3)';
+      badge.innerHTML = '❌ <strong>Failed:</strong> ' + (r.error || 'Connection error');
+      showToast('❌ SMTP Test Failed: ' + (r.error || 'Connection error'), 'error');
+    }
+  } catch (err) {
+    if (badge) {
+      badge.style.background = 'rgba(239, 68, 68, 0.15)';
+      badge.style.color = '#ef4444';
+      badge.style.border = '1px solid rgba(239, 68, 68, 0.3)';
+      badge.innerHTML = '❌ Network error while testing';
+    }
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+// Global window exposure for inline event handlers and external view switching
+window.switchView = window.switchView || switchView;
+window.loadIpNodes = loadIpNodes;
+window.loadSmtpVault = loadSmtpVault;
+window.ipNodeConnect = ipNodeConnect;
+window.ipNodeDisconnect = ipNodeDisconnect;
+window.deleteIpNode = deleteIpNode;
+window.saveSmtpProfile = saveSmtpProfile;
+window.testSmtpProfile = testSmtpProfile;
+window.deleteSmtpProfile = deleteSmtpProfile;
+window.verifySmtpDirect = verifySmtpDirect;
+window.smtpVaultProviderPreset = smtpVaultProviderPreset;
+window.runDomainDeliverabilityAudit = runDomainDeliverabilityAudit;
+window.fetchTerminalLogs = fetchTerminalLogs;
+window.clearTerminalLogs = clearTerminalLogs;
+

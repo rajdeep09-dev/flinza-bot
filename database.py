@@ -269,6 +269,30 @@ def init_db():
             is_active INTEGER DEFAULT 1,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
+
+        CREATE TABLE IF NOT EXISTS ip_nodes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT,
+            ip_address TEXT NOT NULL,
+            status TEXT DEFAULT 'connected',
+            user_agent TEXT,
+            connected_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            assigned_accounts TEXT DEFAULT '[]'
+        );
+
+        CREATE TABLE IF NOT EXISTS smtp_profiles (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            provider TEXT DEFAULT 'custom',
+            smtp_host TEXT NOT NULL,
+            smtp_port INTEGER DEFAULT 587,
+            smtp_user TEXT NOT NULL,
+            smtp_pass TEXT,
+            use_ssl INTEGER DEFAULT 0,
+            notes TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
     """)
 
     # Indices for performance
@@ -327,6 +351,42 @@ def init_db():
         except sqlite3.OperationalError:
             pass
 
+    for tbl, col, col_type in [
+        ("replies", "is_read", "INTEGER DEFAULT 0"),
+        ("replies", "is_starred", "INTEGER DEFAULT 0"),
+        ("emails_sent", "is_starred", "INTEGER DEFAULT 0"),
+    ]:
+        try:
+            conn.execute(f"ALTER TABLE {tbl} ADD COLUMN {col} {col_type}")
+        except sqlite3.OperationalError:
+            pass
+
+    # Migration: create ip_nodes and smtp_profiles tables if they don't exist yet
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS ip_nodes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT,
+            ip_address TEXT NOT NULL,
+            status TEXT DEFAULT 'connected',
+            user_agent TEXT,
+            connected_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            assigned_accounts TEXT DEFAULT '[]'
+        );
+        CREATE TABLE IF NOT EXISTS smtp_profiles (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            provider TEXT DEFAULT 'custom',
+            smtp_host TEXT NOT NULL,
+            smtp_port INTEGER DEFAULT 587,
+            smtp_user TEXT NOT NULL,
+            smtp_pass TEXT,
+            use_ssl INTEGER DEFAULT 0,
+            notes TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+    """)
+
     conn.commit()
     _init_default_settings(conn)
     conn.close()
@@ -378,6 +438,19 @@ def _init_default_settings(conn):
             (key, value)
         )
     conn.commit()
+
+    # Dynamic column migrations
+    for col_def in [
+        "ALTER TABLE replies ADD COLUMN message_id TEXT",
+        "ALTER TABLE replies ADD COLUMN is_read INTEGER DEFAULT 0",
+        "ALTER TABLE replies ADD COLUMN is_starred INTEGER DEFAULT 0",
+    ]:
+        try:
+            conn.execute(col_def)
+            conn.commit()
+        except Exception:
+            pass
+    conn.close()
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -1120,12 +1193,63 @@ def get_stats():
 #                         REPLIES
 # ═══════════════════════════════════════════════════════════════
 
-def log_reply(lead_id, from_email, subject, body, ai_draft_subject=None, ai_draft_body=None):
+def is_duplicate_reply(from_email: str, subject: str, body: str = None, message_id: str = None) -> bool:
+    """
+    Prevents duplicate email logging when aliases forward emails to master mailboxes
+    or when webhooks receive retransmissions.
+    """
+    clean_from = (from_email or "").strip().lower()
+    clean_subj = (subject or "").strip().lower()
+    conn = get_db()
+    
+    # 1. Exact message_id match
+    if message_id:
+        row = conn.execute("SELECT id FROM replies WHERE message_id = ?", (message_id,)).fetchone()
+        if row:
+            conn.close()
+            return True
+            
+    # 2. Match from_email + subject within last 15 minutes window
+    if clean_from and clean_subj:
+        row = conn.execute(
+            """SELECT id FROM replies 
+               WHERE LOWER(from_email) = ? 
+                 AND LOWER(subject) = ? 
+                 AND received_at > datetime('now', '-15 minutes')""",
+            (clean_from, clean_subj)
+        ).fetchone()
+        if row:
+            conn.close()
+            return True
+
+    # 3. Match body fingerprint if body provided
+    if body and len(body.strip()) > 20:
+        h = hashlib.md5(f"{clean_subj}|{body[:300]}".encode("utf-8", errors="replace")).hexdigest()
+        recent = conn.execute(
+            "SELECT subject, body FROM replies WHERE received_at > datetime('now', '-15 minutes')"
+        ).fetchall()
+        for r in recent:
+            rh = hashlib.md5(f"{(r['subject'] or '').strip().lower()}|{(r['body'] or '')[:300]}".encode("utf-8", errors="replace")).hexdigest()
+            if rh == h:
+                conn.close()
+                return True
+
+    conn.close()
+    return False
+
+
+def log_reply(lead_id, from_email, subject, body, ai_draft_subject=None, ai_draft_body=None, message_id=None):
+    if is_duplicate_reply(from_email, subject, body, message_id):
+        conn = get_db()
+        row = conn.execute("SELECT id FROM replies WHERE LOWER(from_email) = ? ORDER BY id DESC LIMIT 1", (from_email.lower().strip(),)).fetchone()
+        conn.close()
+        return row["id"] if row else None
+
     conn = get_db()
     cur = conn.execute(
-        """INSERT INTO replies (lead_id, from_email, subject, body, ai_draft_subject, ai_draft_body)
-           VALUES (?,?,?,?,?,?)""",
-        (lead_id, from_email, subject, body, ai_draft_subject, ai_draft_body)
+        """INSERT INTO replies (lead_id, from_email, subject, body, ai_draft_subject, ai_draft_body, message_id)
+           VALUES (?,?,?,?,?,?,?)""",
+        (lead_id, from_email, subject, body, ai_draft_subject, ai_draft_body, message_id)
     )
     conn.commit()
     reply_id = cur.lastrowid
@@ -1170,7 +1294,13 @@ def update_reply_draft(reply_id: int, subject: str, body: str):
     conn.close()
 
 
-def reply_already_logged(lead_id: int, subject: str, body: str) -> bool:
+def reply_already_logged(lead_id: int, subject: str, body: str, message_id: str = None) -> bool:
+    if message_id:
+        conn = get_db()
+        row = conn.execute("SELECT id FROM replies WHERE message_id = ?", (message_id,)).fetchone()
+        conn.close()
+        if row:
+            return True
     msg_hash = hashlib.md5(f"{subject}|{body[:500]}".encode("utf-8", errors="replace")).hexdigest()
     conn = get_db()
     rows = conn.execute(
@@ -1190,9 +1320,16 @@ def log_inbound_webhook_reply(from_email: str, to_email: str, subject: str, body
     """
     Called when Cloudflare Inbound Email Routing Worker posts a received email.
     Matches from_email to existing lead in database.
-    Updates lead stage to 'replied', cancels pending followups, and inserts reply.
+    Updates lead stage to 'replied', cancels pending followups, and inserts reply with deduplication.
     """
     clean_from = from_email.lower().strip()
+    msg_id = (raw_headers or {}).get("message-id") or (raw_headers or {}).get("Message-ID")
+    if is_duplicate_reply(clean_from, subject, body, msg_id):
+        conn = get_db()
+        lead = conn.execute("SELECT * FROM leads WHERE LOWER(email) = ?", (clean_from,)).fetchone()
+        conn.close()
+        return None, dict(lead) if lead else {"email": clean_from}
+
     conn = get_db()
 
     # 1. Match lead by email
@@ -1210,17 +1347,11 @@ def log_inbound_webhook_reply(from_email: str, to_email: str, subject: str, body
         conn.execute("UPDATE leads SET stage='replied', last_contact=? WHERE id=?", (datetime.now().isoformat(), lead_id))
         conn.execute("UPDATE followups_scheduled SET status='cancelled' WHERE lead_id=? AND status='pending'", (lead_id,))
 
-    # 2. Check duplicate reply
-    if reply_already_logged(lead_id, subject, body):
-        lead_dict = dict(lead)
-        conn.close()
-        return None, lead_dict
-
-    # 3. Log reply
+    # 2. Log reply with message_id
     cur = conn.execute(
-        """INSERT INTO replies (lead_id, from_email, subject, body, action_taken)
-           VALUES (?, ?, ?, ?, ?)""",
-        (lead_id, clean_from, subject, body, f"inbound_to_{to_email}")
+        """INSERT INTO replies (lead_id, from_email, subject, body, action_taken, message_id)
+           VALUES (?, ?, ?, ?, ?, ?)""",
+        (lead_id, clean_from, subject, body, f"inbound_to_{to_email}", msg_id)
     )
     reply_id = cur.lastrowid
     conn.commit()
@@ -1826,4 +1957,116 @@ def get_user_by_google_id(google_id: str):
     conn.close()
     return dict(row) if row else None
 
+
+# ═══════════════════════════════════════════════════════════════
+#             IP NODES — Connect / Disconnect / List
+# ═══════════════════════════════════════════════════════════════
+
+def connect_ip_node(ip_address: str, name: str = None, user_agent: str = None) -> dict:
+    """Register or refresh a connected IP node. Returns the node record."""
+    conn = get_db()
+    # Check if this IP is already registered
+    existing = conn.execute(
+        "SELECT id FROM ip_nodes WHERE ip_address=?", (ip_address,)
+    ).fetchone()
+    now = datetime.utcnow().isoformat()
+    if existing:
+        conn.execute(
+            "UPDATE ip_nodes SET status='connected', last_seen=?, name=COALESCE(?,name), user_agent=COALESCE(?,user_agent) WHERE ip_address=?",
+            (now, name, user_agent, ip_address)
+        )
+        row_id = existing["id"]
+    else:
+        cur = conn.execute(
+            "INSERT INTO ip_nodes (name, ip_address, status, user_agent, connected_at, last_seen) VALUES (?,?,?,?,?,?)",
+            (name or f"Node {ip_address}", ip_address, "connected", user_agent, now, now)
+        )
+        row_id = cur.lastrowid
+    conn.commit()
+    row = conn.execute("SELECT * FROM ip_nodes WHERE id=?", (row_id,)).fetchone()
+    conn.close()
+    return dict(row)
+
+
+def disconnect_ip_node(ip_address: str) -> bool:
+    """Mark an IP node as disconnected."""
+    conn = get_db()
+    conn.execute("UPDATE ip_nodes SET status='disconnected' WHERE ip_address=?", (ip_address,))
+    conn.commit()
+    conn.close()
+    return True
+
+
+def get_ip_nodes(status: str = None) -> list:
+    """Return all IP nodes, optionally filtered by status."""
+    conn = get_db()
+    if status:
+        rows = conn.execute("SELECT * FROM ip_nodes WHERE status=? ORDER BY last_seen DESC", (status,)).fetchall()
+    else:
+        rows = conn.execute("SELECT * FROM ip_nodes ORDER BY last_seen DESC").fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def heartbeat_ip_node(ip_address: str) -> bool:
+    """Update last_seen for an active node (called by JS ping every 30s)."""
+    conn = get_db()
+    conn.execute(
+        "UPDATE ip_nodes SET last_seen=? WHERE ip_address=? AND status='connected'",
+        (datetime.utcnow().isoformat(), ip_address)
+    )
+    conn.commit()
+    conn.close()
+    return True
+
+
+def get_connected_nodes() -> list:
+    """Return all currently connected nodes (last seen within 2 minutes)."""
+    conn = get_db()
+    cutoff = (datetime.utcnow() - timedelta(minutes=2)).isoformat()
+    rows = conn.execute(
+        "SELECT * FROM ip_nodes WHERE status='connected' AND last_seen >= ? ORDER BY connected_at ASC",
+        (cutoff,)
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+# ═══════════════════════════════════════════════════════════════
+#             SMTP PROFILES VAULT
+# ═══════════════════════════════════════════════════════════════
+
+def get_smtp_profiles() -> list:
+    conn = get_db()
+    rows = conn.execute("SELECT id, name, provider, smtp_host, smtp_port, smtp_user, use_ssl, notes, created_at FROM smtp_profiles ORDER BY created_at DESC").fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def save_smtp_profile(name: str, provider: str, smtp_host: str, smtp_port: int,
+                      smtp_user: str, smtp_pass: str, use_ssl: bool = False, notes: str = "") -> int:
+    conn = get_db()
+    cur = conn.execute(
+        "INSERT INTO smtp_profiles (name, provider, smtp_host, smtp_port, smtp_user, smtp_pass, use_ssl, notes) VALUES (?,?,?,?,?,?,?,?)",
+        (name, provider, smtp_host, smtp_port, smtp_user, smtp_pass, 1 if use_ssl else 0, notes)
+    )
+    conn.commit()
+    pid = cur.lastrowid
+    conn.close()
+    return pid
+
+
+def get_smtp_profile(profile_id: int) -> dict:
+    conn = get_db()
+    row = conn.execute("SELECT * FROM smtp_profiles WHERE id=?", (profile_id,)).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def delete_smtp_profile(profile_id: int) -> bool:
+    conn = get_db()
+    conn.execute("DELETE FROM smtp_profiles WHERE id=?", (profile_id,))
+    conn.commit()
+    conn.close()
+    return True
 

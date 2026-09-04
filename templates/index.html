@@ -41,8 +41,18 @@
         <div class="nav-section-label">Inbox</div>
         <button class="nav-item active" data-view="webmail-inbox">
           <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
-          Inbox
+          Leads Inbox
           <span class="nav-badge" id="badge-webmail-inbox">0</span>
+        </button>
+        <button class="nav-item" data-view="webmail-all-inboxes">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+          All Inboxes
+          <span class="nav-badge dim" id="badge-webmail-all-inboxes">0</span>
+        </button>
+        <button class="nav-item" data-view="webmail-starred">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+          Starred
+          <span class="nav-badge amber" id="badge-webmail-starred">0</span>
         </button>
         <button class="nav-item" data-view="webmail-sent">
           <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
@@ -126,6 +136,18 @@
           <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
           Terminal
         </button>
+
+        <div class="nav-section-label" style="margin-top:12px;">Infrastructure</div>
+        <button class="nav-item" data-view="ip-nodes">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
+          IP Nodes
+          <span class="nav-badge cyan" id="badge-ip-nodes">0</span>
+        </button>
+        <button class="nav-item" data-view="smtp-vault">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+          SMTP Vault
+          <span class="nav-badge dim" id="badge-smtp-profiles">0</span>
+        </button>
       </nav>
 
       <!-- User Footer -->
@@ -187,6 +209,16 @@
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
                 </button>
               </div>
+
+              <!-- Webmail Quick Filter Pills -->
+              <div class="webmail-filter-bar" id="webmail-filter-tabs" style="display:flex;gap:6px;padding:8px 14px;border-bottom:1px solid var(--border-subtle);background:rgba(0,0,0,0.18);overflow-x:auto;">
+                <button class="filter-pill active" data-filter="all">All</button>
+                <button class="filter-pill" data-filter="interested">🔥 Interested</button>
+                <button class="filter-pill" data-filter="replied">💬 Replied</button>
+                <button class="filter-pill" data-filter="bounced">⚠️ Bounced</button>
+                <button class="filter-pill" data-filter="unread">Unread</button>
+              </div>
+
               <div class="thread-rows" id="mail-rows-list">
                 <div class="inbox-empty-state">
                   <div class="empty-icon">
@@ -194,6 +226,13 @@
                   </div>
                   <p>Loading messages…</p>
                 </div>
+              </div>
+
+              <!-- Webmail Pagination Bar -->
+              <div class="webmail-pagination-bar" id="webmail-pagination" style="display:flex;align-items:center;justify-content:space-between;padding:10px 16px;border-top:1px solid var(--border-subtle);background:var(--bg-card);font-size:12px;">
+                <button class="btn-ghost-sm" id="btn-webmail-prev" disabled>◀ Prev</button>
+                <span id="webmail-page-indicator" style="font-size:12px;font-weight:600;color:var(--text-muted);">Page 1 of 1</span>
+                <button class="btn-ghost-sm" id="btn-webmail-next" disabled>Next ▶</button>
               </div>
             </div>
 
@@ -635,6 +674,65 @@
             </div>
           </div>
 
+          <!-- ── Free Live Deliverability & Domain Health Audit ── -->
+          <div class="card-panel" style="margin-bottom:20px;border-color:rgba(0,210,255,0.25);background:linear-gradient(135deg,rgba(0,210,255,0.03),rgba(147,51,234,0.03));">
+            <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:14px;">
+              <div>
+                <div style="display:flex;align-items:center;gap:8px;">
+                  <span style="font-size:18px;">🎯</span>
+                  <h3 style="font-size:15px;font-weight:700;margin:0;color:var(--text-primary);">Free Live Domain Deliverability & DNS Audit</h3>
+                  <span class="dispatch-ready-chip" style="background:rgba(0,224,130,0.15);color:#00e082;border:1px solid rgba(0,224,130,0.3);">100% Free · Cloudflare DoH</span>
+                </div>
+                <p style="font-size:12px;color:var(--text-muted);margin:3px 0 0;">Instantly verify SPF, DKIM, DMARC, MX records and spam blacklists to ensure 100% primary inbox landing.</p>
+              </div>
+              <div style="display:flex;gap:8px;align-items:center;">
+                <input type="text" id="audit-domain-input" placeholder="Enter sending domain (e.g. yourdomain.com)" style="background:var(--bg-input,#0f172a);border:1px solid var(--border,#334155);border-radius:8px;padding:8px 14px;color:#fff;font-size:13px;width:280px;">
+                <button class="btn-primary" id="btn-audit-deliverability" onclick="runDomainDeliverabilityAudit()">
+                  ⚡ Audit Deliverability
+                </button>
+              </div>
+            </div>
+
+            <!-- Audit Results Card (Populated dynamically) -->
+            <div id="deliverability-audit-results" style="display:none;margin-top:16px;padding-top:16px;border-top:1px solid var(--border-subtle);">
+              <div style="display:grid;grid-template-columns:160px 1fr;gap:18px;align-items:center;margin-bottom:16px;">
+                <!-- Score Gauge -->
+                <div style="background:rgba(0,0,0,0.3);border:1px solid var(--border-subtle);border-radius:14px;padding:16px;text-align:center;">
+                  <div id="audit-score-num" style="font-size:36px;font-weight:800;color:#00e082;">95%</div>
+                  <div id="audit-score-grade" style="font-size:13px;font-weight:700;color:#38bdf8;margin-top:2px;">Grade A+</div>
+                  <div id="audit-score-status" style="font-size:11px;color:var(--text-muted);margin-top:4px;">Primary Inbox Ready</div>
+                </div>
+
+                <!-- 4 Core Check Indicators -->
+                <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(200px, 1fr));gap:10px;">
+                  <div class="card-panel" style="padding:10px 14px;margin:0;">
+                    <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;font-weight:700;">1. SPF Record</div>
+                    <div id="audit-res-spf" style="font-size:12.5px;font-weight:600;color:#00e082;margin-top:2px;">Checking…</div>
+                    <div id="audit-desc-spf" style="font-size:11px;color:var(--text-muted);margin-top:2px;word-break:break-all;">—</div>
+                  </div>
+                  <div class="card-panel" style="padding:10px 14px;margin:0;">
+                    <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;font-weight:700;">2. DMARC Policy</div>
+                    <div id="audit-res-dmarc" style="font-size:12.5px;font-weight:600;color:#00e082;margin-top:2px;">Checking…</div>
+                    <div id="audit-desc-dmarc" style="font-size:11px;color:var(--text-muted);margin-top:2px;word-break:break-all;">—</div>
+                  </div>
+                  <div class="card-panel" style="padding:10px 14px;margin:0;">
+                    <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;font-weight:700;">3. DKIM Cryptography</div>
+                    <div id="audit-res-dkim" style="font-size:12.5px;font-weight:600;color:#00e082;margin-top:2px;">Checking…</div>
+                    <div id="audit-desc-dkim" style="font-size:11px;color:var(--text-muted);margin-top:2px;">—</div>
+                  </div>
+                  <div class="card-panel" style="padding:10px 14px;margin:0;">
+                    <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;font-weight:700;">4. MX & Reputation</div>
+                    <div id="audit-res-mx" style="font-size:12.5px;font-weight:600;color:#00e082;margin-top:2px;">Checking…</div>
+                    <div id="audit-desc-mx" style="font-size:11px;color:var(--text-muted);margin-top:2px;">—</div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Recommendation List -->
+              <div id="audit-recommendations" style="font-size:12px;line-height:1.6;background:rgba(0,0,0,0.25);padding:12px 16px;border-radius:10px;border:1px solid var(--border-subtle);"></div>
+            </div>
+          </div>
+
           <!-- Warmup Accounts Table -->
           <div class="data-table-wrap">
             <table class="data-table">
@@ -876,8 +974,8 @@
           </div>
 
           <!-- Quick Command Launcher Bar -->
-          <div class="terminal-quick-bar">
-            <span style="font-size: 11px; font-weight: 700; color: var(--text-dim); text-transform: uppercase;">Quick Actions:</span>
+          <div class="terminal-quick-bar" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px;">
+            <span style="font-size: 11px; font-weight: 700; color: var(--text-dim); text-transform: uppercase; align-self:center;">Outreach:</span>
             <button class="terminal-chip" data-cmd="/stats">📊 /stats</button>
             <button class="terminal-chip" data-cmd="/launch">🚀 /launch</button>
             <button class="terminal-chip" data-cmd="/launch --dry">🧪 /launch --dry</button>
@@ -887,6 +985,13 @@
             <button class="terminal-chip" data-cmd="/accounts">📬 /accounts</button>
             <button class="terminal-chip" data-cmd="/leads">👥 /leads</button>
             <button class="terminal-chip" data-cmd="/help">❓ /help</button>
+
+            <span style="font-size: 11px; font-weight: 700; color: #38bdf8; text-transform: uppercase; align-self:center; margin-left:8px;">VPS Shell:</span>
+            <button class="terminal-chip" data-cmd="python --version" style="border-color:rgba(56,189,248,0.3);">🐍 python</button>
+            <button class="terminal-chip" data-cmd="uptime" style="border-color:rgba(56,189,248,0.3);">⏱️ uptime</button>
+            <button class="terminal-chip" data-cmd="whoami" style="border-color:rgba(56,189,248,0.3);">👤 whoami</button>
+            <button class="terminal-chip" data-cmd="dir" style="border-color:rgba(56,189,248,0.3);">📁 files (dir)</button>
+            <button class="terminal-chip" data-cmd="ipconfig" style="border-color:rgba(56,189,248,0.3);">🌐 network</button>
           </div>
 
           <!-- Terminal Screen Container -->
@@ -897,21 +1002,43 @@
                 <span class="dot dot-yellow"></span>
                 <span class="dot dot-green"></span>
               </div>
-              <div class="term-title">flinza-core-engine — bash (port 7880)</div>
+              <div class="term-title">flinza-vps-shell — interactive host terminal</div>
               <div class="term-status"><span class="pulse-dot"></span> Online</div>
             </div>
-            <div class="terminal-output" id="terminal-screen">
+            <div class="terminal-output" id="terminal-screen" style="height:260px;">
               <div class="term-line banner">
-                <span>⚡ FLINZA ENTERPRISE OUTREACH OS — COMMAND SHELL v2.0</span>
-                <span>Type /help to list available commands or click the action buttons above.</span>
-                <span>----------------------------------------------------------------------</span>
+                <span>⚡ FLINZA WEB-BASED VPS & ENGINE COMMAND SHELL</span>
+                <span>Run normal server commands (df, free, uptime, python, whoami) or outreach commands (/stats, /launch).</span>
+                <span>--------------------------------------------------------------------------------------------------</span>
               </div>
             </div>
             <form id="form-terminal-input" class="terminal-input-row">
-              <span class="terminal-prompt">flinza@outreach:~$</span>
-              <input type="text" id="terminal-cli-input" placeholder="Type a command (e.g. /stats, /launch, /warmup, /score)..." autocomplete="off" />
+              <span class="terminal-prompt">flinza@vps:~$</span>
+              <input type="text" id="terminal-cli-input" placeholder="Enter shell command (e.g. uptime, dir, python --version) or /stats..." autocomplete="off" />
               <button type="submit" class="terminal-send-btn">Execute</button>
             </form>
+          </div>
+
+          <!-- Live Server Logs Viewer -->
+          <div class="card-panel" style="margin-top:20px;border-color:rgba(56,189,248,0.2);">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+              <div style="display:flex;align-items:center;gap:8px;">
+                <span style="font-size:16px;">📋</span>
+                <h3 style="font-size:14px;font-weight:700;margin:0;color:var(--text-primary);">Live Server & Outreach Logs</h3>
+                <span class="dispatch-ready-chip" style="background:rgba(0,224,130,0.12);color:#00e082;border:1px solid rgba(0,224,130,0.25);">Real-Time</span>
+              </div>
+              <div style="display:flex;align-items:center;gap:12px;">
+                <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-secondary);cursor:pointer;">
+                  <input type="checkbox" id="chk-auto-refresh-logs" checked style="width:14px;height:14px;">
+                  Auto-Refresh (3s)
+                </label>
+                <button class="btn-ghost-sm" onclick="fetchTerminalLogs()">↻ Refresh</button>
+                <button class="btn-ghost-sm" onclick="clearTerminalLogs()" style="color:#ef4444;">Clear</button>
+              </div>
+            </div>
+            <div style="background:#030712;border:1px solid var(--border-subtle);border-radius:10px;padding:12px 14px;height:220px;overflow-y:auto;">
+              <pre id="terminal-live-logs" style="margin:0;font-family:monospace;font-size:11.5px;line-height:1.6;color:#94a3b8;white-space:pre-wrap;word-break:break-all;">Loading server logs…</pre>
+            </div>
           </div>
         </section>
 
@@ -983,6 +1110,220 @@
               </thead>
               <tbody id="history-tbody">
                 <tr><td colspan="7" class="table-empty">Loading sent email history…</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <!-- ═══════════════════════════════════════════════════════
+             IP NODES PANEL
+        ═══════════════════════════════════════════════════════ -->
+        <section class="view-section" id="view-ip-nodes">
+          <div class="page-header">
+            <div>
+              <h1 class="page-title">IP Nodes & Residential Proxy Rotation</h1>
+              <p class="page-sub">Each connected browser session or phone proxy contributes its IP to the sending pool. Open the dashboard from any device and click Connect.</p>
+            </div>
+            <div style="display:flex;gap:10px;align-items:center;">
+              <div id="ip-node-my-ip-badge" style="font-size:12px;color:var(--text-muted);background:var(--bg-card);padding:6px 14px;border-radius:20px;border:1px solid var(--border-subtle);">Detecting your IP…</div>
+              <button class="btn-primary" id="btn-ip-connect" onclick="ipNodeConnect()">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
+                Connect My IP
+              </button>
+              <button class="btn-ghost" id="btn-ip-disconnect" onclick="ipNodeDisconnect()" style="display:none;border-color:var(--red,#ef4444);color:var(--red,#ef4444);">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
+                Disconnect
+              </button>
+            </div>
+          </div>
+
+          <!-- My Status Card -->
+          <div id="ip-my-status-card" style="display:none;background:linear-gradient(135deg,rgba(0,224,130,0.08),rgba(0,163,255,0.06));border:1px solid rgba(0,224,130,0.3);border-radius:14px;padding:18px 22px;margin-bottom:20px;display:flex;align-items:center;gap:16px;">
+            <div style="width:42px;height:42px;border-radius:50%;background:rgba(0,224,130,0.15);display:flex;align-items:center;justify-content:center;">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#00e082" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
+            </div>
+            <div>
+              <div style="font-size:13px;font-weight:600;color:#00e082;">You are connected</div>
+              <div id="ip-my-status-detail" style="font-size:12px;color:var(--text-muted);margin-top:2px;">Your IP is in the sending pool</div>
+            </div>
+          </div>
+
+          <!-- How it works banner -->
+          <div style="background:var(--bg-card);border:1px solid var(--border-subtle);border-radius:12px;padding:16px 20px;margin-bottom:20px;display:grid;grid-template-columns:repeat(3,1fr);gap:16px;">
+            <div style="text-align:center;">
+              <div style="font-size:22px;margin-bottom:6px;">📱</div>
+              <div style="font-size:12px;font-weight:600;color:var(--text-primary);">Open from any device</div>
+              <div style="font-size:11px;color:var(--text-muted);margin-top:3px;">Laptop, phone, office WiFi</div>
+            </div>
+            <div style="text-align:center;">
+              <div style="font-size:22px;margin-bottom:6px;">🔌</div>
+              <div style="font-size:12px;font-weight:600;color:var(--text-primary);">Click Connect</div>
+              <div style="font-size:11px;color:var(--text-muted);margin-top:3px;">Your IP joins the pool</div>
+            </div>
+            <div style="text-align:center;">
+              <div style="font-size:22px;margin-bottom:6px;">🔄</div>
+              <div style="font-size:12px;font-weight:600;color:var(--text-primary);">Sends rotate across IPs</div>
+              <div style="font-size:11px;color:var(--text-muted);margin-top:3px;">Lower spam score per IP</div>
+            </div>
+          </div>
+
+          <!-- Connected Nodes Table -->
+          <div class="card-panel">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
+              <h3 style="font-size:14px;font-weight:600;margin:0;">Active Sending Nodes</h3>
+              <button class="btn-ghost btn-xs" onclick="loadIpNodes()">↺ Refresh</button>
+            </div>
+            <table class="data-table" id="ip-nodes-table">
+              <thead>
+                <tr>
+                  <th>Status</th>
+                  <th>Name / IP</th>
+                  <th>Connected</th>
+                  <th>Last Seen</th>
+                  <th>Device</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody id="ip-nodes-tbody">
+                <tr><td colspan="6" style="text-align:center;color:var(--text-muted);padding:30px;">No nodes connected yet. Click "Connect My IP" above.</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <!-- ── Mobile Phone 4G/5G Residential Proxy Node Guide ── -->
+          <div class="card-panel" style="margin-top:20px;border-color:rgba(0,224,130,0.25);">
+            <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;">
+              <span style="font-size:24px;">📱</span>
+              <div>
+                <h3 style="font-size:15px;font-weight:700;margin:0;color:var(--text-primary);">Turn Your Phone into a 4G/5G Residential Sending Node</h3>
+                <p style="font-size:12px;color:var(--text-muted);margin:2px 0 0;">Mobile carrier IPs have the highest sender reputation in the world. Gmail & Outlook rarely flag cellular IPs.</p>
+              </div>
+            </div>
+
+            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px;margin-bottom:18px;">
+              <div style="background:rgba(255,255,255,0.03);border:1px solid var(--border-subtle);border-radius:12px;padding:16px;">
+                <div style="font-size:13px;font-weight:700;color:#38bdf8;margin-bottom:8px;">1. Install Mobile Proxy App</div>
+                <p style="font-size:12px;color:var(--text-secondary);line-height:1.5;margin:0 0 8px;">
+                  • <strong>Android:</strong> Install <strong>Every Proxy</strong> (Free on Google Play) or <strong>Proxy Server</strong>. Turn on HTTP/SOCKS toggle.<br>
+                  • <strong>iOS / iPhone:</strong> Use <strong>Potatso</strong> or <strong>Shadowrocket</strong> with local forwarding.
+                </p>
+                <span style="font-size:11px;color:var(--text-muted);">1-tap turns your phone's 4G/5G data into an outbound proxy server.</span>
+              </div>
+
+              <div style="background:rgba(255,255,255,0.03);border:1px solid var(--border-subtle);border-radius:12px;padding:16px;">
+                <div style="font-size:13px;font-weight:700;color:#a78bfa;margin-bottom:8px;">2. Bypass Carrier CGNAT (Tailscale Mesh)</div>
+                <p style="font-size:12px;color:var(--text-secondary);line-height:1.5;margin:0 0 8px;">
+                  Cellular carriers block inbound ports (CGNAT). Install <strong>Tailscale</strong> (100% free) on your phone and VPS.<br>
+                  Your phone gets a private IP (e.g. <code>100.x.x.x:8080</code>) that your VPS connects to directly!
+                </p>
+                <span style="font-size:11px;color:var(--text-muted);">Alternative: Reverse SSH via Termux (<code>ssh -R 8080:localhost:8080 user@vps</code>).</span>
+              </div>
+
+              <div style="background:rgba(255,255,255,0.03);border:1px solid var(--border-subtle);border-radius:12px;padding:16px;">
+                <div style="font-size:13px;font-weight:700;color:#34d399;margin-bottom:8px;">3. The Airplane Mode Superpower ✈️</div>
+                <p style="font-size:12px;color:var(--text-secondary);line-height:1.5;margin:0 0 8px;">
+                  Whenever you toggle <strong>Airplane Mode ON for 5 seconds and OFF</strong>, your telecom carrier (Jio, Airtel, AT&T, T-Mobile) assigns your phone a <strong>completely new clean residential IP</strong>!
+                </p>
+                <span style="font-size:11px;color:#34d399;">Unlimited fresh residential IP rotation at zero cost!</span>
+              </div>
+            </div>
+
+            <div style="background:rgba(245,158,11,0.08);border:1px solid rgba(245,158,11,0.25);border-radius:10px;padding:12px 16px;font-size:12px;color:#fbbf24;line-height:1.5;">
+              <strong>💡 Does Cloudflare provide outbound sending IPs?</strong><br>
+              Cloudflare Email Routing is <em>inbound only</em>. Cloudflare Workers block raw outbound SMTP socket ports (25, 465, 587) to prevent spam. However, <strong>Cloudflare Workers + Mailchannels API</strong> (free for Cloudflare domains) allows sending verified cold outreach directly via HTTP API!
+            </div>
+          </div>
+        </section>
+
+        <!-- ═══════════════════════════════════════════════════════
+             SMTP VAULT PANEL
+        ═══════════════════════════════════════════════════════ -->
+        <section class="view-section" id="view-smtp-vault">
+          <div class="page-header">
+            <div>
+              <h1 class="page-title">SMTP Vault</h1>
+              <p class="page-sub">Save SMTP credentials once, reuse everywhere. Select from dropdown when adding accounts or aliases.</p>
+            </div>
+            <button class="btn-primary" onclick="document.getElementById('smtp-vault-form').style.display='block'">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+              Add SMTP Profile
+            </button>
+          </div>
+
+          <!-- Add Profile Form -->
+          <div id="smtp-vault-form" style="display:none;background:var(--bg-card);border:1px solid var(--border-subtle);border-radius:14px;padding:22px;margin-bottom:20px;">
+            <h3 style="font-size:14px;font-weight:600;margin:0 0 16px;">New SMTP Profile</h3>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+              <div class="form-group">
+                <label class="form-label">Profile Name</label>
+                <input type="text" class="form-input" id="svp-name" placeholder="e.g. Namecheap Domain A">
+              </div>
+              <div class="form-group">
+                <label class="form-label">Provider</label>
+                <select class="form-input" id="svp-provider" onchange="smtpVaultProviderPreset()">
+                  <option value="custom">Custom</option>
+                  <option value="brevo">Brevo (Sendinblue)</option>
+                  <option value="smtp2go">SMTP2GO</option>
+                  <option value="mailjet">Mailjet</option>
+                  <option value="gmail">Gmail</option>
+                  <option value="amazon_ses">Amazon SES</option>
+                  <option value="namecheap">Namecheap Private Email</option>
+                  <option value="zoho">Zoho Mail</option>
+                  <option value="outlook">Outlook / Microsoft 365</option>
+                  <option value="sendgrid">SendGrid</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label class="form-label">SMTP Host</label>
+                <input type="text" class="form-input" id="svp-host" placeholder="smtp.gmail.com">
+              </div>
+              <div class="form-group">
+                <label class="form-label">SMTP Port</label>
+                <input type="number" class="form-input" id="svp-port" value="587">
+              </div>
+              <div class="form-group">
+                <label class="form-label">Username / Email</label>
+                <input type="text" class="form-input" id="svp-user" placeholder="you@domain.com">
+              </div>
+              <div class="form-group">
+                <label class="form-label">Password / App Password</label>
+                <input type="password" class="form-input" id="svp-pass" placeholder="••••••••••••">
+              </div>
+              <div class="form-group" style="grid-column:1/-1;">
+                <label class="form-label">Notes (optional)</label>
+                <input type="text" class="form-input" id="svp-notes" placeholder="e.g. Domain A outreach account">
+              </div>
+              <div style="display:flex;align-items:center;gap:8px;">
+                <input type="checkbox" id="svp-ssl" style="width:16px;height:16px;">
+                <label for="svp-ssl" style="font-size:13px;color:var(--text-secondary);">Use SSL (port 465)</label>
+              </div>
+            </div>
+            <div style="display:flex;align-items:center;gap:10px;margin-top:16px;">
+              <button class="btn-ghost" type="button" id="btn-verify-smtp-direct" onclick="verifySmtpDirect()" style="border-color:var(--cyan,#06b6d4);color:var(--cyan,#06b6d4);">
+                🧪 Test & Verify SMTP
+              </button>
+              <button class="btn-primary" type="button" onclick="saveSmtpProfile()">Save to Vault</button>
+              <button class="btn-ghost" type="button" onclick="document.getElementById('smtp-vault-form').style.display='none'">Cancel</button>
+              <div id="smtp-verify-status-badge" style="display:none;font-size:12px;padding:5px 12px;border-radius:16px;"></div>
+            </div>
+          </div>
+
+          <!-- Profiles Table -->
+          <div class="card-panel">
+            <table class="data-table" id="smtp-vault-table">
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Provider</th>
+                  <th>Host</th>
+                  <th>Port</th>
+                  <th>Username</th>
+                  <th>Notes</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="smtp-vault-tbody">
+                <tr><td colspan="7" style="text-align:center;color:var(--text-muted);padding:30px;">No SMTP profiles saved yet.</td></tr>
               </tbody>
             </table>
           </div>
@@ -1222,6 +1563,10 @@
     </div>
   </div>
 
-  <script src="/static/js/app.js?v=2.2"></script>
+
+
+
+  <!-- Core App SPA -->
+  <script src="/static/js/app.js?v=2.5"></script>
 </body>
 </html>
