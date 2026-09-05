@@ -1041,14 +1041,15 @@ def queue_email(lead_id, from_account, to_email, subject, body,
     )
 
 
-def mark_email_sent(email_id: int, message_id: str = None, from_account: str = None):
+def mark_email_sent(email_id: int, message_id: str = None, from_account: str = None, provider: str = None):
     conn = get_db()
     conn.execute(
         """UPDATE emails_sent
            SET status='sent', sent_at=?, message_id=?,
-               from_account=COALESCE(?, from_account)
+               from_account=COALESCE(?, from_account),
+               provider=COALESCE(?, provider)
            WHERE id=?""",
-        (datetime.now().isoformat(), message_id, from_account, email_id)
+        (datetime.now().isoformat(), message_id, from_account, provider, email_id)
     )
     conn.commit()
     conn.close()
@@ -1369,20 +1370,29 @@ def log_inbound_webhook_reply(from_email: str, to_email: str, subject: str, body
 
     # 1. Match lead by email
     lead = conn.execute("SELECT * FROM leads WHERE LOWER(email) = ?", (clean_from,)).fetchone()
+    lead_id = None
     if not lead:
-        name_part = clean_from.split("@")[0].replace(".", " ").title()
-        cur = conn.execute(
-            "INSERT INTO leads (name, email, stage, source) VALUES (?, ?, 'replied', 'inbound_cloudflare')",
-            (name_part, clean_from)
-        )
-        lead_id = cur.lastrowid
-        lead = conn.execute("SELECT * FROM leads WHERE id = ?", (lead_id,)).fetchone()
+        # Prevent automated notifications, verification codes, and security alerts from polluting CRM leads
+        clean_subj = (subject or "").lower()
+        is_automated_noise = any(noise in clean_from for noise in [
+            "no-reply", "noreply", "google.com", "verify", "verification", "notification",
+            "mailer-daemon", "postmaster", "alert", "security", "support", "billing", "info@brevo.com"
+        ]) or any(noise in clean_subj for noise in ["verification", "otp", "security alert", "confirm", "password reset", "recovered successfully"])
+
+        if not is_automated_noise:
+            name_part = clean_from.split("@")[0].replace(".", " ").title()
+            cur = conn.execute(
+                "INSERT INTO leads (name, email, stage, source) VALUES (?, ?, 'replied', 'inbound_cloudflare')",
+                (name_part, clean_from)
+            )
+            lead_id = cur.lastrowid
+            lead = conn.execute("SELECT * FROM leads WHERE id = ?", (lead_id,)).fetchone()
     else:
         lead_id = lead["id"]
         conn.execute("UPDATE leads SET stage='replied', last_contact=? WHERE id=?", (datetime.now().isoformat(), lead_id))
         conn.execute("UPDATE followups_scheduled SET status='cancelled' WHERE lead_id=? AND status='pending'", (lead_id,))
 
-    # 2. Log reply with message_id and to_email
+    # 2. Log reply with message_id and to_email (lead_id is NULL for external system/test emails)
     cur = conn.execute(
         """INSERT INTO replies (lead_id, from_email, to_email, subject, body, action_taken, message_id)
            VALUES (?, ?, ?, ?, ?, ?, ?)""",
@@ -1390,7 +1400,7 @@ def log_inbound_webhook_reply(from_email: str, to_email: str, subject: str, body
     )
     reply_id = cur.lastrowid
     conn.commit()
-    lead_dict = dict(lead)
+    lead_dict = dict(lead) if lead else {"email": clean_from, "name": clean_from.split("@")[0]}
     conn.close()
     return reply_id, lead_dict
 
@@ -2375,4 +2385,217 @@ def delete_smtp_profile(profile_id: int) -> bool:
     conn.commit()
     conn.close()
     return True
+
+
+# ═══════════════════════════════════════════════════════════════
+#        DYNAMIC SMTP RELAY, FAILOVER & BATCH ROTATION
+# ═══════════════════════════════════════════════════════════════
+
+def get_active_relay_for_alias(alias: str) -> dict:
+    """
+    Dynamically determines outbound SMTP relay (Amazon SES vs Brevo) for a given alias/domain.
+    Logic:
+      1. Domain-specific resolution:
+         - Maps alias to domain (e.g. 'flinzaworks.online', 'flinzaworks.site', 'tryflinzaworks.site').
+         - Pulls Amazon SES credentials (eu-north-1 Stockholm or default).
+         - Pulls Brevo credentials for that domain.
+      2. If Brevo has no configured password yet (pending user mobile verification),
+         safely sticks with Amazon SES.
+      3. Quota Failover:
+         - If Amazon SES daily quota is exceeded today (ses_sent_today >= ses_daily_limit OR ses_quota_exceeded_today=1),
+           automatically fails over to Brevo SMTP for that domain.
+      4. Batch Rotation:
+         - If enabled, tracks consecutive sends (default X=5 emails on SES, then X=5 emails on Brevo).
+    """
+    domain = alias.split("@")[-1].strip().lower() if "@" in alias else "flinzaworks.online"
+    domain_slug = domain.replace(".", "_")
+
+    # 1. Brevo credentials for this domain
+    brevo_user = get_setting(f"brevo_user_{domain_slug}", "")
+    brevo_pass = get_setting(f"brevo_pass_{domain_slug}", "")
+    brevo_configured = bool(brevo_user and brevo_pass and brevo_pass.strip() != "")
+
+    # 2. Amazon SES credentials for this domain
+    ses_host = get_setting(f"ses_host_{domain}", get_setting("aws_ses_smtp_host", "email-smtp.eu-north-1.amazonaws.com"))
+    ses_port = int(get_setting(f"ses_port_{domain}", "587"))
+    ses_user = get_setting(f"ses_user_{domain}", "AKIAX244R4WL43IRDXH5")
+    ses_pass = get_setting(f"ses_pass_{domain}", "BAY9zz1YqpRBNoakiV4WQWoYuMH4tlKencFKs6m4LuIo")
+
+    # 3. Quota & Limits
+    today_str = date.today().isoformat()
+    last_reset = get_setting("smtp_stats_reset_date", "")
+    if last_reset != today_str:
+        set_setting("smtp_stats_reset_date", today_str)
+        set_setting("ses_sent_today", "0")
+        set_setting("brevo_sent_today", "0")
+        set_setting("ses_quota_exceeded_today", "0")
+
+    ses_quota_exceeded = get_setting("ses_quota_exceeded_today", "0") == "1"
+    ses_daily_limit = int(get_setting("ses_daily_limit", "200"))
+    ses_sent_today = int(get_setting("ses_sent_today", "0"))
+
+    # Rotation settings
+    rotation_enabled = get_setting("smtp_batch_rotation_enabled", "1") == "1"
+    batch_size = int(get_setting("smtp_batch_size", "5"))
+    active_batch_provider = get_setting("smtp_batch_active_provider", "amazon_ses")
+    consecutive_ses = int(get_setting("smtp_batch_consecutive_ses", "0"))
+    consecutive_brevo = int(get_setting("smtp_batch_consecutive_brevo", "0"))
+
+    # If Brevo is not configured yet, always use SES
+    if not brevo_configured:
+        return {
+            "provider": "amazon_ses",
+            "smtp_host": ses_host,
+            "smtp_port": ses_port,
+            "smtp_user": ses_user,
+            "smtp_pass": ses_pass,
+            "domain": domain,
+            "failover_active": False,
+            "rotation_mode": "ses_exclusive",
+            "reason": "brevo_pending_password"
+        }
+
+    # Case A: SES Daily Limit or Quota Rejection Failover
+    if ses_quota_exceeded or ses_sent_today >= ses_daily_limit:
+        return {
+            "provider": "brevo",
+            "smtp_host": "smtp-relay.brevo.com",
+            "smtp_port": 587,
+            "smtp_user": brevo_user,
+            "smtp_pass": brevo_pass,
+            "domain": domain,
+            "failover_active": True,
+            "rotation_mode": "failover",
+            "reason": f"ses_limit_exceeded_{ses_sent_today}/{ses_daily_limit}"
+        }
+
+    # Case B: Batch Rotation
+    if rotation_enabled:
+        if active_batch_provider == "amazon_ses":
+            if consecutive_ses >= batch_size:
+                # Rotate to Brevo
+                set_setting("smtp_batch_active_provider", "brevo")
+                set_setting("smtp_batch_consecutive_brevo", "0")
+                return {
+                    "provider": "brevo",
+                    "smtp_host": "smtp-relay.brevo.com",
+                    "smtp_port": 587,
+                    "smtp_user": brevo_user,
+                    "smtp_pass": brevo_pass,
+                    "domain": domain,
+                    "failover_active": False,
+                    "rotation_mode": "batch_rotation",
+                    "reason": f"rotated_to_brevo_after_{consecutive_ses}_ses"
+                }
+            else:
+                return {
+                    "provider": "amazon_ses",
+                    "smtp_host": ses_host,
+                    "smtp_port": ses_port,
+                    "smtp_user": ses_user,
+                    "smtp_pass": ses_pass,
+                    "domain": domain,
+                    "failover_active": False,
+                    "rotation_mode": "batch_rotation",
+                    "reason": f"batch_ses_{consecutive_ses}/{batch_size}"
+                }
+        else: # active_batch_provider == "brevo"
+            if consecutive_brevo >= batch_size:
+                # Rotate back to SES
+                set_setting("smtp_batch_active_provider", "amazon_ses")
+                set_setting("smtp_batch_consecutive_ses", "0")
+                return {
+                    "provider": "amazon_ses",
+                    "smtp_host": ses_host,
+                    "smtp_port": ses_port,
+                    "smtp_user": ses_user,
+                    "smtp_pass": ses_pass,
+                    "domain": domain,
+                    "failover_active": False,
+                    "rotation_mode": "batch_rotation",
+                    "reason": f"rotated_to_ses_after_{consecutive_brevo}_brevo"
+                }
+            else:
+                return {
+                    "provider": "brevo",
+                    "smtp_host": "smtp-relay.brevo.com",
+                    "smtp_port": 587,
+                    "smtp_user": brevo_user,
+                    "smtp_pass": brevo_pass,
+                    "domain": domain,
+                    "failover_active": False,
+                    "rotation_mode": "batch_rotation",
+                    "reason": f"batch_brevo_{consecutive_brevo}/{batch_size}"
+                }
+
+    # Default to Amazon SES
+    return {
+        "provider": "amazon_ses",
+        "smtp_host": ses_host,
+        "smtp_port": ses_port,
+        "smtp_user": ses_user,
+        "smtp_pass": ses_pass,
+        "domain": domain,
+        "failover_active": False,
+        "rotation_mode": "standard",
+        "reason": "primary_relay"
+    }
+
+
+def record_smtp_dispatch(provider: str, domain: str):
+    """Updates sending stats and consecutive counters after a successful dispatch."""
+    if provider == "amazon_ses":
+        curr_sent = int(get_setting("ses_sent_today", "0")) + 1
+        set_setting("ses_sent_today", str(curr_sent))
+        curr_consec = int(get_setting("smtp_batch_consecutive_ses", "0")) + 1
+        set_setting("smtp_batch_consecutive_ses", str(curr_consec))
+        set_setting("smtp_batch_consecutive_brevo", "0")
+    elif provider == "brevo":
+        curr_sent = int(get_setting("brevo_sent_today", "0")) + 1
+        set_setting("brevo_sent_today", str(curr_sent))
+        curr_consec = int(get_setting("smtp_batch_consecutive_brevo", "0")) + 1
+        set_setting("smtp_batch_consecutive_brevo", str(curr_consec))
+        set_setting("smtp_batch_consecutive_ses", "0")
+
+
+def trigger_ses_quota_exceeded(error_detail: str = ""):
+    """Flags SES as quota exhausted for today and redirects subsequent sends to Brevo."""
+    set_setting("ses_quota_exceeded_today", "1")
+    set_setting("smtp_batch_active_provider", "brevo")
+    log_activity("ses_quota_failover", f"Amazon SES quota exceeded: {error_detail}. All outbound traffic diverted to Brevo SMTP.")
+
+
+def get_relay_status_summary() -> dict:
+    """Returns real-time status of the multi-provider routing engine."""
+    ses_quota = get_setting("ses_quota_exceeded_today", "0") == "1"
+    ses_sent = int(get_setting("ses_sent_today", "0"))
+    ses_limit = int(get_setting("ses_daily_limit", "200"))
+    brevo_sent = int(get_setting("brevo_sent_today", "0"))
+    active_prov = get_setting("smtp_batch_active_provider", "amazon_ses")
+    batch_size = int(get_setting("smtp_batch_size", "5"))
+
+    domains = ["flinzaworks.online", "flinzaworks.site", "tryflinzaworks.site"]
+    brevo_status = {}
+    for d in domains:
+        slug = d.replace(".", "_")
+        user = get_setting(f"brevo_user_{slug}", "")
+        has_pass = bool(get_setting(f"brevo_pass_{slug}", ""))
+        brevo_status[d] = {
+            "smtp_user": user,
+            "configured": has_pass,
+            "status": "ready" if has_pass else "pending_mobile_verification"
+        }
+
+    return {
+        "active_provider": active_prov if not ses_quota else "brevo (failover active)",
+        "ses_quota_exceeded": ses_quota,
+        "ses_sent_today": ses_sent,
+        "ses_daily_limit": ses_limit,
+        "brevo_sent_today": brevo_sent,
+        "batch_size": batch_size,
+        "consecutive_ses": int(get_setting("smtp_batch_consecutive_ses", "0")),
+        "consecutive_brevo": int(get_setting("smtp_batch_consecutive_brevo", "0")),
+        "domains": brevo_status
+    }
+
 

@@ -843,8 +843,8 @@ async def get_webmail_threads(
         AND r.subject NOT LIKE '%confirm%'
     """
 
-    # Folder Counts
-    leads_inbox_cnt = conn.execute(f"SELECT COUNT(*) as c FROM replies r WHERE r.handled=0 {system_filter_sql}").fetchone()["c"]
+    # Folder Counts: inbox = leads only; all_inboxes = every incoming email
+    leads_inbox_cnt = conn.execute(f"SELECT COUNT(*) as c FROM replies r WHERE r.handled=0 AND (r.lead_id IS NOT NULL OR r.from_email IN (SELECT email FROM leads)) {system_filter_sql}").fetchone()["c"]
     all_inbox_cnt = conn.execute("SELECT COUNT(*) as c FROM replies WHERE handled=0").fetchone()["c"]
     starred_cnt = conn.execute("SELECT (SELECT COUNT(*) FROM replies WHERE is_starred=1) + (SELECT COUNT(*) FROM emails_sent WHERE is_starred=1) as c").fetchone()["c"]
     drafts_cnt = conn.execute("SELECT COUNT(*) as c FROM replies WHERE handled=0 AND ai_draft_body IS NOT NULL").fetchone()["c"]
@@ -858,7 +858,8 @@ async def get_webmail_threads(
         base_where = ["r.handled = 0"]
         params = []
         if folder == "inbox":
-            # Primary Inbox: show all human inbound emails, filtering out automated bounces & system OTP/noise
+            # Primary Inbox: ONLY show replies from LEADS (CRM prospects)
+            base_where.append("(r.lead_id IS NOT NULL OR r.from_email IN (SELECT email FROM leads))")
             base_where.append("r.from_email NOT LIKE '%no-reply%'")
             base_where.append("r.from_email NOT LIKE '%noreply%'")
             base_where.append("r.from_email NOT LIKE '%google.com%'")
@@ -1503,6 +1504,50 @@ async def test_alias_route(request: Request):
     to_email = b.get("to_email", "rajdep.f12x@gmail.com")
     res = email_sender.send_test_email(to_email=to_email, target_account=alias)
     return res
+
+
+# ── Multi-Provider SMTP Relay, Failover & Rotation ───────────
+@app.get("/api/smtp/relay-status")
+async def get_smtp_relay_status():
+    """Returns real-time health, quota, and batch rotation stats for SES + 3 Brevo accounts."""
+    status = db.get_relay_status_summary()
+    return {"success": True, **status}
+
+
+@app.post("/api/smtp/brevo-credentials")
+async def update_brevo_credentials_api(request: Request):
+    """Saves SMTP credentials for any of the 3 Brevo accounts (per domain)."""
+    b = await request.json()
+    domain = b.get("domain", "").strip().lower()
+    smtp_user = b.get("smtp_user", "").strip()
+    smtp_pass = b.get("smtp_pass", "").strip()
+
+    valid_domains = ["flinzaworks.online", "flinzaworks.site", "tryflinzaworks.site"]
+    if domain not in valid_domains:
+        raise HTTPException(status_code=400, detail=f"Invalid domain. Must be one of: {', '.join(valid_domains)}")
+
+    slug = domain.replace(".", "_")
+    if smtp_user:
+        db.set_setting(f"brevo_user_{slug}", smtp_user)
+    if smtp_pass:
+        db.set_setting(f"brevo_pass_{slug}", smtp_pass)
+        db.set_setting(f"brevo_status_{slug}", "active")
+
+    if b.get("batch_size"):
+        db.set_setting("smtp_batch_size", str(int(b.get("batch_size"))))
+    if "rotation_enabled" in b:
+        db.set_setting("smtp_batch_rotation_enabled", "1" if b.get("rotation_enabled") else "0")
+
+    return {"success": True, "domain": domain, "message": f"Brevo credentials updated for {domain}"}
+
+
+@app.post("/api/smtp/reset-ses-quota")
+async def reset_ses_quota_api():
+    """Manually resets the daily SES quota flag."""
+    db.set_setting("ses_quota_exceeded_today", "0")
+    db.set_setting("ses_sent_today", "0")
+    db.set_setting("smtp_batch_active_provider", "amazon_ses")
+    return {"success": True, "message": "Amazon SES quota reset successfully"}
 
 
 # ── Custom API Endpoints ──────────────────────────────────────

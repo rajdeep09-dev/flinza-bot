@@ -267,20 +267,31 @@ def send_email_now(to_email: str, subject: str, body: str, account: dict, tracki
         else:
             logger.warning(f"Google OAuth dispatch failed for {from_email}: {res.get('error')}. Falling back to SMTP.")
 
-    # 8. Mode 5: SMTP dispatch (Brevo, Amazon SES, SMTP2GO, Mailjet, Gmail, Custom)
+    # 8. Mode 5: SMTP dispatch (Amazon SES, Brevo, SMTP2GO, Mailjet, Gmail, Custom)
     default_hosts = {
         "brevo": "smtp-relay.brevo.com",
         "smtp2go": "mail.smtp2go.com",
         "mailjet": "in-v3.mailjet.com",
-        "amazon_ses": db.get_setting("aws_ses_smtp_host", "email-smtp.us-east-1.amazonaws.com"),
+        "amazon_ses": db.get_setting("aws_ses_smtp_host", "email-smtp.eu-north-1.amazonaws.com"),
         "gmail": "smtp.gmail.com",
         "namecheap": "mail.privateemail.com",
         "zoho": "smtp.zoho.com",
         "outlook": "smtp.office365.com",
         "sendgrid": "smtp.sendgrid.net",
     }
-    target_host = account.get("smtp_host") or default_hosts.get(provider, "smtp.gmail.com")
-    target_port = int(account.get("smtp_port") or (465 if provider == "namecheap" else 587))
+
+    # Dynamic Relay Resolution for Aliases & Custom SMTP (SES vs Brevo rotation & failover)
+    if acct_type == "alias" or provider in ("amazon_ses", "brevo", "custom", "external_smtp"):
+        relay_info = db.get_active_relay_for_alias(from_email)
+        provider = relay_info.get("provider", provider)
+        target_host = relay_info.get("smtp_host") or default_hosts.get(provider, "smtp-relay.brevo.com")
+        target_port = int(relay_info.get("smtp_port") or 587)
+        smtp_user = relay_info.get("smtp_user") or smtp_user
+        smtp_pass = relay_info.get("smtp_pass") or smtp_pass
+        logger.info(f"Resolved relay for {from_email}: {provider} via {target_host}:{target_port} ({relay_info.get('reason')})")
+    else:
+        target_host = account.get("smtp_host") or default_hosts.get(provider, "smtp.gmail.com")
+        target_port = int(account.get("smtp_port") or (465 if provider == "namecheap" else 587))
 
     try:
         # Proper MIME formatting: use pure text/plain if no HTML, multipart/alternative only if HTML is present
@@ -349,6 +360,8 @@ def send_email_now(to_email: str, subject: str, body: str, account: dict, tracki
                 logger.warning(f"Error recording IP node send / auto-rotate: {e_rot}")
 
         db.increment_account_sent(account["id"], is_alias=(acct_type == "alias"))
+        domain_name = from_email.split("@")[-1].strip().lower() if "@" in from_email else ""
+        db.record_smtp_dispatch(provider, domain_name)
         return {"success": True, "account_used": from_email, "message_id": message_id, "provider": provider}
 
     except smtplib.SMTPAuthenticationError as e:
@@ -356,6 +369,28 @@ def send_email_now(to_email: str, subject: str, body: str, account: dict, tracki
         if "525" in err_str or "Unauthorized IP" in err_str:
             return {"success": False, "error": f"Brevo IP Security: Your sending IP is not authorized in Brevo dashboard. Add this IP under Brevo → Settings → Authorized IPs.", "account_used": from_email}
         return {"success": False, "error": f"Auth failed for {smtp_user}. Check SMTP password / API key.", "account_used": from_email}
+
+    except smtplib.SMTPResponseException as e:
+        code = e.smtp_code
+        err_str = str(e.smtp_error) if hasattr(e, "smtp_error") else str(e)
+        # Automatic Quota Failover: If Amazon SES hit daily quota limit or 554 rejection
+        if provider == "amazon_ses" and (code == 554 or any(k in err_str.lower() for k in ["quota", "limit exceeded", "rate exceeded", "daily message"])):
+            logger.warning(f"⚠️ Amazon SES quota limit exceeded ({code}: {err_str}). Triggering immediate failover to Brevo for {from_email}...")
+            db.trigger_ses_quota_exceeded(err_str)
+            domain_name = from_email.split("@")[-1].strip().lower() if "@" in from_email else ""
+            domain_slug = domain_name.replace(".", "_")
+            b_user = db.get_setting(f"brevo_user_{domain_slug}", "")
+            b_pass = db.get_setting(f"brevo_pass_{domain_slug}", "")
+            if b_user and b_pass:
+                fallback_account = dict(account)
+                fallback_account["provider"] = "brevo"
+                fallback_account["smtp_host"] = "smtp-relay.brevo.com"
+                fallback_account["smtp_port"] = 587
+                fallback_account["smtp_user"] = b_user
+                fallback_account["smtp_pass"] = b_pass
+                logger.info(f"Retrying send immediately via Brevo SMTP failover for {from_email}...")
+                return send_email_now(to_email, subject, body, fallback_account, tracking_token, extra_headers)
+        return {"success": False, "error": f"SMTP {code} error: {err_str}", "account_used": from_email}
 
     except smtplib.SMTPRecipientsRefused as e:
         code = list(e.recipients.values())[0][0] if e.recipients else 550
@@ -369,7 +404,23 @@ def send_email_now(to_email: str, subject: str, body: str, account: dict, tracki
         return {"success": False, "error": error, "account_used": from_email, "bounce": True}
 
     except smtplib.SMTPException as e:
-        return {"success": False, "error": f"SMTP error: {str(e)}", "account_used": from_email}
+        err_str = str(e)
+        if provider == "amazon_ses" and any(k in err_str.lower() for k in ["quota", "limit exceeded", "rate exceeded"]):
+            logger.warning(f"⚠️ Amazon SES limit error: {err_str}. Triggering failover to Brevo...")
+            db.trigger_ses_quota_exceeded(err_str)
+            domain_name = from_email.split("@")[-1].strip().lower() if "@" in from_email else ""
+            domain_slug = domain_name.replace(".", "_")
+            b_user = db.get_setting(f"brevo_user_{domain_slug}", "")
+            b_pass = db.get_setting(f"brevo_pass_{domain_slug}", "")
+            if b_user and b_pass:
+                fallback_account = dict(account)
+                fallback_account["provider"] = "brevo"
+                fallback_account["smtp_host"] = "smtp-relay.brevo.com"
+                fallback_account["smtp_port"] = 587
+                fallback_account["smtp_user"] = b_user
+                fallback_account["smtp_pass"] = b_pass
+                return send_email_now(to_email, subject, body, fallback_account, tracking_token, extra_headers)
+        return {"success": False, "error": f"SMTP error: {err_str}", "account_used": from_email}
 
     except Exception as e:
         return {"success": False, "error": f"Send error: {str(e)}", "account_used": from_email}
@@ -462,8 +513,8 @@ def send_test_email(to_email: str, from_account_email: str = None, target_accoun
     elapsed = round((time.time() - start_t) * 1000, 1)
     result["elapsed_ms"] = elapsed
     if result.get("success"):
-        db.mark_email_sent(email_id, result.get("message_id"), account["from_email"])
-        db.log_activity("test_email_sent", f"To: {to_email} | From: {account['from_email']}")
+        db.mark_email_sent(email_id, result.get("message_id"), account["from_email"], provider=result.get("provider"))
+        db.log_activity("test_email_sent", f"To: {to_email} | From: {account['from_email']} | Provider: {result.get('provider')}")
     else:
         db.mark_email_failed(email_id, result.get("error", "Test send error"))
     return result
@@ -535,9 +586,9 @@ def send_with_logging(lead_id: int, to_email: str, subject: str, body: str,
                 account = backup_account
 
     if result["success"]:
-        db.mark_email_sent(email_id, result.get("message_id"), account["from_email"])
+        db.mark_email_sent(email_id, result.get("message_id"), account["from_email"], provider=result.get("provider"))
         db.add_conversation_message(lead_id, "us", f"[{message_type.upper()}] Subject: {subject}\n\n{body}")
-        db.log_activity("email_sent", f"To: {to_email} | Type: {message_type} | From: {account['from_email']}")
+        db.log_activity("email_sent", f"To: {to_email} | Type: {message_type} | From: {account['from_email']} | Provider: {result.get('provider')}")
         return {
             "success": True,
             "email_id": email_id,
