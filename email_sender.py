@@ -283,28 +283,37 @@ def send_email_now(to_email: str, subject: str, body: str, account: dict, tracki
     target_port = int(account.get("smtp_port") or (465 if provider == "namecheap" else 587))
 
     try:
-        msg = MIMEMultipart("alternative")
-        msg["From"]    = formataddr((display_name, from_email))
-        msg["To"]      = to_email
-        msg["Subject"] = subject
+        # Proper MIME formatting: use pure text/plain if no HTML, multipart/alternative only if HTML is present
+        if html_body:
+            msg = MIMEMultipart("alternative")
+            msg.attach(MIMEText(body, "plain", "utf-8"))
+            msg.attach(MIMEText(html_body, "html", "utf-8"))
+        else:
+            msg = MIMEText(body, "plain", "utf-8")
+
+        msg["From"]         = formataddr((display_name, from_email))
+        msg["To"]           = to_email
+        msg["Subject"]      = subject
+        msg["Reply-To"]     = formataddr((display_name, from_email))
+        msg["MIME-Version"] = "1.0"
+        msg["Date"]         = formatdate(localtime=True)
 
         # If sending via alias — add Sender header only if smtp_user is a valid email and not external relay/API
         if from_email.lower() != smtp_user.lower() and "@" in smtp_user and provider not in ("amazon_ses", "brevo", "smtp2go", "mailjet", "sendgrid"):
             msg["Sender"] = formataddr((display_name, smtp_user))
 
-        domain = from_email.split("@")[1] if "@" in from_email else "gmail.com"
-        message_id = make_msgid(domain=domain)
-        msg["Message-ID"] = message_id
-        msg["Date"] = formatdate(localtime=True)
+        # Only inject custom Message-ID for non-SES providers; let Amazon SES assign its official DKIM-signed ID
+        if provider != "amazon_ses":
+            domain = from_email.split("@")[1] if "@" in from_email else "gmail.com"
+            message_id = make_msgid(domain=domain)
+            msg["Message-ID"] = message_id
+        else:
+            message_id = f"ses-assigned-{int(time.time())}"
+
         if extra_headers:
             for hk, hv in extra_headers.items():
                 if hk not in msg:
                     msg[hk] = hv
-
-        # Plain text (always included); HTML only if html_email_enabled
-        msg.attach(MIMEText(body, "plain", "utf-8"))
-        if html_body:
-            msg.attach(MIMEText(html_body, "html", "utf-8"))
 
         # Build SMTP connection (with optional proxy, port 465 SSL vs port 587 STARTTLS)
         active_node = None
@@ -427,29 +436,28 @@ def send_test_email(to_email: str, from_account_email: str = None, target_accoun
         return {"success": False, "error": "No active Gmail accounts or aliases available in database."}
 
     # Ultra-natural subject and body — mimics a real 1:1 human email
+    # Ultra-natural subject and body — mimics a genuine 1:1 direct email
     import random
     subjects = [
-        "quick question",
-        "following up",
-        "curious about your setup",
-        "had a quick idea for you",
-        "re: growth",
+        "Quick hello from Alex",
+        "Quick question regarding your setup",
+        "Connecting / brief note",
+        "Introduction & hello",
     ]
     openers = [
-        "Hey, hope you don't mind the cold reach — came across your work and thought it was worth a shot.",
-        "Hi there, saw what you're building and wanted to reach out.",
-        "Hope this finds you well — I'll keep it brief.",
+        "Hi there,\n\nHope you're having a great week so far.",
+        "Hello,\n\nHope all is well on your side.",
+        "Hi,\n\nWanted to send a quick note your way.",
     ]
     closers = [
-        "Would it make sense to connect for 10 minutes?",
-        "Happy to share more if there's any interest on your end.",
-        "Let me know if this is relevant — no pressure either way.",
+        "Looking forward to staying in touch.\n\nBest regards,",
+        "Would love to connect when you have a moment.\n\nAll the best,",
+        "Have a great rest of your day.\n\nWarmly,",
     ]
     subject = random.choice(subjects)
     body = (
         f"{random.choice(openers)}\n\n"
-        f"We help B2B teams build a more predictable acquisition pipeline. "
-        f"Not sure if it's relevant to what you're working on right now, but figured I'd ask.\n\n"
+        f"Just wanted to reach out directly to say hello and see how things are going with your current projects.\n\n"
         f"{random.choice(closers)}"
     )
 
