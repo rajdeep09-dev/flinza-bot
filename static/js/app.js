@@ -157,6 +157,7 @@ document.addEventListener("DOMContentLoaded", () => {
               <div class="mail-row-top">
                 ${isUnread ? '<span class="mail-unread-dot" title="Unread"></span>' : ''}
                 <span class="mail-sender">${esc(t.sender || "Unknown")}</span>
+                ${t.recipient && t.recipient !== 'Primary Inbox' && t.recipient !== 'me' ? `<span class="mail-alias-pill" style="font-size:10.5px; font-weight:500; color:#38bdf8; background:rgba(56,189,248,0.12); border:1px solid rgba(56,189,248,0.25); border-radius:10px; padding:1px 7px; margin-left:8px; display:inline-flex; align-items:center;">to: ${esc(t.recipient)}</span>` : ''}
                 <button class="mail-star-btn ${isStarred ? 'starred' : ''}" data-id="${t.id}" title="${isStarred ? 'Unstar' : 'Star'}">${isStarred ? '⭐' : '☆'}</button>
               </div>
               <div class="mail-subject"><b>${esc(t.subject || "(No Subject)")}</b>${t.snippet ? ` — <span class="mail-snippet">${esc(t.snippet)}</span>` : ""}</div>
@@ -336,9 +337,11 @@ document.addEventListener("DOMContentLoaded", () => {
             </div>
             <div class="form-field" style="margin:0;">
               <select class="form-select alias-route-select" data-alias="${esc(a.alias)}">
-                <option value="gmail_send_as" ${mode === "gmail_send_as" ? "selected" : ""}>✉️ Gmail Send-As (Free)</option>
-                <option value="cloudflare_api" ${mode === "cloudflare_api" ? "selected" : ""}>⚡ Cloudflare API ($5/mo)</option>
-                <option value="external_smtp" ${mode === "external_smtp" ? "selected" : ""}>🚀 Amazon SES / SMTP</option>
+                <option value="amazon_ses" ${mode === "amazon_ses" ? "selected" : ""}>🚀 Amazon SES Standard (Active)</option>
+                <option value="brevo" ${mode === "brevo" ? "selected" : ""}>⚡ Brevo Cloud Relay</option>
+                <option value="gmail_send_as" ${mode === "gmail_send_as" ? "selected" : ""}>✉️ Gmail Send-As</option>
+                <option value="external_smtp" ${mode === "external_smtp" ? "selected" : ""}>⚙️ Custom SMTP</option>
+                <option value="cloudflare_api" ${mode === "cloudflare_api" ? "selected" : ""}>⚡ Cloudflare API</option>
               </select>
             </div>
             <div class="alias-card-footer">
@@ -353,10 +356,11 @@ document.addEventListener("DOMContentLoaded", () => {
         sel.addEventListener("change", async (e) => {
           const alias = e.target.dataset.alias;
           const newMode = e.target.value;
+          let payload = { alias, routing_mode: newMode };
           try {
-            const d = await apiFetch("/api/aliases/update-routing", "POST", { alias, routing_mode: newMode });
+            const d = await apiFetch("/api/aliases/update-routing", "POST", payload);
             if (d.success) {
-              showToast(`Route updated for ${alias}`, "success");
+              showToast(`Route updated for ${alias} → ${newMode}`, "success");
               loadAliasesRouting();
             }
           } catch (err) {
@@ -364,6 +368,49 @@ document.addEventListener("DOMContentLoaded", () => {
           }
         });
       });
+
+      // Master switch all buttons
+      const btnSesAll = g("btn-switch-all-ses");
+      if (btnSesAll && !btnSesAll._bound) {
+        btnSesAll._bound = true;
+        btnSesAll.addEventListener("click", async () => {
+          btnSesAll.disabled = true;
+          try {
+            const res = await apiFetch("/api/aliases/bulk-switch-mode", "POST", { routing_mode: "amazon_ses" });
+            if (res.success) {
+              showToast("🚀 All aliases switched to Amazon SES!", "success");
+              loadAliasesRouting();
+            } else {
+              showToast(`Error: ${res.error || "Failed"}`, "error");
+            }
+          } catch (err) {
+            showToast(`Error: ${err}`, "error");
+          } finally {
+            btnSesAll.disabled = false;
+          }
+        });
+      }
+
+      const btnBrevoAll = g("btn-switch-all-brevo");
+      if (btnBrevoAll && !btnBrevoAll._bound) {
+        btnBrevoAll._bound = true;
+        btnBrevoAll.addEventListener("click", async () => {
+          btnBrevoAll.disabled = true;
+          try {
+            const res = await apiFetch("/api/aliases/bulk-switch-mode", "POST", { routing_mode: "brevo" });
+            if (res.success) {
+              showToast("⚡ All aliases switched to Brevo Relay!", "success");
+              loadAliasesRouting();
+            } else {
+              showToast(`Error: ${res.error || "Failed"}`, "error");
+            }
+          } catch (err) {
+            showToast(`Error: ${err}`, "error");
+          } finally {
+            btnBrevoAll.disabled = false;
+          }
+        });
+      }
 
       // Test route
       grid.querySelectorAll(".btn-test-alias-route").forEach(btn => {
@@ -1695,13 +1742,21 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   function routeMode(mode, a) {
+    if (mode === "amazon_ses") return {
+      cls: "chip-ses", label: "🚀 Amazon SES",
+      desc: `Direct high-deliverability relay via ${a.smtp_host || "email-smtp.eu-north-1.amazonaws.com"}`
+    };
+    if (mode === "brevo") return {
+      cls: "chip-brevo", label: "⚡ Brevo Relay",
+      desc: `Brevo SMTP Cloud Relay (smtp-relay.brevo.com)`
+    };
     if (mode === "cloudflare_api") return {
       cls: "chip-cf", label: "⚡ Cloudflare",
       desc: `Edge REST API — zero SMTP credentials`
     };
     if (mode === "external_smtp") return {
-      cls: "chip-ses", label: "🚀 SMTP/SES",
-      desc: `Routes via ${a.smtp_host || "Amazon SES"}`
+      cls: "chip-ses", label: "⚙️ Custom SMTP",
+      desc: `Routes via ${a.smtp_host || "SMTP Host"}`
     };
     return {
       cls: "chip-gmail", label: "✉️ Gmail Relay",
@@ -3290,4 +3345,44 @@ window.saveEditedIpNode = saveEditedIpNode;
 window.togglePauseIpNode = togglePauseIpNode;
 window.pingIpNode = pingIpNode;
 window.onLocaltonetHostInput = onLocaltonetHostInput;
+
+// ═══════════════════════════════════════════════════════════════
+//  REAL-TIME WEBMAIL & METRICS AUTO-SYNC (7s POLLER)
+// ═══════════════════════════════════════════════════════════════
+setInterval(async () => {
+  if (document.hidden) return;
+  try {
+    const data = await apiFetch(`/api/webmail/threads?folder=${currentWebmailFolder}&search=${encodeURIComponent(activeSearchQuery)}&filter=${currentWebmailFilter}&page=${currentWebmailPage}&limit=20`);
+    if (!data || !data.success) return;
+
+    if (data.counts) {
+      setEl("badge-webmail-inbox", data.counts.inbox ?? 0);
+      setEl("badge-webmail-all-inboxes", data.counts.all_inboxes ?? 0);
+      setEl("badge-webmail-starred", data.counts.starred ?? 0);
+      setEl("badge-webmail-sent",  data.counts.sent  ?? 0);
+      setEl("badge-webmail-drafts",data.counts.drafts?? 0);
+      setEl("badge-webmail-spam",  data.counts.spam  ?? 0);
+    }
+
+    const activeSection = document.querySelector(".view-section.active");
+    if (activeSection && activeSection.id === "view-webmail") {
+      const newThreads = data.threads || [];
+      const currentIds = currentLoadedThreads.map(t => t.id).join(",");
+      const newIds = newThreads.map(t => t.id).join(",");
+      const counterEl = document.getElementById("webmail-thread-counter");
+      const currentCount = counterEl ? parseInt(counterEl.textContent || "0") : 0;
+      if (currentIds !== newIds || (data.total_count !== undefined && data.total_count !== currentCount)) {
+        loadWebmailThreads(currentWebmailFolder, activeSearchQuery, currentWebmailPage, currentWebmailFilter);
+      }
+    }
+  } catch (e) {}
+}, 7000);
+
+// Auto-check IMAP inboxes in background every 30s
+setInterval(async () => {
+  if (document.hidden) return;
+  try {
+    await apiFetch("/api/unibox/check", "POST", {});
+  } catch (e) {}
+}, 30000);
 

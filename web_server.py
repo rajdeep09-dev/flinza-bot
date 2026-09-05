@@ -844,7 +844,7 @@ async def get_webmail_threads(
     """
 
     # Folder Counts
-    leads_inbox_cnt = conn.execute(f"SELECT COUNT(*) as c FROM replies r WHERE r.handled=0 AND (r.lead_id IS NOT NULL OR r.from_email IN (SELECT email FROM leads)) {system_filter_sql}").fetchone()["c"]
+    leads_inbox_cnt = conn.execute(f"SELECT COUNT(*) as c FROM replies r WHERE r.handled=0 {system_filter_sql}").fetchone()["c"]
     all_inbox_cnt = conn.execute("SELECT COUNT(*) as c FROM replies WHERE handled=0").fetchone()["c"]
     starred_cnt = conn.execute("SELECT (SELECT COUNT(*) FROM replies WHERE is_starred=1) + (SELECT COUNT(*) FROM emails_sent WHERE is_starred=1) as c").fetchone()["c"]
     drafts_cnt = conn.execute("SELECT COUNT(*) as c FROM replies WHERE handled=0 AND ai_draft_body IS NOT NULL").fetchone()["c"]
@@ -858,7 +858,7 @@ async def get_webmail_threads(
         base_where = ["r.handled = 0"]
         params = []
         if folder == "inbox":
-            base_where.append("(r.lead_id IS NOT NULL OR r.from_email IN (SELECT email FROM leads))")
+            # Primary Inbox: show all human inbound emails, filtering out automated bounces & system OTP/noise
             base_where.append("r.from_email NOT LIKE '%no-reply%'")
             base_where.append("r.from_email NOT LIKE '%noreply%'")
             base_where.append("r.from_email NOT LIKE '%google.com%'")
@@ -888,7 +888,7 @@ async def get_webmail_threads(
         total_count = conn.execute(count_query, params).fetchone()["c"]
 
         query = f"""
-            SELECT r.id, r.from_email as sender, 'me' as recipient, r.subject, r.body,
+            SELECT r.id, r.from_email as sender, r.to_email, r.action_taken, r.subject, r.body,
                    r.received_at as timestamp, r.sentiment, r.intent, r.ai_draft_subject, r.ai_draft_body,
                    r.handled, r.is_read, r.is_starred, l.name as lead_name, l.company as lead_company
             FROM replies r
@@ -912,11 +912,17 @@ async def get_webmail_threads(
             draft_sub = r["ai_draft_subject"] or (f"Re: {clean_subj}" if clean_subj else "Re: Following up")
             draft_body = r["ai_draft_body"] or f"Hi {lead_display},\n\nThanks for reaching back out! Great to hear from you. Let's set up a quick 15-minute chat this week to run through the details.\n\nDoes Thursday or Friday afternoon work for you?\n\nBest regards,\nAlex Vance"
 
+            recip = r["to_email"]
+            if not recip and r["action_taken"] and str(r["action_taken"]).startswith("inbound_to_"):
+                recip = str(r["action_taken"]).replace("inbound_to_", "")
+            if not recip:
+                recip = "Primary Inbox"
+
             threads.append({
                 "id": r["id"],
                 "type": "inbound",
                 "sender": r["sender"],
-                "recipient": "Flinza Inbox",
+                "recipient": recip,
                 "subject": r["subject"] or "(No Subject)",
                 "snippet": (r["body"] or "").replace("\n", " ")[:140],
                 "body": r["body"] or "",
@@ -940,7 +946,7 @@ async def get_webmail_threads(
         where_clause = " WHERE " + " AND ".join(base_where)
         total_count = conn.execute(f"SELECT COUNT(*) as c FROM replies r {where_clause}", params).fetchone()["c"]
         query = f"""
-            SELECT r.id, r.from_email as sender, 'me' as recipient, r.subject, r.body,
+            SELECT r.id, r.from_email as sender, r.to_email, r.action_taken, r.subject, r.body,
                    r.received_at as timestamp, r.sentiment, r.intent, r.ai_draft_subject, r.ai_draft_body,
                    r.handled, r.is_read, r.is_starred, l.name as lead_name, l.company as lead_company
             FROM replies r
@@ -950,11 +956,17 @@ async def get_webmail_threads(
         """
         rows = conn.execute(query, params + [limit, offset]).fetchall()
         for r in rows:
+            recip = r["to_email"]
+            if not recip and r["action_taken"] and str(r["action_taken"]).startswith("inbound_to_"):
+                recip = str(r["action_taken"]).replace("inbound_to_", "")
+            if not recip:
+                recip = "Primary Inbox"
+
             threads.append({
                 "id": r["id"],
                 "type": "inbound",
                 "sender": r["sender"],
-                "recipient": "Flinza Inbox",
+                "recipient": recip,
                 "subject": r["subject"] or "(No Subject)",
                 "snippet": (r["body"] or "").replace("\n", " ")[:140],
                 "body": r["body"] or "",
@@ -1412,17 +1424,75 @@ async def update_alias_routing_api(request: Request):
     if not alias or not mode:
         raise HTTPException(status_code=400, detail="alias and routing_mode required")
 
+    conn = db.get_db()
+    smtp_host = b.get("smtp_host")
+    smtp_port = int(b.get("smtp_port")) if b.get("smtp_port") else None
+    smtp_user = b.get("smtp_user")
+    custom_smtp_user = b.get("custom_smtp_user")
+    custom_smtp_pass = b.get("custom_smtp_pass")
+
+    if mode in ("amazon_ses", "brevo") and (not smtp_host or not custom_smtp_pass):
+        prof = conn.execute("SELECT * FROM smtp_profiles WHERE provider=?", (mode,)).fetchone()
+        if prof:
+            smtp_host = prof["smtp_host"]
+            smtp_port = prof["smtp_port"]
+            custom_smtp_user = prof["smtp_user"]
+            custom_smtp_pass = prof["smtp_pass"]
+
+    conn.close()
+
     db.update_alias_routing(
         alias=alias,
         routing_mode=mode,
-        smtp_user=b.get("smtp_user"),
-        smtp_host=b.get("smtp_host"),
-        smtp_port=int(b.get("smtp_port")) if b.get("smtp_port") else None,
-        custom_smtp_user=b.get("custom_smtp_user"),
-        custom_smtp_pass=b.get("custom_smtp_pass"),
+        smtp_user=smtp_user,
+        smtp_host=smtp_host,
+        smtp_port=smtp_port,
+        custom_smtp_user=custom_smtp_user,
+        custom_smtp_pass=custom_smtp_pass,
         forward_to=b.get("forward_to"),
     )
     return {"success": True, "alias": alias, "updated_routing_mode": mode}
+
+
+@app.post("/api/aliases/bulk-switch-mode")
+async def bulk_switch_alias_mode(request: Request):
+    """Switches routing mode for all active aliases to amazon_ses or brevo."""
+    b = await request.json()
+    mode = b.get("routing_mode", "amazon_ses")
+    if mode not in ("amazon_ses", "brevo", "gmail_send_as"):
+        raise HTTPException(status_code=400, detail="Invalid routing mode")
+
+    conn = db.get_db()
+    if mode in ("amazon_ses", "brevo"):
+        prof = conn.execute("SELECT * FROM smtp_profiles WHERE provider=?", (mode,)).fetchone()
+        if prof:
+            host = prof["smtp_host"]
+            port = prof["smtp_port"]
+            user = prof["smtp_user"]
+            pwd = prof["smtp_pass"]
+        else:
+            host = "email-smtp.eu-north-1.amazonaws.com" if mode == "amazon_ses" else "smtp-relay.brevo.com"
+            port = 587
+            user = ""
+            pwd = ""
+    else:
+        host = None
+        port = 587
+        user = None
+        pwd = None
+
+    conn.execute("""
+        UPDATE smtp_aliases SET
+            routing_mode = ?,
+            smtp_host = ?,
+            smtp_port = ?,
+            custom_smtp_user = ?,
+            custom_smtp_pass = ?
+        WHERE is_active = 1
+    """, (mode, host, port, user, pwd))
+    conn.commit()
+    conn.close()
+    return {"success": True, "mode": mode, "message": f"All active aliases switched to {mode}"}
 
 
 @app.post("/api/aliases/test-route")

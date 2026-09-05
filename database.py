@@ -354,7 +354,10 @@ def init_db():
     for tbl, col, col_type in [
         ("replies", "is_read", "INTEGER DEFAULT 0"),
         ("replies", "is_starred", "INTEGER DEFAULT 0"),
+        ("replies", "to_email", "TEXT"),
+        ("replies", "message_id", "TEXT"),
         ("emails_sent", "is_starred", "INTEGER DEFAULT 0"),
+        ("emails_sent", "provider", "TEXT DEFAULT 'amazon_ses'"),
     ]:
         try:
             conn.execute(f"ALTER TABLE {tbl} ADD COLUMN {col} {col_type}")
@@ -1270,7 +1273,7 @@ def is_duplicate_reply(from_email: str, subject: str, body: str = None, message_
     return False
 
 
-def log_reply(lead_id, from_email, subject, body, ai_draft_subject=None, ai_draft_body=None, message_id=None):
+def log_reply(lead_id, from_email, subject, body, ai_draft_subject=None, ai_draft_body=None, message_id=None, to_email=None):
     if is_duplicate_reply(from_email, subject, body, message_id):
         conn = get_db()
         row = conn.execute("SELECT id FROM replies WHERE LOWER(from_email) = ? ORDER BY id DESC LIMIT 1", (from_email.lower().strip(),)).fetchone()
@@ -1279,9 +1282,9 @@ def log_reply(lead_id, from_email, subject, body, ai_draft_subject=None, ai_draf
 
     conn = get_db()
     cur = conn.execute(
-        """INSERT INTO replies (lead_id, from_email, subject, body, ai_draft_subject, ai_draft_body, message_id)
-           VALUES (?,?,?,?,?,?,?)""",
-        (lead_id, from_email, subject, body, ai_draft_subject, ai_draft_body, message_id)
+        """INSERT INTO replies (lead_id, from_email, to_email, subject, body, ai_draft_subject, ai_draft_body, message_id)
+           VALUES (?,?,?,?,?,?,?,?)""",
+        (lead_id, from_email, to_email.lower().strip() if to_email else None, subject, body, ai_draft_subject, ai_draft_body, message_id)
     )
     conn.commit()
     reply_id = cur.lastrowid
@@ -1379,11 +1382,11 @@ def log_inbound_webhook_reply(from_email: str, to_email: str, subject: str, body
         conn.execute("UPDATE leads SET stage='replied', last_contact=? WHERE id=?", (datetime.now().isoformat(), lead_id))
         conn.execute("UPDATE followups_scheduled SET status='cancelled' WHERE lead_id=? AND status='pending'", (lead_id,))
 
-    # 2. Log reply with message_id
+    # 2. Log reply with message_id and to_email
     cur = conn.execute(
-        """INSERT INTO replies (lead_id, from_email, subject, body, action_taken, message_id)
-           VALUES (?, ?, ?, ?, ?, ?)""",
-        (lead_id, clean_from, subject, body, f"inbound_to_{to_email}", msg_id)
+        """INSERT INTO replies (lead_id, from_email, to_email, subject, body, action_taken, message_id)
+           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+        (lead_id, clean_from, to_email.lower().strip() if to_email else None, subject, body, f"inbound_to_{to_email}", msg_id)
     )
     reply_id = cur.lastrowid
     conn.commit()

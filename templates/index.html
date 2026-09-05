@@ -287,29 +287,30 @@
           <div class="view-header-bar">
             <div>
               <h2 class="view-title">Dispatch Routing</h2>
-              <p class="view-subtitle">Configure how each alias routes outbound emails — Gmail Relay, Cloudflare API, or Amazon SES</p>
+              <p class="view-subtitle">High-deliverability multi-domain dispatch — Amazon SES Standard & Brevo Relay</p>
             </div>
             <div class="view-header-actions">
-              <button class="btn-ghost-sm" id="btn-cf-gen5-routing">⚡ Generate 5 CF Aliases</button>
+              <button class="btn-ghost-sm" id="btn-switch-all-ses" style="border: 1px solid rgba(245,158,11,0.5); color: #fbbf24; background: rgba(245,158,11,0.1);">🚀 Switch All to SES</button>
+              <button class="btn-ghost-sm" id="btn-switch-all-brevo" style="border: 1px solid rgba(59,130,246,0.5); color: #60a5fa; background: rgba(59,130,246,0.1);">⚡ Switch All to Brevo</button>
               <button class="btn-primary-sm" id="btn-open-create-alias">+ Add Alias</button>
             </div>
           </div>
           <!-- Route Mode Architecture -->
           <div class="arch-grid">
-            <div class="arch-tile arch-gmail">
-              <div class="arch-tile-icon">✉️</div>
-              <strong>Gmail Send-As Relay</strong>
-              <p>Routes via master Gmail using verified <code>Sender:</code> headers. Zero extra cost.</p>
-            </div>
-            <div class="arch-tile arch-cf">
-              <div class="arch-tile-icon">⚡</div>
-              <strong>Cloudflare Workers API</strong>
-              <p>Direct edge REST dispatch, no SMTP credentials. Just $5/mo flat.</p>
-            </div>
-            <div class="arch-tile arch-ses">
+            <div class="arch-tile arch-ses" style="border-color: rgba(245,158,11,0.35);">
               <div class="arch-tile-icon">🚀</div>
-              <strong>Amazon SES / SMTP</strong>
-              <p>Domain-level DKIM verification. $0.10 / 1,000 emails at agency scale.</p>
+              <strong>Amazon SES Core (Stockholm)</strong>
+              <p>Direct outbound relay via <code>email-smtp.eu-north-1.amazonaws.com</code> with custom MAIL FROM & DKIM.</p>
+            </div>
+            <div class="arch-tile arch-gmail" style="border-color: rgba(59,130,246,0.35);">
+              <div class="arch-tile-icon">⚡</div>
+              <strong>Brevo SMTP Relay (Ready)</strong>
+              <p>High-reputation cloud fallback relay (<code>smtp-relay.brevo.com</code>) with authorized SPF alignment.</p>
+            </div>
+            <div class="arch-tile arch-cf" style="border-color: rgba(56,189,248,0.35);">
+              <div class="arch-tile-icon">🛡️</div>
+              <strong>Cloudflare Catch-All Inbound</strong>
+              <p>Instant edge routing across all 3 domains forwarding directly to <code>rajdeep.f12x@gmail.com</code>.</p>
             </div>
           </div>
           <!-- Alias Cards Grid -->

@@ -222,6 +222,7 @@ def _process_message(mail, msg_id, our_email, notify_callback):
         lead["id"], sender_email, subject, body,
         ai_draft_subject=ai_draft_subject,
         ai_draft_body=ai_draft_body,
+        to_email=to_email or our_email,
     )
 
     # Update intent & sentiment in replies table

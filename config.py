@@ -62,8 +62,11 @@ AWS_SES_SMTP_PASS = os.environ.get("AWS_SES_SMTP_PASS", "").strip()
 # ─── Inbound Email Webhook (Cloudflare Worker Integration) ───────
 INBOUND_WEBHOOK_SECRET = os.environ.get("INBOUND_WEBHOOK_SECRET", "flinza_cf_inbound_secret_2026").strip()
 
-# ─── Database ────────────────────────────────────────────────────
-DB_PATH = os.environ.get("DB_PATH", "flinza.db")
+_raw_db = os.environ.get("DB_PATH", "flinza.db").strip()
+if not os.path.isabs(_raw_db):
+    DB_PATH = str((Path(__file__).parent / _raw_db).resolve())
+else:
+    DB_PATH = _raw_db
 
 # ─── Sending Defaults (High-Volume Deliverability Architecture) ───
 DEFAULT_DAILY_LIMIT          = 80     # Gmail safe maximum

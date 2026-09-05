@@ -1382,6 +1382,7 @@ html, body {
 .chip-gmail { background: rgba(251,113,133,0.15); color: var(--rose); border: 1px solid rgba(251,113,133,0.2); }
 .chip-cf    { background: rgba(126,206,206,0.15); color: var(--brand-cyan); border: 1px solid rgba(126,206,206,0.2); }
 .chip-ses   { background: rgba(52,211,153,0.15);  color: var(--emerald); border: 1px solid rgba(52,211,153,0.2); }
+.chip-brevo { background: rgba(59,130,246,0.15); color: #60a5fa; border: 1px solid rgba(59,130,246,0.25); }
 
 .alias-route-info {
   display: flex;
