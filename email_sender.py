@@ -295,7 +295,6 @@ def send_email_now(to_email: str, subject: str, body: str, account: dict, tracki
         msg["To"]           = to_email
         msg["Subject"]      = subject
         msg["Reply-To"]     = formataddr((display_name, from_email))
-        msg["MIME-Version"] = "1.0"
         msg["Date"]         = formatdate(localtime=True)
 
         # If sending via alias — add Sender header only if smtp_user is a valid email and not external relay/API
