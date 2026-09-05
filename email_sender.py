@@ -302,13 +302,9 @@ def send_email_now(to_email: str, subject: str, body: str, account: dict, tracki
         if from_email.lower() != smtp_user.lower() and "@" in smtp_user and provider not in ("amazon_ses", "brevo", "smtp2go", "mailjet", "sendgrid"):
             msg["Sender"] = formataddr((display_name, smtp_user))
 
-        # Only inject custom Message-ID for non-SES providers; let Amazon SES assign its official DKIM-signed ID
-        if provider != "amazon_ses":
-            domain = from_email.split("@")[1] if "@" in from_email else "gmail.com"
-            message_id = make_msgid(domain=domain)
-            msg["Message-ID"] = message_id
-        else:
-            message_id = f"ses-assigned-{int(time.time())}"
+        domain = from_email.split("@")[1] if "@" in from_email else "gmail.com"
+        message_id = make_msgid(domain=domain)
+        msg["Message-ID"] = message_id
 
         if extra_headers:
             for hk, hv in extra_headers.items():
