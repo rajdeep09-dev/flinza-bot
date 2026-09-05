@@ -288,8 +288,8 @@ def send_email_now(to_email: str, subject: str, body: str, account: dict, tracki
         msg["To"]      = to_email
         msg["Subject"] = subject
 
-        # If sending via alias — add Sender header so mail server knows master user
-        if from_email.lower() != smtp_user.lower():
+        # If sending via alias — add Sender header only if smtp_user is a valid email and not external relay/API
+        if from_email.lower() != smtp_user.lower() and "@" in smtp_user and provider not in ("amazon_ses", "brevo", "smtp2go", "mailjet", "sendgrid"):
             msg["Sender"] = formataddr((display_name, smtp_user))
 
         domain = from_email.split("@")[1] if "@" in from_email else "gmail.com"
@@ -308,7 +308,7 @@ def send_email_now(to_email: str, subject: str, body: str, account: dict, tracki
 
         # Build SMTP connection (with optional proxy, port 465 SSL vs port 587 STARTTLS)
         active_node = None
-        if not proxy_url:
+        if not proxy_url and provider not in ("amazon_ses", "brevo", "smtp2go", "mailjet", "cloudflare_api"):
             # Route outbound outreach through smart IP rotator fleet pool (multi-node balancing)
             try:
                 import ip_rotator
@@ -325,14 +325,17 @@ def send_email_now(to_email: str, subject: str, body: str, account: dict, tracki
         with smtp_conn as server:
             if target_port == 465:
                 # Direct SSL connection (e.g. Namecheap Private Email or Amazon SES SSL)
-                server.login(smtp_user, smtp_pass)
+                pass
             else:
                 # STARTTLS connection (e.g. port 587 or 2525)
                 server.ehlo()
                 server.starttls()
                 server.ehlo()
+            if smtp_user and smtp_pass:
                 server.login(smtp_user, smtp_pass)
-            server.sendmail(smtp_user, [to_email], msg.as_string())
+            # Determine proper envelope sender (MAIL FROM) for strict DMARC/SPF compliance
+            envelope_sender = from_email if ("@" not in smtp_user or provider in ("amazon_ses", "brevo", "smtp2go", "mailjet", "sendgrid", "namecheap") or acct_type == "alias") else smtp_user
+            server.sendmail(envelope_sender, [to_email], msg.as_string())
 
         if active_node and active_node.get("id"):
             try:
@@ -401,14 +404,19 @@ def send_test_email(to_email: str, from_account_email: str = None, target_accoun
             aliases = db.get_all_aliases()
             for al in aliases:
                 if al["alias"].lower() == target:
+                    al_d = dict(al)
                     account = {
-                        "id": al["alias"],
+                        "id": al_d["alias"],
                         "type": "alias",
-                        "from_email": al["alias"],
-                        "smtp_user": al["smtp_user"],
-                        "smtp_pass": al["smtp_pass"],
+                        "from_email": al_d["alias"],
+                        "smtp_user": al_d.get("custom_smtp_user") or al_d.get("smtp_user"),
+                        "smtp_pass": al_d.get("custom_smtp_pass") or al_d.get("smtp_pass"),
+                        "provider": al_d.get("routing_mode", "gmail_send_as"),
+                        "routing_mode": al_d.get("routing_mode", "gmail_send_as"),
+                        "smtp_host": al_d.get("smtp_host"),
+                        "smtp_port": al_d.get("smtp_port"),
                         "proxy_url": None,
-                        "display_name": al["display_name"] or _make_display_name(al["alias"])
+                        "display_name": al_d.get("display_name") or _make_display_name(al_d["alias"])
                     }
                     break
 
@@ -592,7 +600,10 @@ def _make_smtp_connection(proxy_url: str | None, target_host: str = "smtp.gmail.
                 return conn
         except ImportError:
             logger.warning("PySocks not installed — ignoring SOCKS proxy, falling back to direct connection.")
-            return smtplib.SMTP(target_host, target_port, timeout=30)
+            return smtplib.SMTP_SSL(target_host, target_port, timeout=30) if target_port == 465 else smtplib.SMTP(target_host, target_port, timeout=30)
+        except Exception as e_sock:
+            logger.warning(f"SOCKS proxy connect to {host}:{port} failed ({e_sock}) — falling back to direct connection.")
+            return smtplib.SMTP_SSL(target_host, target_port, timeout=30) if target_port == 465 else smtplib.SMTP(target_host, target_port, timeout=30)
 
     elif scheme in ("http", "https"):
         # HTTP proxy via CONNECT tunnel

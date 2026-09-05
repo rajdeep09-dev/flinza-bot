@@ -647,7 +647,7 @@ def get_next_available_account():
         FROM smtp_aliases a
         LEFT JOIN gmail_accounts g ON a.smtp_user = g.email
         WHERE a.is_active=1 AND a.daily_sent < a.daily_limit
-          AND (g.active=1 OR a.routing_mode IN ('cloudflare_api', 'external_smtp'))
+          AND (g.active=1 OR a.routing_mode IN ('cloudflare_api', 'external_smtp', 'amazon_ses', 'brevo', 'smtp2go', 'mailjet', 'namecheap_smtp') OR a.custom_smtp_pass IS NOT NULL)
     """).fetchall()
     candidates.extend([dict(r) for r in alias_rows])
 
