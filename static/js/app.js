@@ -64,6 +64,7 @@ document.addEventListener("DOMContentLoaded", () => {
     }
     if (loaders[viewName]) loaders[viewName]();
   }
+  window.switchView = switchView;
 
   navItems.forEach(item => item.addEventListener("click", () => switchView(item.dataset.view)));
 
@@ -72,7 +73,7 @@ document.addEventListener("DOMContentLoaded", () => {
     activeSearchQuery = e.target.value.trim();
     const activeSection = document.querySelector(".view-section.active");
     if (activeSection && activeSection.id !== "view-webmail") {
-      switchView("webmail-inbox");
+      switchView("webmail-all-inboxes");
     } else {
       loadWebmailThreads(currentWebmailFolder, activeSearchQuery, 1, currentWebmailFilter);
     }
@@ -131,7 +132,7 @@ document.addEventListener("DOMContentLoaded", () => {
   // ═══════════════════════════════════════════════════════
   let currentLoadedThreads = [];
   let selectedThreadId = null;
-  let currentWebmailFolder = "inbox";
+  let currentWebmailFolder = "all-inboxes";
   let currentWebmailFilter = "all";
   let currentWebmailPage = 1;
   let totalWebmailPages = 1;
@@ -172,13 +173,25 @@ document.addEventListener("DOMContentLoaded", () => {
       if (!rowsList) return;
 
       if (currentLoadedThreads.length === 0) {
-        rowsList.innerHTML = `
-          <div class="inbox-empty-state">
-            <div class="empty-icon">
-              <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2" opacity="0.3"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
-            </div>
-            <p>No emails found in ${folder} (filter: ${filter}).</p>
-          </div>`;
+        if (folder === "inbox") {
+          rowsList.innerHTML = `
+            <div class="inbox-empty-state">
+              <div class="empty-icon">
+                <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2" opacity="0.3"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
+              </div>
+              <p style="font-weight:600;color:var(--text-primary);margin-bottom:6px;">No CRM prospect replies yet</p>
+              <p style="font-size:12px;color:var(--text-dim);margin-bottom:12px;max-width:320px;margin-inline:auto;">All incoming emails, verification links, and mailbox alerts are collected in <strong>All Inboxes</strong>.</p>
+              <button class="btn-primary-sm" onclick="window.switchView('webmail-all-inboxes')">Go to All Inboxes</button>
+            </div>`;
+        } else {
+          rowsList.innerHTML = `
+            <div class="inbox-empty-state">
+              <div class="empty-icon">
+                <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2" opacity="0.3"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
+              </div>
+              <p>No emails found in ${folder} (filter: ${filter}).</p>
+            </div>`;
+        }
         return;
       }
 
@@ -3492,7 +3505,6 @@ async function verifySmtpDirect() {
 }
 
 // Global window exposure for inline event handlers and external view switching
-window.switchView = window.switchView || switchView;
 window.loadIpNodes = loadIpNodes;
 window.loadSmtpVault = loadSmtpVault;
 window.ipNodeConnect = ipNodeConnect;

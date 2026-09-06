@@ -1069,7 +1069,7 @@ def _query_webmail_threads(conn, folder: str, search: Optional[str], filter: str
             FROM replies r
             LEFT JOIN leads l ON r.lead_id = l.id
             {where_clause}
-            ORDER BY r.received_at DESC LIMIT ? OFFSET ?
+            ORDER BY r.id DESC LIMIT ? OFFSET ?
         """
         rows = conn.execute(query, params + [limit, offset]).fetchall()
         for r in rows:
@@ -1136,7 +1136,7 @@ def _query_webmail_threads(conn, folder: str, search: Optional[str], filter: str
             FROM replies r
             LEFT JOIN leads l ON r.lead_id = l.id
             {where_clause}
-            ORDER BY r.received_at DESC LIMIT ? OFFSET ?
+            ORDER BY r.id DESC LIMIT ? OFFSET ?
         """
         rows = conn.execute(query, params + [limit, offset]).fetchall()
         for r in rows:
@@ -1216,7 +1216,7 @@ def _query_webmail_threads(conn, folder: str, search: Optional[str], filter: str
                    r.received_at as timestamp, r.is_starred
             FROM replies r
             {where_clause}
-            ORDER BY r.received_at DESC LIMIT ? OFFSET ?
+            ORDER BY r.id DESC LIMIT ? OFFSET ?
         """
         rows = conn.execute(query, params + [limit, offset]).fetchall()
         for r in rows:
