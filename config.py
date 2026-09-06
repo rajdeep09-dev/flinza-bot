@@ -30,6 +30,17 @@ try:
 except ValueError:
     ALLOWED_USER_ID = None
 
+# ─── Dashboard Auth (API Bearer Token) ───────────────────────────
+# If not set, a random key is auto-generated and printed on startup.
+DASHBOARD_API_KEY = os.environ.get("DASHBOARD_API_KEY", "").strip()
+# Set REQUIRE_AUTH=false to disable auth for local-only development
+REQUIRE_AUTH = os.environ.get("REQUIRE_AUTH", "true").strip().lower() not in ("false", "0", "no")
+
+# ─── CORS ────────────────────────────────────────────────────────
+# Comma-separated list of allowed origins. Defaults to localhost only.
+_raw_origins = os.environ.get("ALLOWED_ORIGINS", "http://localhost:7880,http://localhost:8000,http://127.0.0.1:7880,http://127.0.0.1:8000").strip()
+ALLOWED_ORIGINS = [o.strip() for o in _raw_origins.split(",") if o.strip()]
+
 # ─── AI Keys ─────────────────────────────────────────────────────
 GEMINI_API_KEY     = os.environ.get("GEMINI_API_KEY", "").strip()
 MISTRAL_API_KEY    = os.environ.get("MISTRAL_API_KEY", "").strip()
@@ -53,14 +64,15 @@ STUDIO_PORT       = int(os.environ.get("STUDIO_PORT", "8000"))
 TRACKING_BASE_URL = os.environ.get("TRACKING_BASE_URL", "http://localhost:8000").rstrip("/")
 
 # ─── Amazon SES & Custom SMTP ────────────────────────────────────
-AWS_SES_REGION    = os.environ.get("AWS_SES_REGION", "us-east-1").strip()
-AWS_SES_SMTP_HOST = os.environ.get("AWS_SES_SMTP_HOST", "email-smtp.us-east-1.amazonaws.com").strip()
+AWS_SES_REGION    = os.environ.get("AWS_SES_REGION", "eu-north-1").strip()
+AWS_SES_SMTP_HOST = os.environ.get("AWS_SES_SMTP_HOST", "email-smtp.eu-north-1.amazonaws.com").strip()
 AWS_SES_SMTP_PORT = int(os.environ.get("AWS_SES_SMTP_PORT", "587"))
-AWS_SES_SMTP_USER = os.environ.get("AWS_SES_SMTP_USER", "").strip()
-AWS_SES_SMTP_PASS = os.environ.get("AWS_SES_SMTP_PASS", "").strip()
+AWS_SES_SMTP_USER = os.environ.get("AWS_SES_SMTP_USER", "AKIAX244R4WL43IRDXH5").strip()
+AWS_SES_SMTP_PASS = os.environ.get("AWS_SES_SMTP_PASS", "BAY9zz1YqpRBNoakiV4WQWoYuMH4tlKencFKs6m4LuIo").strip()
 
 # ─── Inbound Email Webhook (Cloudflare Worker Integration) ───────
-INBOUND_WEBHOOK_SECRET = os.environ.get("INBOUND_WEBHOOK_SECRET", "flinza_cf_inbound_secret_2026").strip()
+# REQUIRED: Generate with: python -c "import secrets; print(secrets.token_hex(32))"
+INBOUND_WEBHOOK_SECRET = os.environ.get("INBOUND_WEBHOOK_SECRET", "").strip()
 
 _raw_db = os.environ.get("DB_PATH", "flinza.db").strip()
 if not os.path.isabs(_raw_db):

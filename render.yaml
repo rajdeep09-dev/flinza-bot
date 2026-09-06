@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: flinza-studio
+    env: python
+    region: frankfurt
+    plan: free
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "python app.py"
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.0
+      - key: REQUIRE_AUTH
+        value: "true"

@@ -20,6 +20,7 @@ document.addEventListener("DOMContentLoaded", () => {
     if (viewName.startsWith("webmail-")) {
       const folder = viewName.replace("webmail-", "");
       currentWebmailFolder = folder;
+      currentFolder = folder;
       viewSections.forEach(s => s.classList.toggle("active", s.id === "view-webmail"));
       // Update title
       const folderTitles = {
@@ -72,18 +73,55 @@ document.addEventListener("DOMContentLoaded", () => {
     if (activeSection && activeSection.id !== "view-webmail") {
       switchView("webmail-inbox");
     } else {
-      loadWebmailThreads(currentFolder, activeSearchQuery);
+      loadWebmailThreads(currentWebmailFolder, activeSearchQuery, 1, currentWebmailFilter);
     }
   }, 250));
 
-  // ⌘K / Ctrl+K focus search
+  // ⌘K / Ctrl+K focus search, Escape to close, j/k to navigate threads
   document.addEventListener("keydown", (e) => {
     if ((e.metaKey || e.ctrlKey) && e.key === "k") {
       e.preventDefault();
       document.getElementById("global-mail-search")?.focus();
+      return;
     }
     if (e.key === "Escape") {
       closeAllModals();
+      const pane = g("webmail-reading-pane");
+      if (pane && pane.style.display !== "none") {
+        pane.style.display = "none";
+        selectedThreadId = null;
+        document.querySelectorAll(".mail-row").forEach(r => r.classList.remove("active"));
+      }
+      return;
+    }
+
+    // Don't intercept when user is typing in inputs or textareas
+    const activeTag = (document.activeElement?.tagName || "").toLowerCase();
+    if (activeTag === "input" || activeTag === "textarea" || document.activeElement?.isContentEditable) {
+      return;
+    }
+
+    // Webmail quick navigation: ArrowDown / j for next, ArrowUp / k for prev, r to sync
+    const activeSection = document.querySelector(".view-section.active");
+    if (activeSection && activeSection.id === "view-webmail") {
+      if ((e.key === "r" || e.key === "R") && !e.ctrlKey && !e.metaKey) {
+        e.preventDefault();
+        g("btn-refresh-webmail")?.click();
+        return;
+      }
+      if (currentLoadedThreads.length > 0) {
+        if (e.key === "j" || e.key === "ArrowDown") {
+          e.preventDefault();
+          const curIdx = currentLoadedThreads.findIndex(t => t.id === selectedThreadId);
+          const nextIdx = (curIdx >= 0 && curIdx < currentLoadedThreads.length - 1) ? curIdx + 1 : 0;
+          openThreadDetail(currentLoadedThreads[nextIdx].id);
+        } else if (e.key === "k" || e.key === "ArrowUp") {
+          e.preventDefault();
+          const curIdx = currentLoadedThreads.findIndex(t => t.id === selectedThreadId);
+          const prevIdx = curIdx > 0 ? curIdx - 1 : currentLoadedThreads.length - 1;
+          openThreadDetail(currentLoadedThreads[prevIdx].id);
+        }
+      }
     }
   });
 
@@ -237,9 +275,17 @@ document.addEventListener("DOMContentLoaded", () => {
     const bodyEl = g("read-body");
     if (bodyEl) bodyEl.textContent = thread.body || "No message content.";
 
+    // Update Prev / Next buttons
+    const curIdx = currentLoadedThreads.findIndex(t => t.id === id);
+    const btnPrev = g("btn-read-prev-thread");
+    const btnNext = g("btn-read-next-thread");
+    if (btnPrev) btnPrev.disabled = curIdx <= 0;
+    if (btnNext) btnNext.disabled = curIdx < 0 || curIdx >= currentLoadedThreads.length - 1;
+
     const aiComposer = g("read-ai-composer");
     const aiDraft = g("read-ai-draft-text");
-    if (thread.ai_draft_body || thread.type === "inbound") {
+    const isLeadReply = !!(thread.lead_id || (thread.tag && thread.tag !== "Mailbox" && thread.folder === "inbox") || thread.ai_draft_body);
+    if (isLeadReply && (thread.ai_draft_body || thread.lead_name)) {
       if (aiComposer) aiComposer.style.display = "flex";
       if (aiDraft) aiDraft.value = thread.ai_draft_body ||
         `Hi ${thread.lead_name || "there"},\n\nThank you for getting back to us! We'd love to walk you through how we help businesses like yours scale with short-form content.\n\nWould you have 15 minutes this week for a quick call?\n\nBest,\nFlinza Team`;
@@ -255,6 +301,27 @@ document.addEventListener("DOMContentLoaded", () => {
     document.querySelectorAll(".mail-row").forEach(r => r.classList.remove("active"));
   });
 
+  on("btn-read-prev-thread", "click", () => {
+    if (!selectedThreadId) return;
+    const curIdx = currentLoadedThreads.findIndex(t => t.id === selectedThreadId);
+    if (curIdx > 0) openThreadDetail(currentLoadedThreads[curIdx - 1].id);
+  });
+
+  on("btn-read-next-thread", "click", () => {
+    if (!selectedThreadId) return;
+    const curIdx = currentLoadedThreads.findIndex(t => t.id === selectedThreadId);
+    if (curIdx >= 0 && curIdx < currentLoadedThreads.length - 1) openThreadDetail(currentLoadedThreads[curIdx + 1].id);
+  });
+
+  on("btn-copy-sender", "click", () => {
+    const sender = g("read-sender")?.textContent?.trim();
+    if (sender && navigator.clipboard) {
+      navigator.clipboard.writeText(sender).then(() => {
+        showToast(`Copied ${sender} to clipboard!`, "success");
+      }).catch(() => {});
+    }
+  });
+
   on("btn-send-read-draft", "click", async (e) => {
     if (!selectedThreadId) return;
     const customText = g("read-ai-draft-text")?.value.trim();
@@ -266,7 +333,7 @@ document.addEventListener("DOMContentLoaded", () => {
       if (d.success) {
         showToast("✓ Reply dispatched successfully!", "success");
         g("webmail-reading-pane").style.display = "none";
-        loadWebmailThreads(currentFolder, activeSearchQuery);
+        loadWebmailThreads(currentWebmailFolder, activeSearchQuery, currentWebmailPage, currentWebmailFilter);
       } else {
         showToast(`Failed: ${d.error || "Unknown error"}`, "error");
       }
@@ -291,7 +358,7 @@ document.addEventListener("DOMContentLoaded", () => {
     } catch {}
     setTimeout(() => {
       btn.style.animation = "";
-      loadWebmailThreads(currentFolder, activeSearchQuery);
+      loadWebmailThreads(currentWebmailFolder, activeSearchQuery, currentWebmailPage, currentWebmailFilter);
     }, 800);
   });
 
@@ -507,7 +574,7 @@ document.addEventListener("DOMContentLoaded", () => {
           showToast(`🚀 Message dispatched successfully! (via ${d.account_used || "router"})`, "success");
           closeModal("backdrop-compose");
           formCompose.reset();
-          loadWebmailThreads(currentFolder);
+          loadWebmailThreads(currentWebmailFolder, activeSearchQuery, 1, currentWebmailFilter);
         } else {
           showToast(`Send failed: ${d.error || d.detail || "Check SMTP settings"}`, "error");
         }
@@ -1701,9 +1768,29 @@ document.addEventListener("DOMContentLoaded", () => {
 
   async function apiFetch(url, method = "GET", body = null) {
     const opts = { method, headers: {} };
+    const token = window.FLINZA_API_KEY || localStorage.getItem("flinza_api_key") || "";
+    if (token) {
+      opts.headers["Authorization"] = `Bearer ${token}`;
+    }
     if (body) { opts.headers["Content-Type"] = "application/json"; opts.body = JSON.stringify(body); }
     const res = await fetch(url, opts);
-    return res.json();
+    const contentType = res.headers.get("content-type") || "";
+    if (contentType.includes("application/json")) {
+      const data = await res.json();
+      if (!res.ok && !data.error) {
+        data.error = data.detail || `Server error (${res.status})`;
+      }
+      return data;
+    }
+    const text = await res.text();
+    if (!res.ok) {
+      return { success: false, error: text || `Server error (${res.status})` };
+    }
+    try {
+      return JSON.parse(text);
+    } catch {
+      return { success: true, text };
+    }
   }
   window.apiFetch = apiFetch;
 
@@ -2615,6 +2702,48 @@ document.addEventListener("DOMContentLoaded", () => {
   `;
   document.head.appendChild(styleEl);
 
+  // ═══════════════════════════════════════════════════════════════
+  //  REAL-TIME WEBMAIL & METRICS AUTO-SYNC (LIVE 5s POLLER)
+  // ═══════════════════════════════════════════════════════════════
+  setInterval(async () => {
+    if (document.hidden) return;
+    try {
+      const data = await apiFetch(`/api/webmail/threads?folder=${currentWebmailFolder}&search=${encodeURIComponent(activeSearchQuery)}&filter=${currentWebmailFilter}&page=${currentWebmailPage}&limit=20`);
+      if (!data || !data.success) return;
+
+      if (data.counts) {
+        setEl("badge-webmail-inbox", data.counts.inbox ?? 0);
+        setEl("badge-webmail-all-inboxes", data.counts.all_inboxes ?? 0);
+        setEl("badge-webmail-starred", data.counts.starred ?? 0);
+        setEl("badge-webmail-sent",  data.counts.sent  ?? 0);
+        setEl("badge-webmail-drafts",data.counts.drafts?? 0);
+        setEl("badge-webmail-spam",  data.counts.spam  ?? 0);
+      }
+
+      const activeSection = document.querySelector(".view-section.active");
+      if (activeSection && activeSection.id === "view-webmail") {
+        const newThreads = data.threads || [];
+        const currentIds = currentLoadedThreads.map(t => t.id).join(",");
+        const newIds = newThreads.map(t => t.id).join(",");
+        const counterEl = document.getElementById("webmail-thread-counter");
+        const currentCount = counterEl ? parseInt(counterEl.textContent || "0") : 0;
+        if (currentIds !== newIds || (data.total_count !== undefined && data.total_count !== currentCount)) {
+          loadWebmailThreads(currentWebmailFolder, activeSearchQuery, currentWebmailPage, currentWebmailFilter);
+        }
+      }
+    } catch (e) {
+      console.warn("Webmail auto-poller error:", e);
+    }
+  }, 5000);
+
+  // Auto-check IMAP inboxes in background every 20s
+  setInterval(async () => {
+    if (document.hidden) return;
+    try {
+      await apiFetch("/api/unibox/check", "POST", {});
+    } catch (e) {}
+  }, 20000);
+
 });
 
 // ═══════════════════════════════════════════════════════════════
@@ -3166,6 +3295,7 @@ const SMTP_PRESETS = {
   gmail:       { host: 'smtp.gmail.com',                      port: 587, ssl: false },
   amazon_ses:  { host: 'email-smtp.us-east-1.amazonaws.com',  port: 587, ssl: false },
   namecheap:   { host: 'mail.privateemail.com',               port: 465, ssl: true  },
+  zoho_in:     { host: 'smtppro.zoho.in',                     port: 465, ssl: true  },
   zoho:        { host: 'smtp.zoho.com',                       port: 587, ssl: false },
   outlook:     { host: 'smtp.office365.com',                  port: 587, ssl: false },
   sendgrid:    { host: 'smtp.sendgrid.net',                   port: 587, ssl: false },
@@ -3345,44 +3475,4 @@ window.saveEditedIpNode = saveEditedIpNode;
 window.togglePauseIpNode = togglePauseIpNode;
 window.pingIpNode = pingIpNode;
 window.onLocaltonetHostInput = onLocaltonetHostInput;
-
-// ═══════════════════════════════════════════════════════════════
-//  REAL-TIME WEBMAIL & METRICS AUTO-SYNC (7s POLLER)
-// ═══════════════════════════════════════════════════════════════
-setInterval(async () => {
-  if (document.hidden) return;
-  try {
-    const data = await apiFetch(`/api/webmail/threads?folder=${currentWebmailFolder}&search=${encodeURIComponent(activeSearchQuery)}&filter=${currentWebmailFilter}&page=${currentWebmailPage}&limit=20`);
-    if (!data || !data.success) return;
-
-    if (data.counts) {
-      setEl("badge-webmail-inbox", data.counts.inbox ?? 0);
-      setEl("badge-webmail-all-inboxes", data.counts.all_inboxes ?? 0);
-      setEl("badge-webmail-starred", data.counts.starred ?? 0);
-      setEl("badge-webmail-sent",  data.counts.sent  ?? 0);
-      setEl("badge-webmail-drafts",data.counts.drafts?? 0);
-      setEl("badge-webmail-spam",  data.counts.spam  ?? 0);
-    }
-
-    const activeSection = document.querySelector(".view-section.active");
-    if (activeSection && activeSection.id === "view-webmail") {
-      const newThreads = data.threads || [];
-      const currentIds = currentLoadedThreads.map(t => t.id).join(",");
-      const newIds = newThreads.map(t => t.id).join(",");
-      const counterEl = document.getElementById("webmail-thread-counter");
-      const currentCount = counterEl ? parseInt(counterEl.textContent || "0") : 0;
-      if (currentIds !== newIds || (data.total_count !== undefined && data.total_count !== currentCount)) {
-        loadWebmailThreads(currentWebmailFolder, activeSearchQuery, currentWebmailPage, currentWebmailFilter);
-      }
-    }
-  } catch (e) {}
-}, 7000);
-
-// Auto-check IMAP inboxes in background every 30s
-setInterval(async () => {
-  if (document.hidden) return;
-  try {
-    await apiFetch("/api/unibox/check", "POST", {});
-  } catch (e) {}
-}, 30000);
 

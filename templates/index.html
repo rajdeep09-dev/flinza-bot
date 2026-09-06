@@ -13,6 +13,9 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@500;600;700;800;900&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/static/css/studio.css?v=2.2" />
+  <script>
+    window.FLINZA_API_KEY = "{{ dashboard_api_key or '' }}";
+  </script>
 </head>
 <body>
   <div class="app-container">
@@ -250,14 +253,23 @@
                   </div>
                   <div class="reading-participants-row">
                     <span class="rp-from" id="read-sender">sender@example.com</span>
+                    <button class="btn-copy-address" id="btn-copy-sender" title="Copy email address" style="background:transparent;border:none;cursor:pointer;color:var(--text-dim);padding:0 3px;font-size:11px;display:inline-flex;align-items:center;">📋</button>
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" opacity="0.4"><polyline points="9 18 15 12 9 6"/></svg>
                     <span class="rp-to" id="read-recipient">you</span>
                     <span class="rp-time" id="read-time">Just now</span>
                   </div>
                 </div>
-                <button class="icon-btn close-btn" id="btn-close-reading">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-                </button>
+                <div style="display:flex;align-items:center;gap:4px;">
+                  <button class="icon-btn" id="btn-read-prev-thread" title="Previous email (k)" style="width:28px;height:28px;padding:0;display:flex;align-items:center;justify-content:center;">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="18 15 12 9 6 15"/></svg>
+                  </button>
+                  <button class="icon-btn" id="btn-read-next-thread" title="Next email (j)" style="width:28px;height:28px;padding:0;display:flex;align-items:center;justify-content:center;">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+                  </button>
+                  <button class="icon-btn close-btn" id="btn-close-reading" title="Close (Esc)">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                  </button>
+                </div>
               </div>
               <div class="reading-body-area">
                 <div class="email-body-card" id="read-body"></div>
@@ -1532,7 +1544,8 @@
                   <option value="gmail">Gmail</option>
                   <option value="amazon_ses">Amazon SES</option>
                   <option value="namecheap">Namecheap Private Email</option>
-                  <option value="zoho">Zoho Mail</option>
+                  <option value="zoho_in">Zoho Mail (India - zoho.in)</option>
+                  <option value="zoho">Zoho Mail (Global - zoho.com)</option>
                   <option value="outlook">Outlook / Microsoft 365</option>
                   <option value="sendgrid">SendGrid</option>
                 </select>

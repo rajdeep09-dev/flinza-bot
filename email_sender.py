@@ -276,6 +276,7 @@ def send_email_now(to_email: str, subject: str, body: str, account: dict, tracki
         "gmail": "smtp.gmail.com",
         "namecheap": "mail.privateemail.com",
         "zoho": "smtp.zoho.com",
+        "zoho_in": "smtppro.zoho.in",
         "outlook": "smtp.office365.com",
         "sendgrid": "smtp.sendgrid.net",
     }
@@ -291,7 +292,7 @@ def send_email_now(to_email: str, subject: str, body: str, account: dict, tracki
         logger.info(f"Resolved relay for {from_email}: {provider} via {target_host}:{target_port} ({relay_info.get('reason')})")
     else:
         target_host = account.get("smtp_host") or default_hosts.get(provider, "smtp.gmail.com")
-        target_port = int(account.get("smtp_port") or (465 if provider == "namecheap" else 587))
+        target_port = int(account.get("smtp_port") or (465 if provider in ("namecheap", "zoho_in") else 587))
 
     try:
         # Proper MIME formatting: use pure text/plain if no HTML, multipart/alternative only if HTML is present

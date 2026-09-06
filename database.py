@@ -307,6 +307,11 @@ def init_db():
         CREATE UNIQUE INDEX IF NOT EXISTS idx_blacklist_domain ON blacklist(domain) WHERE domain IS NOT NULL;
         CREATE INDEX IF NOT EXISTS idx_tracking_token ON email_tracking(tracking_token);
         CREATE INDEX IF NOT EXISTS idx_sequences_camp ON campaign_sequences(campaign_id, step_number);
+        CREATE INDEX IF NOT EXISTS idx_replies_msg_id ON replies(message_id);
+        CREATE INDEX IF NOT EXISTS idx_replies_handled_rec ON replies(handled, received_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_replies_starred ON replies(is_starred);
+        CREATE INDEX IF NOT EXISTS idx_replies_from ON replies(from_email);
+        CREATE INDEX IF NOT EXISTS idx_emails_sent_at ON emails_sent(sent_at DESC);
     """)
 
     # Multi-provider column migrations for gmail_accounts (Cloudflare API, Amazon SES, SMTP)
@@ -833,6 +838,12 @@ def add_or_get_lead(email: str, **kwargs):
     return lead_id, True
 
 
+def add_lead(email: str, name: str = None, company: str = None, **kwargs) -> int:
+    """Convenience helper to insert or retrieve lead ID."""
+    lead_id, _ = add_or_get_lead(email, name=name, company=company, **kwargs)
+    return lead_id
+
+
 def get_lead(lead_id: int):
     conn = get_db()
     row = conn.execute("SELECT * FROM leads WHERE id=?", (lead_id,)).fetchone()
@@ -1274,7 +1285,7 @@ def is_duplicate_reply(from_email: str, subject: str, body: str = None, message_
     return False
 
 
-def log_reply(lead_id, from_email, subject, body, ai_draft_subject=None, ai_draft_body=None, message_id=None, to_email=None):
+def log_reply(lead_id, from_email, subject, body, ai_draft_subject=None, ai_draft_body=None, message_id=None, to_email=None, received_at=None):
     if is_duplicate_reply(from_email, subject, body, message_id):
         conn = get_db()
         row = conn.execute("SELECT id FROM replies WHERE LOWER(from_email) = ? ORDER BY id DESC LIMIT 1", (from_email.lower().strip(),)).fetchone()
@@ -1282,11 +1293,18 @@ def log_reply(lead_id, from_email, subject, body, ai_draft_subject=None, ai_draf
         return row["id"] if row else None
 
     conn = get_db()
-    cur = conn.execute(
-        """INSERT INTO replies (lead_id, from_email, to_email, subject, body, ai_draft_subject, ai_draft_body, message_id)
-           VALUES (?,?,?,?,?,?,?,?)""",
-        (lead_id, from_email, to_email.lower().strip() if to_email else None, subject, body, ai_draft_subject, ai_draft_body, message_id)
-    )
+    if received_at:
+        cur = conn.execute(
+            """INSERT INTO replies (lead_id, from_email, to_email, subject, body, ai_draft_subject, ai_draft_body, message_id, received_at)
+               VALUES (?,?,?,?,?,?,?,?,?)""",
+            (lead_id, from_email, to_email.lower().strip() if to_email else None, subject, body, ai_draft_subject, ai_draft_body, message_id, received_at)
+        )
+    else:
+        cur = conn.execute(
+            """INSERT INTO replies (lead_id, from_email, to_email, subject, body, ai_draft_subject, ai_draft_body, message_id)
+               VALUES (?,?,?,?,?,?,?,?)""",
+            (lead_id, from_email, to_email.lower().strip() if to_email else None, subject, body, ai_draft_subject, ai_draft_body, message_id)
+        )
     conn.commit()
     reply_id = cur.lastrowid
     conn.close()

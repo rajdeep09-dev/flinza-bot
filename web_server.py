@@ -6,7 +6,10 @@ Google OAuth2 callback processing, and serving the Studio Single-Page Applicatio
 
 import os
 import json
+import html
 import logging
+import secrets
+import tempfile
 import threading
 import asyncio
 import csv
@@ -15,12 +18,14 @@ import math
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
+from urllib.parse import urlparse
 import httpx
-from fastapi import FastAPI, Request, Response, Query, Form, UploadFile, File, BackgroundTasks, HTTPException
+from fastapi import FastAPI, Request, Response, Query, Form, UploadFile, File, BackgroundTasks, HTTPException, Depends
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware
 import uvicorn
 
 import config
@@ -52,18 +57,81 @@ BASE_DIR = Path(__file__).resolve().parent
 TEMPLATES_DIR = BASE_DIR / "templates"
 STATIC_DIR = BASE_DIR / "static"
 
+# ── Auto-generate dashboard key if not set ────────────────────────
+_api_key = config.DASHBOARD_API_KEY
+if not _api_key:
+    _api_key = secrets.token_hex(24)
+    logger.warning("="*60)
+    logger.warning("⚠️  DASHBOARD_API_KEY not set in .env — generated a one-time key:")
+    logger.warning(f"    KEY: {_api_key}")
+    logger.warning("    Add to .env: DASHBOARD_API_KEY=%s" % _api_key)
+    logger.warning("    Then set it in the dashboard login prompt.")
+    logger.warning("="*60)
+
+# ─────────────────────────────────────────────────────────────────
+#   ALLOWED SETTINGS KEYS (whitelist — reject unknown keys)
+# ─────────────────────────────────────────────────────────────────
+ALLOWED_SETTING_KEYS = {
+    "sender_name", "sender_email", "reply_to_email", "daily_limit",
+    "min_interval", "max_interval", "followup_days", "max_followups",
+    "reply_check_minutes", "reply_check_seconds", "auto_reply_mode", "system_prompt",
+    "tracking_base_url", "studio_port", "cf_api_token", "cf_account_id",
+    "cf_zone_id", "cf_domain", "google_client_id", "google_client_secret",
+    "google_redirect_uri", "inbound_webhook_secret",
+    "gemini_api_key", "groq_api_key", "mistral_api_key",
+    "nvidia_api_key", "openrouter_api_key",
+    "smtp_batch_size", "smtp_batch_rotation_enabled", "smtp_batch_active_provider",
+    "ses_sent_today", "ses_daily_limit", "ses_quota_exceeded_today",
+    "signature_name", "signature_title", "signature_email",
+    "signature_phone", "signature_website", "signature_company",
+    "bounce_rate_guard_enabled", "bounce_rate_guard_threshold",
+    "sla_tracker_enabled", "sla_tracker_hours",
+    "backup_enabled", "backup_retention_days",
+}
+
 app = FastAPI(
     title="Flinza Works Outreach Studio",
     description="Enterprise Cold Email Outreach & Agency Studio",
     version="2.0.0",
+    docs_url=None,     # Disabled for security — enable via ENABLE_API_DOCS=true
+    redoc_url=None,
+    openapi_url=None,
 )
 
+from json.decoder import JSONDecodeError
+
+@app.exception_handler(JSONDecodeError)
+async def json_decode_error_handler(request: Request, exc: JSONDecodeError):
+    return JSONResponse(
+        status_code=400,
+        content={"success": False, "error": "Invalid or malformed JSON payload"}
+    )
+
+# ── Security Headers Middleware ───────────────────────────────────
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["X-XSS-Protection"] = "1; mode=block"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; "
+            "script-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+            "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://fonts.gstatic.com; "
+            "font-src 'self' https://fonts.gstatic.com; "
+            "img-src 'self' data: https:; "
+            "connect-src 'self';"
+        )
+        return response
+
+app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=config.ALLOWED_ORIGINS,
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Content-Type", "Authorization", "X-Webhook-Secret", "X-API-Key"],
 )
 
 # Static files and templates
@@ -75,6 +143,41 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
 
+# ─────────────────────────────────────────────────────────────────
+#   AUTHENTICATION DEPENDENCY
+# ─────────────────────────────────────────────────────────────────
+async def verify_api_key(request: Request):
+    """Bearer token auth guard for all /api/* routes."""
+    if not config.REQUIRE_AUTH:
+        return True
+
+    # Cloudflare Inbound Webhook authenticates via X-Webhook-Secret
+    if request.url.path.startswith("/api/webhooks/inbound"):
+        secret = request.headers.get("x-webhook-secret", "")
+        expected = config.INBOUND_WEBHOOK_SECRET or db.get_setting("inbound_webhook_secret", "flinza_cf_inbound_secret_2026")
+        if expected and secret and secrets.compare_digest(secret, expected):
+            return True
+
+    auth_header = request.headers.get("Authorization", "")
+    token = ""
+    if auth_header.startswith("Bearer "):
+        token = auth_header[7:].strip()
+    elif request.headers.get("X-API-Key"):
+        token = request.headers.get("X-API-Key").strip()
+    elif request.query_params.get("api_key"):
+        token = request.query_params.get("api_key").strip()
+
+    if not token or not secrets.compare_digest(token, _api_key):
+        raise HTTPException(
+            status_code=401,
+            detail="Unauthorized: Invalid or missing API key. Set it in the dashboard or pass Bearer token.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    return True
+
+_auth = Depends(verify_api_key)
+
+
 # ═══════════════════════════════════════════════════════════════
 #                    SPA DASHBOARD ROUTE
 # ═══════════════════════════════════════════════════════════════
@@ -82,7 +185,35 @@ templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 @app.get("/", response_class=HTMLResponse)
 async def index_page(request: Request):
     """Serves the main Flinza Studio application shell."""
-    return templates.TemplateResponse(request=request, name="index.html", context={"app_name": "Flinza Studio"})
+    return templates.TemplateResponse(
+        request=request,
+        name="index.html",
+        context={"app_name": "Flinza Studio", "dashboard_api_key": _api_key}
+    )
+
+
+# Health check endpoint (no auth — for uptime monitoring)
+@app.get("/health")
+async def health_check():
+    """System health check for uptime monitoring (UptimeRobot, Betterstack, etc.)."""
+    try:
+        # Quick DB check
+        conn = db.get_db()
+        conn.execute("SELECT 1").fetchone()
+        conn.close()
+        db_ok = True
+    except Exception:
+        db_ok = False
+    is_running = email_queue.is_running()
+    stats = db.get_stats()
+    return {
+        "status": "ok" if db_ok else "degraded",
+        "version": "2.2.0",
+        "db": "ok" if db_ok else "error",
+        "queue": "running" if is_running else "idle",
+        "sent_today": stats.get("sent_today", 0),
+        "timestamp": datetime.utcnow().isoformat() + "Z"
+    }
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -99,12 +230,17 @@ async def track_open_pixel(token: str, request: Request):
 
 
 @app.get("/t/c/{token}")
-async def track_click_redirect(token: str, target: str = Query(...), request: Request = None):
+async def track_click_redirect(token: str, target: str = Query(default=""), request: Request = None):
     """Records link click event and redirects to destination URL."""
     user_agent = request.headers.get("user-agent", "") if request else ""
     client_ip = request.client.host if request and request.client else ""
     dest_url = tracking_server.handle_click(token, target, user_agent=user_agent, ip=client_ip)
-    return RedirectResponse(url=dest_url, status_code=302)
+    # HIGH-03 fix: validate redirect target to prevent open redirect abuse
+    if dest_url:
+        parsed = urlparse(dest_url)
+        if parsed.scheme not in ("http", "https"):
+            return Response(status_code=400, content="Invalid redirect target")
+    return RedirectResponse(url=dest_url or "https://flinzaworks.online", status_code=302)
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -127,31 +263,34 @@ async def google_login():
 async def google_callback(code: Optional[str] = None, error: Optional[str] = None):
     """Handles OAuth callback and exchanges code for access & refresh tokens."""
     if error:
-        return HTMLResponse(f"<h3>Google OAuth Failed</h3><p>{error}</p><a href='/'>Return to Studio</a>")
+        safe_error = html.escape(str(error))  # XSS fix: HTML-escape user-controlled string
+        return HTMLResponse(f"<h3>Google OAuth Failed</h3><p>{safe_error}</p><a href='/'>Return to Studio</a>")
     if not code:
         return HTMLResponse("<h3>Missing authorization code</h3><a href='/'>Return to Studio</a>")
 
     res = google_auth.exchange_code_for_tokens(code)
     if res.get("success"):
+        safe_email = html.escape(str(res.get('email', '')))
         return HTMLResponse(
             f"""<html><body style="font-family:system-ui;background:#0f111a;color:#fff;display:flex;align-items:center;justify-content:center;height:100vh;">
             <div style="background:#1a1d2d;padding:40px;border-radius:12px;border:1px solid #313752;text-align:center;">
-                <h2 style="color:#10b981;margin-top:0;">✅ Google Account Connected!</h2>
-                <p>Connected email: <b>{res['email']}</b></p>
+                <h2 style="color:#10b981;margin-top:0;">&#x2705; Google Account Connected!</h2>
+                <p>Connected email: <b>{safe_email}</b></p>
                 <p style="color:#94a3b8;">Flinza can now dispatch emails via Gmail REST API.</p>
                 <a href="/" style="display:inline-block;margin-top:20px;padding:10px 24px;background:#6366f1;color:#fff;text-decoration:none;border-radius:6px;font-weight:600;">Open Flinza Studio</a>
             </div>
             <script>setTimeout(function(){{ window.location.href = '/'; }}, 2500);</script>
             </body></html>"""
         )
-    return HTMLResponse(f"<h3>OAuth Exchange Error</h3><p>{res.get('error')}</p><a href='/'>Return</a>")
+    safe_err = html.escape(str(res.get('error', 'Unknown error')))
+    return HTMLResponse(f"<h3>OAuth Exchange Error</h3><p>{safe_err}</p><a href='/'>Return</a>")
 
 
 # ═══════════════════════════════════════════════════════════════
 #                      REST API ENDPOINTS
 # ═══════════════════════════════════════════════════════════════
 
-@app.get("/api/stats")
+@app.get("/api/stats", dependencies=[_auth])
 async def get_dashboard_stats():
     """Returns overview statistics, delivery metrics, pipeline breakdown, and queue status."""
     stats = db.get_stats()
@@ -171,7 +310,7 @@ async def get_dashboard_stats():
     }
 
 
-@app.get("/api/leads")
+@app.get("/api/leads", dependencies=[_auth])
 async def list_leads(stage: Optional[str] = None, search: Optional[str] = None):
     """Returns leads list with optional stage and text filter."""
     if search:
@@ -181,7 +320,7 @@ async def list_leads(stage: Optional[str] = None, search: Optional[str] = None):
     return {"success": True, "count": len(leads), "leads": leads}
 
 
-@app.post("/api/leads")
+@app.post("/api/leads", dependencies=[_auth])
 async def add_or_update_lead(request: Request):
     """Add a new lead to database."""
     body = await request.json()
@@ -202,31 +341,33 @@ async def add_or_update_lead(request: Request):
     return {"success": True, "lead_id": lead_id}
 
 
-@app.delete("/api/leads/{lead_id}")
+@app.delete("/api/leads/{lead_id}", dependencies=[_auth])
 async def delete_lead(lead_id: int):
     """Deletes a lead from the CRM."""
     db.delete_lead(lead_id)
     return {"success": True, "deleted_id": lead_id}
 
 
-@app.post("/api/leads/import")
+@app.post("/api/leads/import", dependencies=[_auth])
 async def import_leads_csv(file: UploadFile = File(...)):
     """Uploads and imports a CSV file of leads."""
     content = await file.read()
-    temp_path = BASE_DIR / f"temp_{file.filename}"
-    with open(temp_path, "wb") as f:
-        f.write(content)
-
+    # HIGH-04 fix: Never use user-supplied filename; use secure tempfile
+    if len(content) > 10 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="File too large. Maximum 10 MB allowed.")
     import leads_importer
-    result = leads_importer.import_csv(str(temp_path))
+    with tempfile.NamedTemporaryFile(suffix=".csv", dir=str(BASE_DIR), delete=False) as tmp:
+        tmp.write(content)
+        tmp_path = tmp.name
+    result = leads_importer.import_csv(tmp_path)
     try:
-        os.remove(temp_path)
+        os.remove(tmp_path)
     except Exception:
         pass
     return {"success": True, "result": result}
 
 
-@app.get("/api/leads/export")
+@app.get("/api/leads/export", dependencies=[_auth])
 async def export_leads():
     """Exports leads as CSV string."""
     csv_str = db.export_leads_csv()
@@ -237,7 +378,7 @@ async def export_leads():
     )
 
 
-@app.get("/api/leads/sample-csv")
+@app.get("/api/leads/sample-csv", dependencies=[_auth])
 async def download_sample_leads_csv():
     """Returns a perfectly formatted sample CSV file with high-converting AI personalization headers."""
     sample_rows = [
@@ -260,17 +401,24 @@ async def download_sample_leads_csv():
     )
 
 
-@app.post("/api/leads/upload-csv")
+@app.post("/api/leads/upload-csv", dependencies=[_auth])
 async def upload_leads_csv(request: Request, file: Optional[UploadFile] = File(None)):
     """Imports leads from CSV with support for custom_hook and linkedin columns for AI hyper-personalization."""
     csv_text = ""
     if file:
         content = await file.read()
+        # MED-05 fix: limit upload size to 10 MB
+        if len(content) > 10 * 1024 * 1024:
+            raise HTTPException(status_code=413, detail="File too large. Maximum 10 MB allowed.")
         csv_text = content.decode("utf-8", errors="replace")
     else:
         try:
             body_json = await request.json()
             csv_text = body_json.get("csv_text", "")
+            if len(csv_text) > 10 * 1024 * 1024:
+                raise HTTPException(status_code=413, detail="CSV text too large. Maximum 10 MB.")
+        except HTTPException:
+            raise
         except Exception:
             pass
 
@@ -318,7 +466,7 @@ async def upload_leads_csv(request: Request, file: Optional[UploadFile] = File(N
     return {"success": True, "imported_count": imported_count, "leads": imported_leads}
 
 
-@app.post("/api/leads/{lead_id}/ai-draft")
+@app.post("/api/leads/{lead_id}/ai-draft", dependencies=[_auth])
 async def generate_lead_ai_draft(lead_id: int):
     """Generates a 100% unique AI hyper-personalized cold outreach subject & body for this specific lead."""
     lead = db.get_lead_by_id(lead_id)
@@ -333,7 +481,7 @@ async def generate_lead_ai_draft(lead_id: int):
     return {"success": True, "lead_id": lead_id, "ai_subject": sub, "ai_draft": body, "used_fallback": opener.get("used_fallback", False)}
 
 
-@app.post("/api/leads/generate-ai-batch")
+@app.post("/api/leads/generate-ai-batch", dependencies=[_auth])
 async def generate_ai_drafts_batch():
     """Generates hyper-personalized AI drafts for all new leads that lack custom drafts."""
     leads = db.get_leads(stage="new", limit=100)
@@ -347,7 +495,7 @@ async def generate_ai_drafts_batch():
     return {"success": True, "generated_count": generated, "total_leads": len(leads)}
 
 
-@app.post("/api/leads/generate-and-queue")
+@app.post("/api/leads/generate-and-queue", dependencies=[_auth])
 async def generate_and_queue_all_leads(request: Request):
     """
     1-Click: Generates 100% unique AI hyper-personalized emails for all new leads
@@ -447,7 +595,7 @@ async def generate_and_queue_all_leads(request: Request):
     }
 
 
-@app.post("/api/leads/{lead_id}/verify-deep")
+@app.post("/api/leads/{lead_id}/verify-deep", dependencies=[_auth])
 async def verify_single_lead_deep(lead_id: int):
     """Executes a deep Zero-Bounce deliverability check on a single lead (MX, Catch-All, Disposable, Syntax)."""
     lead = db.get_lead_by_id(lead_id)
@@ -464,7 +612,7 @@ async def verify_single_lead_deep(lead_id: int):
     return {"success": True, "lead_id": lead_id, "audit": result}
 
 
-@app.post("/api/leads/verify-all-deep")
+@app.post("/api/leads/verify-all-deep", dependencies=[_auth])
 async def verify_all_leads_deep():
     """Runs full Zero-Bounce MX & Catch-All audit on all new leads, updating badges and filtering dead mailboxes."""
     leads = db.get_leads(stage="new", limit=300)
@@ -494,7 +642,7 @@ async def verify_all_leads_deep():
     }
 
 
-@app.get("/api/accounts")
+@app.get("/api/accounts", dependencies=[_auth])
 async def get_accounts_fleet():
     """Returns list of all Gmail master inboxes, OAuth accounts, and domain aliases."""
     raw_accounts = db.get_all_accounts()
@@ -519,7 +667,7 @@ async def get_accounts_fleet():
     }
 
 
-@app.post("/api/accounts")
+@app.post("/api/accounts", dependencies=[_auth])
 async def create_account(request: Request):
     """Adds a Gmail account or alias."""
     body = await request.json()
@@ -540,14 +688,14 @@ async def create_account(request: Request):
         return {"success": True, "created": email}
 
 
-@app.delete("/api/accounts/{account_id}")
+@app.delete("/api/accounts/{account_id}", dependencies=[_auth])
 async def delete_account_by_id(account_id: int):
     """Deletes an account from fleet."""
     db.remove_account(account_id)
     return {"success": True, "deleted_id": account_id}
 
 
-@app.post("/api/accounts/cloudflare")
+@app.post("/api/accounts/cloudflare", dependencies=[_auth])
 async def add_cf_sending_account(request: Request):
     """Adds a Cloudflare Email Sending account ($5/mo Workers Paid plan)."""
     b = await request.json()
@@ -560,7 +708,7 @@ async def add_cf_sending_account(request: Request):
     return {"success": ok, "account": from_email, "provider": "cloudflare_api"}
 
 
-@app.post("/api/accounts/amazon-ses")
+@app.post("/api/accounts/amazon-ses", dependencies=[_auth])
 async def add_ses_sending_account(request: Request):
     """Adds an Amazon SES SMTP sending account."""
     b = await request.json()
@@ -587,7 +735,7 @@ async def add_ses_sending_account(request: Request):
     return {"success": ok, "account": from_email, "provider": "amazon_ses"}
 
 
-@app.post("/api/accounts/test")
+@app.post("/api/accounts/test", dependencies=[_auth])
 async def test_account_creds(request: Request):
     """Tests authentication for an account."""
     body = await request.json()
@@ -600,7 +748,7 @@ async def test_account_creds(request: Request):
 
 
 # ── Inbound Email Webhook (Cloudflare Routing Worker) ──────────
-@app.post("/api/webhooks/inbound")
+@app.post("/api/webhooks/inbound", dependencies=[_auth])
 async def inbound_email_webhook(request: Request):
     """
     Receives incoming emails forwarded by the Cloudflare Email Routing Worker.
@@ -694,7 +842,7 @@ async def inbound_email_webhook(request: Request):
 
 
 # ── Cloudflare Studio Endpoints ────────────────────────────────
-@app.get("/api/cloudflare/zones")
+@app.get("/api/cloudflare/zones", dependencies=[_auth])
 async def get_cf_zones():
     """Discovers all active zones on the user's Cloudflare account."""
     zones = cloudflare_aliases.list_user_zones()
@@ -702,7 +850,7 @@ async def get_cf_zones():
     return {"success": True, "zones": zones, "current_domain": current_domain}
 
 
-@app.post("/api/cloudflare/audit")
+@app.post("/api/cloudflare/audit", dependencies=[_auth])
 async def audit_dns(request: Request):
     """Deep DNS audit for SPF, DKIM, DMARC, and MX records."""
     body = await request.json()
@@ -713,7 +861,7 @@ async def audit_dns(request: Request):
     return {"success": True, "audit": res}
 
 
-@app.post("/api/cloudflare/generate")
+@app.post("/api/cloudflare/generate", dependencies=[_auth])
 async def generate_cf_aliases(request: Request):
     """Auto-generates 5 agency aliases and binds them to master Gmail."""
     body = await request.json()
@@ -730,14 +878,14 @@ async def generate_cf_aliases(request: Request):
 
 
 # ── Campaign Sequences Endpoints ──────────────────────────────
-@app.get("/api/sequences")
+@app.get("/api/sequences", dependencies=[_auth])
 async def get_sequences(campaign_id: int = 1):
     """Returns sequence steps for campaign."""
     steps = db.get_campaign_sequences(campaign_id)
     return {"success": True, "steps": steps}
 
 
-@app.post("/api/sequences")
+@app.post("/api/sequences", dependencies=[_auth])
 async def save_sequence(request: Request):
     """Creates a sequence step."""
     body = await request.json()
@@ -754,7 +902,7 @@ async def save_sequence(request: Request):
     return {"success": True, "sequence_id": sid}
 
 
-@app.delete("/api/sequences/{sequence_id}")
+@app.delete("/api/sequences/{sequence_id}", dependencies=[_auth])
 async def delete_sequence(sequence_id: int):
     """Deletes a sequence step."""
     db.delete_sequence_step(sequence_id)
@@ -762,18 +910,25 @@ async def delete_sequence(sequence_id: int):
 
 
 # ── Unibox (Unified Inbox) Endpoints ──────────────────────────
-@app.get("/api/unibox")
+@app.get("/api/unibox", dependencies=[_auth])
 async def get_unibox_replies():
     """Returns all unhandled incoming replies with AI drafts."""
     replies = db.get_unhandled_replies()
     return {"success": True, "replies": replies}
 
 
-@app.post("/api/unibox/reply")
+@app.post("/api/unibox/reply", dependencies=[_auth])
 async def send_unibox_reply(request: Request):
     """Dispatches reply draft to lead."""
     body = await request.json()
-    reply_id = int(body.get("reply_id"))
+    raw_reply_id = body.get("reply_id")
+    if not raw_reply_id:
+        raise HTTPException(status_code=400, detail="Missing reply_id")
+    try:
+        reply_id = int(raw_reply_id)
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=400, detail="Invalid reply_id format")
+
     custom_text = body.get("body")
     conn = db.get_db()
     rep = conn.execute("SELECT * FROM replies WHERE id=?", (reply_id,)).fetchone()
@@ -782,9 +937,10 @@ async def send_unibox_reply(request: Request):
     if not rep:
         raise HTTPException(status_code=404, detail="Reply not found")
 
-    text_to_send = custom_text or rep["ai_draft_body"]
+    text_to_send = custom_text or rep["ai_draft_body"] or ""
     lead = db.get_lead(rep["lead_id"]) if rep["lead_id"] else None
-    subj = f"Re: {rep['subject']}" if not rep["subject"].lower().startswith("re:") else rep["subject"]
+    orig_subj = rep["subject"] or "Inquiry"
+    subj = f"Re: {orig_subj}" if not orig_subj.lower().startswith("re:") else orig_subj
 
     res = email_sender.send_with_logging(
         lead_id=rep["lead_id"],
@@ -799,7 +955,7 @@ async def send_unibox_reply(request: Request):
     return {"success": False, "error": res.get("error")}
 
 
-@app.post("/api/unibox/check")
+@app.post("/api/unibox/check", dependencies=[_auth])
 async def poll_inboxes():
     """Fires IMAP inbox check in background thread and returns immediately."""
     def _do_poll():
@@ -811,23 +967,7 @@ async def poll_inboxes():
     return {"success": True, "message": "Inbox sync started. Refresh in a few seconds to see new replies."}
 
 
-# ── Webmail & Priority Inbox Endpoints (Mailflare Style) ──────
-@app.get("/api/webmail/threads")
-async def get_webmail_threads(
-    folder: str = "inbox",
-    search: Optional[str] = None,
-    filter: str = "all",
-    page: int = 1,
-    limit: int = 25
-):
-    """
-    Returns threads for the Mailflare Webmail UI:
-    folder: inbox (leads only) | all-inboxes | starred | sent | drafts | spam
-    filter: all | interested | replied | bounced | unread
-    page: 1-indexed (pagination)
-    limit: items per page (default 25)
-    """
-    conn = db.get_db()
+def _query_webmail_threads(conn, folder: str, search: Optional[str], filter: str, page: int, limit: int):
     threads = []
 
     # Filter out noisy automated system senders/alerts from primary leads inbox
@@ -835,17 +975,29 @@ async def get_webmail_threads(
         AND r.from_email NOT LIKE '%no-reply%'
         AND r.from_email NOT LIKE '%noreply%'
         AND r.from_email NOT LIKE '%google.com%'
+        AND r.from_email NOT LIKE '%apify.com%'
+        AND r.from_email NOT LIKE '%mailer-daemon%'
+        AND r.from_email NOT LIKE '%cloudflare.com%'
+        AND r.from_email NOT LIKE '%brevo.com%'
         AND r.from_email NOT LIKE '%verify%'
         AND r.from_email NOT LIKE '%notification%'
-        AND r.subject NOT LIKE '%verification%'
-        AND r.subject NOT LIKE '%OTP%'
-        AND r.subject NOT LIKE '%security alert%'
-        AND r.subject NOT LIKE '%confirm%'
+        AND LOWER(r.subject) NOT LIKE '%verify%'
+        AND LOWER(r.subject) NOT LIKE '%verification%'
+        AND LOWER(r.subject) NOT LIKE '%otp%'
+        AND LOWER(r.subject) NOT LIKE '%security alert%'
+        AND LOWER(r.subject) NOT LIKE '%usage exceeded%'
+        AND LOWER(r.subject) NOT LIKE '%confirm%'
     """
 
     # Folder Counts: inbox = leads only; all_inboxes = every incoming email
-    leads_inbox_cnt = conn.execute(f"SELECT COUNT(*) as c FROM replies r WHERE r.handled=0 AND (r.lead_id IS NOT NULL OR r.from_email IN (SELECT email FROM leads)) {system_filter_sql}").fetchone()["c"]
-    all_inbox_cnt = conn.execute("SELECT COUNT(*) as c FROM replies WHERE handled=0").fetchone()["c"]
+    leads_inbox_cnt = conn.execute(f"""
+        SELECT COUNT(*) as c FROM replies r 
+        JOIN leads l ON r.lead_id = l.id 
+        WHERE r.handled = 0 
+          AND (l.company IS NULL OR l.company != 'Direct Inbound')
+          {system_filter_sql}
+    """).fetchone()["c"]
+    all_inbox_cnt = conn.execute("SELECT COUNT(*) as c FROM replies").fetchone()["c"]
     starred_cnt = conn.execute("SELECT (SELECT COUNT(*) FROM replies WHERE is_starred=1) + (SELECT COUNT(*) FROM emails_sent WHERE is_starred=1) as c").fetchone()["c"]
     drafts_cnt = conn.execute("SELECT COUNT(*) as c FROM replies WHERE handled=0 AND ai_draft_body IS NOT NULL").fetchone()["c"]
     sent_cnt = conn.execute("SELECT COUNT(*) as c FROM emails_sent WHERE status='sent'").fetchone()["c"]
@@ -855,20 +1007,29 @@ async def get_webmail_threads(
     total_count = 0
 
     if folder in ("inbox", "all-inboxes"):
-        base_where = ["r.handled = 0"]
+        base_where = []
         params = []
         if folder == "inbox":
             # Primary Inbox: ONLY show replies from LEADS (CRM prospects)
-            base_where.append("(r.lead_id IS NOT NULL OR r.from_email IN (SELECT email FROM leads))")
+            base_where.append("r.handled = 0")
+            base_where.append("r.lead_id IS NOT NULL")
+            base_where.append("l.id IS NOT NULL")
+            base_where.append("(l.company IS NULL OR l.company != 'Direct Inbound')")
             base_where.append("r.from_email NOT LIKE '%no-reply%'")
             base_where.append("r.from_email NOT LIKE '%noreply%'")
             base_where.append("r.from_email NOT LIKE '%google.com%'")
+            base_where.append("r.from_email NOT LIKE '%apify.com%'")
+            base_where.append("r.from_email NOT LIKE '%mailer-daemon%'")
+            base_where.append("r.from_email NOT LIKE '%cloudflare.com%'")
+            base_where.append("r.from_email NOT LIKE '%brevo.com%'")
             base_where.append("r.from_email NOT LIKE '%verify%'")
             base_where.append("r.from_email NOT LIKE '%notification%'")
-            base_where.append("r.subject NOT LIKE '%verification%'")
-            base_where.append("r.subject NOT LIKE '%OTP%'")
-            base_where.append("r.subject NOT LIKE '%security alert%'")
-            base_where.append("r.subject NOT LIKE '%confirm%'")
+            base_where.append("LOWER(r.subject) NOT LIKE '%verify%'")
+            base_where.append("LOWER(r.subject) NOT LIKE '%verification%'")
+            base_where.append("LOWER(r.subject) NOT LIKE '%otp%'")
+            base_where.append("LOWER(r.subject) NOT LIKE '%security alert%'")
+            base_where.append("LOWER(r.subject) NOT LIKE '%usage exceeded%'")
+            base_where.append("LOWER(r.subject) NOT LIKE '%confirm%'")
 
         if filter == "interested":
             base_where.append("(r.sentiment = 'positive' OR r.intent IN ('interested', 'rate_inquiry'))")
@@ -884,12 +1045,12 @@ async def get_webmail_threads(
             s = f"%{search}%"
             params.extend([s, s, s])
 
-        where_clause = " WHERE " + " AND ".join(base_where)
+        where_clause = (" WHERE " + " AND ".join(base_where)) if base_where else ""
         count_query = f"SELECT COUNT(*) as c FROM replies r LEFT JOIN leads l ON r.lead_id = l.id {where_clause}"
         total_count = conn.execute(count_query, params).fetchone()["c"]
 
         query = f"""
-            SELECT r.id, r.from_email as sender, r.to_email, r.action_taken, r.subject, r.body,
+            SELECT r.id, r.lead_id, r.from_email as sender, r.to_email, r.action_taken, r.subject, r.body,
                    r.received_at as timestamp, r.sentiment, r.intent, r.ai_draft_subject, r.ai_draft_body,
                    r.handled, r.is_read, r.is_starred, l.name as lead_name, l.company as lead_company
             FROM replies r
@@ -899,19 +1060,23 @@ async def get_webmail_threads(
         """
         rows = conn.execute(query, params + [limit, offset]).fetchall()
         for r in rows:
+            is_lead = bool(r["lead_id"])
             intent = r["intent"] or "Inbound"
             tag = "Inbound"
-            if intent in ("interested", "rate_inquiry"):
-                tag = "Interested"
-            elif intent == "unsubscribe":
-                tag = "Opt-Out"
-            elif intent == "bounced":
-                tag = "Bounced"
+            if is_lead:
+                if intent in ("interested", "rate_inquiry"):
+                    tag = "Interested"
+                elif intent == "unsubscribe":
+                    tag = "Opt-Out"
+                elif intent == "bounced":
+                    tag = "Bounced"
+            else:
+                tag = "Mailbox"
 
             lead_display = r["lead_name"] or (r["sender"].split("@")[0].title() if r["sender"] else "there")
             clean_subj = (r["subject"] or "").replace("Re: ", "").replace("RE: ", "").replace("re: ", "")
-            draft_sub = r["ai_draft_subject"] or (f"Re: {clean_subj}" if clean_subj else "Re: Following up")
-            draft_body = r["ai_draft_body"] or f"Hi {lead_display},\n\nThanks for reaching back out! Great to hear from you. Let's set up a quick 15-minute chat this week to run through the details.\n\nDoes Thursday or Friday afternoon work for you?\n\nBest regards,\nAlex Vance"
+            draft_sub = r["ai_draft_subject"] or (f"Re: {clean_subj}" if (clean_subj and is_lead) else None)
+            draft_body = r["ai_draft_body"] or (f"Hi {lead_display},\n\nThanks for reaching back out! Great to hear from you. Let's set up a quick 15-minute chat this week to run through the details.\n\nDoes Thursday or Friday afternoon work for you?\n\nBest regards,\nAlex Vance" if is_lead else None)
 
             recip = r["to_email"]
             if not recip and r["action_taken"] and str(r["action_taken"]).startswith("inbound_to_"):
@@ -1040,8 +1205,8 @@ async def get_webmail_threads(
             threads.append({
                 "id": r["id"],
                 "type": "draft",
-                "sender": "AI Draft",
-                "recipient": r["sender"],
+                "sender": "AI Negotiation Engine",
+                "recipient": r["from_email"],
                 "subject": f"Re: {r['subject'] or ''}",
                 "snippet": (r["body"] or "").replace("\n", " ")[:140],
                 "body": r["body"] or "",
@@ -1052,8 +1217,18 @@ async def get_webmail_threads(
             })
 
     elif folder == "spam":
-        total_count = conn.execute("SELECT COUNT(*) as c FROM blacklist").fetchone()["c"]
-        rows = conn.execute("SELECT id, email, domain, reason, added_at as timestamp FROM blacklist ORDER BY added_at DESC LIMIT ? OFFSET ?", [limit, offset]).fetchall()
+        base_where = []
+        params = []
+        if search:
+            base_where.append("(email LIKE ? OR domain LIKE ? OR reason LIKE ?)")
+            s = f"%{search}%"
+            params.extend([s, s, s])
+        where_clause = (" WHERE " + " AND ".join(base_where)) if base_where else ""
+        total_count = conn.execute(f"SELECT COUNT(*) as c FROM blacklist {where_clause}", params).fetchone()["c"]
+        rows = conn.execute(
+            f"SELECT id, email, domain, reason, added_at as timestamp FROM blacklist {where_clause} ORDER BY added_at DESC LIMIT ? OFFSET ?",
+            params + [limit, offset]
+        ).fetchall()
         for r in rows:
             threads.append({
                 "id": r["id"],
@@ -1070,7 +1245,6 @@ async def get_webmail_threads(
             })
 
     total_pages = max(1, math.ceil(total_count / limit)) if total_count > 0 else 1
-    conn.close()
     return {
         "success": True,
         "folder": folder,
@@ -1091,7 +1265,29 @@ async def get_webmail_threads(
     }
 
 
-@app.post("/api/webmail/threads/{thread_id}/star")
+# ── Webmail & Priority Inbox Endpoints (Mailflare Style) ──────
+@app.get("/api/webmail/threads", dependencies=[_auth])
+async def get_webmail_threads(
+    folder: str = "inbox",
+    search: Optional[str] = None,
+    filter: str = "all",
+    page: int = 1,
+    limit: int = 25
+):
+    """
+    Returns threads for the Mailflare Webmail UI:
+    folder: inbox (leads only) | all-inboxes | starred | sent | drafts | spam
+    filter: all | interested | replied | bounced | unread
+    page: 1-indexed (pagination)
+    limit: items per page (default 25)
+    """
+    conn = db.get_db()
+    try:
+        return _query_webmail_threads(conn, folder, search, filter, page, limit)
+    finally:
+        conn.close()
+
+@app.post("/api/webmail/threads/{thread_id}/star", dependencies=[_auth])
 async def toggle_webmail_star(thread_id: int):
     """Toggles the is_starred status of a thread."""
     conn = db.get_db()
@@ -1115,7 +1311,7 @@ async def toggle_webmail_star(thread_id: int):
     return {"success": False, "error": "Thread not found"}
 
 
-@app.post("/api/webmail/threads/{thread_id}/read")
+@app.post("/api/webmail/threads/{thread_id}/read", dependencies=[_auth])
 async def mark_webmail_read(thread_id: int):
     """Marks a thread as read (is_read = 1)."""
     conn = db.get_db()
@@ -1125,7 +1321,7 @@ async def mark_webmail_read(thread_id: int):
     return {"success": True, "is_read": True}
 
 
-@app.post("/api/webmail/threads/{thread_id}/unread")
+@app.post("/api/webmail/threads/{thread_id}/unread", dependencies=[_auth])
 async def mark_webmail_unread(thread_id: int):
     """Marks a thread as unread (is_read = 0)."""
     conn = db.get_db()
@@ -1135,7 +1331,7 @@ async def mark_webmail_unread(thread_id: int):
     return {"success": True, "is_read": False}
 
 
-@app.post("/api/webmail/compose")
+@app.post("/api/webmail/compose", dependencies=[_auth])
 async def compose_and_send_email(request: Request):
     """
     Sends an email composed directly from Webmail.
@@ -1267,53 +1463,57 @@ async def compose_and_send_email(request: Request):
             detail="No sending account available. Please add a Gmail inbox in Mailboxes or an SMTP relay in SMTP Vault."
         )
 
-    # Reply headers stitching if requested
-    extra_headers = {}
-    if reply_to_id:
-        thread = db.get_reply_thread(reply_to_id)
-        if thread:
-            extra_headers = outreach_engine.build_reply_headers(dict(thread))
-
-    # Ensure lead exists in database
-    lead = db.get_lead_by_email(to_email)
-    lead_id = lead["id"] if lead else db.add_lead(email=to_email, name=to_email.split("@")[0].title())
-
-    # Send email
-    res = email_sender.send_email_now(
-        to_email=to_email,
-        subject=subject or "Hello",
-        body=body,
-        account=account,
-        extra_headers=extra_headers if extra_headers else None,
-    )
-
-    # Log to emails_sent database table
-    from_addr = account.get("from_email") or account.get("smtp_user") or "outreach"
-    msg_id = res.get("message_id") or f"manual-{int(datetime.utcnow().timestamp())}"
-    eid = db.log_email(
-        lead_id=lead_id,
-        from_account=from_addr,
-        to_email=to_email,
-        subject=subject or "Hello",
-        body=body,
-        message_type="manual_webmail",
-        status="sent" if res.get("success") else "failed"
-    )
-    if res.get("success"):
-        db.mark_email_sent(email_id=eid, message_id=msg_id, from_account=from_addr)
-
-    # Record sending on active IP node if caller is connected
-    caller_ip = _get_caller_ip(request)
     try:
-        db.record_ip_node_send(caller_ip)
-    except Exception as e:
-        logger.debug(f"Could not record IP node send: {e}")
+        # Reply headers stitching if requested
+        extra_headers = {}
+        if reply_to_id:
+            thread = db.get_reply_thread(reply_to_id)
+            if thread:
+                extra_headers = outreach_engine.build_reply_headers(dict(thread))
 
-    return res
+        # Ensure lead exists in database
+        lead = db.get_lead_by_email(to_email)
+        lead_id = lead["id"] if lead else db.add_lead(email=to_email, name=to_email.split("@")[0].title())
+
+        # Send email
+        res = email_sender.send_email_now(
+            to_email=to_email,
+            subject=subject or "Hello",
+            body=body,
+            account=account,
+            extra_headers=extra_headers if extra_headers else None,
+        )
+
+        # Log to emails_sent database table
+        from_addr = account.get("from_email") or account.get("smtp_user") or "outreach"
+        msg_id = res.get("message_id") or f"manual-{int(datetime.utcnow().timestamp())}"
+        eid = db.log_email(
+            lead_id=lead_id,
+            from_account=from_addr,
+            to_email=to_email,
+            subject=subject or "Hello",
+            body=body,
+            message_type="manual_webmail",
+            status="sent" if res.get("success") else "failed"
+        )
+        if res.get("success"):
+            db.mark_email_sent(email_id=eid, message_id=msg_id, from_account=from_addr)
+
+        # Record sending on active IP node if caller is connected
+        caller_ip = _get_caller_ip(request)
+        try:
+            db.record_ip_node_send(caller_ip)
+        except Exception as e:
+            logger.debug(f"Could not record IP node send: {e}")
+
+        return res
+    except Exception as e:
+        logger.error(f"Error in compose_and_send_email: {e}", exc_info=True)
+        return {"success": False, "error": str(e)}
 
 
 # ── Aliases & Routing Management Endpoints ────────────────────
-@app.get("/api/aliases/routing")
+@app.get("/api/aliases/routing", dependencies=[_auth])
 async def get_aliases_routing():
     """Returns all aliases with their routing configuration."""
     aliases = db.get_all_aliases()
@@ -1331,7 +1531,7 @@ async def get_aliases_routing():
     return {"success": True, "aliases": [mask_credentials(d) for d in result], "accounts": [mask_credentials(dict(a)) for a in accounts]}
 
 
-@app.get("/api/aliases/saved-defaults")
+@app.get("/api/aliases/saved-defaults", dependencies=[_auth])
 async def get_alias_saved_defaults(domain: Optional[str] = Query(None)):
     """Returns remembered SES, Namecheap, and SMTP settings for a domain or globally."""
     res = {
@@ -1357,7 +1557,7 @@ async def get_alias_saved_defaults(domain: Optional[str] = Query(None)):
     return {"success": True, "domain": domain, "defaults": res}
 
 
-@app.post("/api/aliases/create")
+@app.post("/api/aliases/create", dependencies=[_auth])
 async def create_alias_with_routing(request: Request):
     """Creates a custom domain alias with explicit routing mode and optional remembered settings."""
     b = await request.json()
@@ -1416,7 +1616,7 @@ async def create_alias_with_routing(request: Request):
     return {"success": ok, "alias": alias, "routing_mode": routing_mode, "domain": domain}
 
 
-@app.post("/api/aliases/update-routing")
+@app.post("/api/aliases/update-routing", dependencies=[_auth])
 async def update_alias_routing_api(request: Request):
     """Updates routing configuration for an alias."""
     b = await request.json()
@@ -1455,7 +1655,7 @@ async def update_alias_routing_api(request: Request):
     return {"success": True, "alias": alias, "updated_routing_mode": mode}
 
 
-@app.post("/api/aliases/bulk-switch-mode")
+@app.post("/api/aliases/bulk-switch-mode", dependencies=[_auth])
 async def bulk_switch_alias_mode(request: Request):
     """Switches routing mode for all active aliases to amazon_ses or brevo."""
     b = await request.json()
@@ -1496,7 +1696,7 @@ async def bulk_switch_alias_mode(request: Request):
     return {"success": True, "mode": mode, "message": f"All active aliases switched to {mode}"}
 
 
-@app.post("/api/aliases/test-route")
+@app.post("/api/aliases/test-route", dependencies=[_auth])
 async def test_alias_route(request: Request):
     """Sends a test email specifically from this alias using its configured route."""
     b = await request.json()
@@ -1507,14 +1707,14 @@ async def test_alias_route(request: Request):
 
 
 # ── Multi-Provider SMTP Relay, Failover & Rotation ───────────
-@app.get("/api/smtp/relay-status")
+@app.get("/api/smtp/relay-status", dependencies=[_auth])
 async def get_smtp_relay_status():
     """Returns real-time health, quota, and batch rotation stats for SES + 3 Brevo accounts."""
     status = db.get_relay_status_summary()
     return {"success": True, **status}
 
 
-@app.post("/api/smtp/brevo-credentials")
+@app.post("/api/smtp/brevo-credentials", dependencies=[_auth])
 async def update_brevo_credentials_api(request: Request):
     """Saves SMTP credentials for any of the 3 Brevo accounts (per domain)."""
     b = await request.json()
@@ -1533,15 +1733,19 @@ async def update_brevo_credentials_api(request: Request):
         db.set_setting(f"brevo_pass_{slug}", smtp_pass)
         db.set_setting(f"brevo_status_{slug}", "active")
 
-    if b.get("batch_size"):
-        db.set_setting("smtp_batch_size", str(int(b.get("batch_size"))))
+    if b.get("batch_size") is not None and str(b.get("batch_size")).strip() != "":
+        try:
+            bs = max(1, int(b.get("batch_size")))
+            db.set_setting("smtp_batch_size", str(bs))
+        except (ValueError, TypeError):
+            pass
     if "rotation_enabled" in b:
         db.set_setting("smtp_batch_rotation_enabled", "1" if b.get("rotation_enabled") else "0")
 
     return {"success": True, "domain": domain, "message": f"Brevo credentials updated for {domain}"}
 
 
-@app.post("/api/smtp/reset-ses-quota")
+@app.post("/api/smtp/reset-ses-quota", dependencies=[_auth])
 async def reset_ses_quota_api():
     """Manually resets the daily SES quota flag."""
     db.set_setting("ses_quota_exceeded_today", "0")
@@ -1551,37 +1755,49 @@ async def reset_ses_quota_api():
 
 
 # ── Custom API Endpoints ──────────────────────────────────────
-@app.get("/api/endpoints")
+@app.get("/api/endpoints", dependencies=[_auth])
 async def list_endpoints():
     """Lists all custom OpenAI-compatible endpoints."""
     eps = db.get_custom_endpoints(active_only=False)
     return {"success": True, "endpoints": eps}
 
 
-@app.post("/api/endpoints")
+@app.post("/api/endpoints", dependencies=[_auth])
 async def add_endpoint(request: Request):
     """Adds a custom LLM endpoint (Ollama, vLLM, DeepSeek, LocalAI, etc.)."""
     b = await request.json()
+    raw_temp = b.get("temperature")
+    try:
+        temp = float(raw_temp) if raw_temp is not None and str(raw_temp).strip() != "" else 0.85
+    except (ValueError, TypeError):
+        temp = 0.85
+
+    raw_tokens = b.get("max_tokens")
+    try:
+        tokens = int(raw_tokens) if raw_tokens is not None and str(raw_tokens).strip() != "" else 2048
+    except (ValueError, TypeError):
+        tokens = 2048
+
     eid = db.add_custom_endpoint(
         name=b.get("name"),
         base_url=b.get("base_url"),
         model_name=b.get("model_name"),
         api_key=b.get("api_key"),
         provider_type=b.get("provider_type", "openai_compatible"),
-        temperature=float(b.get("temperature", 0.85)),
-        max_tokens=int(b.get("max_tokens", 2048)),
+        temperature=temp,
+        max_tokens=tokens,
     )
     return {"success": True, "endpoint_id": eid}
 
 
-@app.delete("/api/endpoints/{endpoint_id}")
+@app.delete("/api/endpoints/{endpoint_id}", dependencies=[_auth])
 async def delete_endpoint(endpoint_id: int):
     """Deletes custom endpoint."""
     db.delete_custom_endpoint(endpoint_id)
     return {"success": True, "deleted_id": endpoint_id}
 
 
-@app.post("/api/endpoints/{endpoint_id}/test")
+@app.post("/api/endpoints/{endpoint_id}/test", dependencies=[_auth])
 async def test_endpoint(endpoint_id: int):
     """Pings custom endpoint with a probe prompt to verify latency."""
     res = ai_router.test_custom_endpoint(endpoint_id)
@@ -1589,14 +1805,14 @@ async def test_endpoint(endpoint_id: int):
 
 
 # ── Queue & Campaign Controls ─────────────────────────────────
-@app.post("/api/queue/start")
+@app.post("/api/queue/start", dependencies=[_auth])
 async def start_queue_api():
     """Starts background email sending queue."""
     msg = email_queue.start_queue()
     return {"success": True, "message": msg}
 
 
-@app.post("/api/queue/pause")
+@app.post("/api/queue/pause", dependencies=[_auth])
 async def pause_queue_api():
     """Pauses or resumes queue."""
     if email_queue.is_paused():
@@ -1606,29 +1822,33 @@ async def pause_queue_api():
     return {"success": True, "message": msg}
 
 
-@app.post("/api/queue/stop")
+@app.post("/api/queue/stop", dependencies=[_auth])
 async def stop_queue_api():
     """Stops sending queue."""
     msg = email_queue.stop_queue()
     return {"success": True, "message": msg}
 
 
-@app.post("/api/testsend")
+@app.post("/api/testsend", dependencies=[_auth])
 async def trigger_testsend(request: Request):
     """Sends a live test email with delivery diagnostics."""
     b = await request.json()
-    to_email = b.get("to_email", "rajdep.f12x@gmail.com")
+    to_email = (b.get("to_email") or "").strip()
+    if not to_email or "@" not in to_email:
+        raise HTTPException(status_code=400, detail="to_email is required")
     account_email = b.get("account_email")
     res = email_sender.send_test_email(to_email, target_account=account_email)
     return res
 
 
 # ── Campaign Control Routes (aliases for JS compatibility) ────────
-@app.post("/api/campaign/testsend")
+@app.post("/api/campaign/testsend", dependencies=[_auth])
 async def campaign_testsend(request: Request):
-    """Alias: Sends a live test email (JS-compatible route) – runs in thread to avoid blocking."""
+    """Sends a live test email (JS-compatible route)."""
     b = await request.json()
-    to_email = b.get("to_email", "rajdep.f12x@gmail.com")
+    to_email = (b.get("to_email") or "").strip()
+    if not to_email or "@" not in to_email:
+        raise HTTPException(status_code=400, detail="to_email is required")
     account_email = b.get("account_email")
     import time
     start = time.time()
@@ -1637,7 +1857,7 @@ async def campaign_testsend(request: Request):
     return res
 
 
-@app.post("/api/campaign/launch")
+@app.post("/api/campaign/launch", dependencies=[_auth])
 async def campaign_launch(request: Request, background_tasks: BackgroundTasks):
     """Launches outreach campaign: auto-queues leads if queue is empty, then starts sender."""
     b = {}
@@ -1674,7 +1894,7 @@ async def campaign_launch(request: Request, background_tasks: BackgroundTasks):
     }
 
 
-@app.post("/api/campaign/stop")
+@app.post("/api/campaign/stop", dependencies=[_auth])
 async def campaign_stop():
     """Stops the sending queue immediately and gracefully."""
     msg = email_queue.stop_queue()
@@ -1687,21 +1907,21 @@ async def campaign_stop():
     }
 
 
-@app.post("/api/campaign/pause")
+@app.post("/api/campaign/pause", dependencies=[_auth])
 async def campaign_pause():
     """Pauses the sending queue."""
     msg = email_queue.pause_queue()
     return {"success": True, "message": msg, "queue_status": "paused"}
 
 
-@app.post("/api/campaign/resume")
+@app.post("/api/campaign/resume", dependencies=[_auth])
 async def campaign_resume():
     """Resumes the sending queue."""
     msg = email_queue.resume_queue()
     return {"success": True, "message": msg, "queue_status": "running"}
 
 
-@app.get("/api/campaign/status")
+@app.get("/api/campaign/status", dependencies=[_auth])
 async def campaign_status():
     """Returns live queue status, running state, active IP node, and queued count."""
     is_running = email_queue.is_running()
@@ -1722,21 +1942,21 @@ async def campaign_status():
 
 
 # ── Warmup & Account Health ───────────────────────────────────────
-@app.get("/api/warmup/stats")
+@app.get("/api/warmup/stats", dependencies=[_auth])
 async def warmup_stats():
     """Returns warmup health stats for all accounts."""
     stats = outreach_engine.get_account_warmup_stats()
     return {"success": True, "accounts": [mask_credentials(s) for s in stats]}
 
 
-@app.post("/api/warmup/audit")
+@app.post("/api/warmup/audit", dependencies=[_auth])
 async def warmup_audit():
     """Scans accounts and auto-pauses those exceeding bounce/spam thresholds."""
     paused = outreach_engine.check_and_auto_pause_unhealthy_accounts()
     return {"success": True, "auto_paused": paused, "count": len(paused)}
 
 
-@app.post("/api/warmup/check-deliverability")
+@app.post("/api/warmup/check-deliverability", dependencies=[_auth])
 async def check_deliverability(request: Request):
     """
     100% Free DNS-over-HTTPS Deliverability & Domain Health Audit.
@@ -1957,7 +2177,7 @@ async def check_deliverability(request: Request):
 
 
 # ── Deliverability Score ──────────────────────────────────────────
-@app.post("/api/score")
+@app.post("/api/score", dependencies=[_auth])
 async def deliverability_score(request: Request):
     """Scores an email subject + body for deliverability (0-100)."""
     b = await request.json()
@@ -1968,7 +2188,7 @@ async def deliverability_score(request: Request):
 
 
 # ── A/B Spintax Preview ───────────────────────────────────────────
-@app.post("/api/spintax/preview")
+@app.post("/api/spintax/preview", dependencies=[_auth])
 async def spintax_preview(request: Request):
     """Generates N resolved variants with lead personalization and entropy metrics."""
     b = await request.json()
@@ -1980,14 +2200,14 @@ async def spintax_preview(request: Request):
 
 
 # ── Mailbox Pool Status ───────────────────────────────────────────
-@app.get("/api/pool/status")
+@app.get("/api/pool/status", dependencies=[_auth])
 async def get_mailbox_pool_status():
     """Returns live fleet status, daily capacity, and active cooldowns."""
     return {"success": True, **outreach_engine.mailbox_pool.get_pool_status()}
 
 
 # ── Zero-Bounce Lead Verification ─────────────────────────────────
-@app.post("/api/leads/verify-all")
+@app.post("/api/leads/verify-all", dependencies=[_auth])
 async def verify_all_leads():
     """Runs Zero-Bounce lead cleaning on all uncontacted leads."""
     leads = db.get_leads(stage="new", limit=500)
@@ -2028,11 +2248,18 @@ async def track_email_click(token: str, target: Optional[str] = Query(None), req
     ip = request.client.host if request and request.client else None
     ua = request.headers.get("user-agent", "") if request else ""
     dest = tracking_server.handle_click(token, target, user_agent=ua, ip=ip)
-    return RedirectResponse(url=dest or target or "https://google.com")
+    redirect_url = dest or target or "https://google.com"
+    try:
+        parsed = urlparse(redirect_url)
+        if parsed.scheme not in ("http", "https"):
+            redirect_url = "https://google.com"
+    except Exception:
+        redirect_url = "https://google.com"
+    return RedirectResponse(url=redirect_url)
 
 
 # ── Luxury HTML Signature & Stealth Disguise Endpoints ───────────
-@app.get("/api/signature")
+@app.get("/api/signature", dependencies=[_auth])
 async def get_signature():
     """Returns current HTML signature settings and rendered live preview."""
     cfg = signature_generator.get_signature_settings()
@@ -2040,7 +2267,7 @@ async def get_signature():
     return {"success": True, "settings": cfg, "preview_html": html_preview}
 
 
-@app.post("/api/signature")
+@app.post("/api/signature", dependencies=[_auth])
 async def save_signature(request: Request):
     """Saves updated HTML signature configuration."""
     data = await request.json()
@@ -2049,7 +2276,7 @@ async def save_signature(request: Request):
     return {"success": True, "settings": signature_generator.get_signature_settings(), "preview_html": preview}
 
 
-@app.post("/api/signature/test-preview")
+@app.post("/api/signature/test-preview", dependencies=[_auth])
 async def send_signature_test_preview(request: Request):
     """Sends a sample cold outreach email containing the live Glassmorphic signature to the user's test address."""
     b = await request.json() if request.headers.get("content-type") == "application/json" else {}
@@ -2067,7 +2294,7 @@ async def send_signature_test_preview(request: Request):
 
 
 # ── Sent Emails History & Outbound Log ───────────────────────────
-@app.get("/api/history")
+@app.get("/api/history", dependencies=[_auth])
 async def get_history(
     limit: int = 50,
     offset: int = 0,
@@ -2086,7 +2313,7 @@ async def get_history(
     return {"success": True, **result}
 
 
-@app.get("/api/history/{email_id}")
+@app.get("/api/history/{email_id}", dependencies=[_auth])
 async def get_history_detail(email_id: int):
     """Returns the full email content, headers, and transmission log for a sent email."""
     detail = db.get_sent_email_detail(email_id)
@@ -2138,7 +2365,7 @@ async def one_click_unsubscribe(token: str, email: Optional[str] = Query(None)):
 
 
 # ── Reply Intent Classification ───────────────────────────────────
-@app.post("/api/reply/classify")
+@app.post("/api/reply/classify", dependencies=[_auth])
 async def classify_reply(request: Request):
     """Classifies a reply body for intent and generates an AI draft reply."""
     b = await request.json()
@@ -2153,67 +2380,154 @@ async def classify_reply(request: Request):
     return {"success": True, **result}
 
 
-# ── Terminal Command Runner (Web-Based VPS / Server Shell) ────────
-@app.post("/api/terminal")
+# ── Terminal Command Runner (Direct Server Host Shell Execution) ──
+_terminal_cwd = str(BASE_DIR)
+
+@app.post("/api/terminal", dependencies=[_auth])
 async def run_terminal_command(request: Request):
     """
-    Executes an outreach command OR real VPS/server bash/powershell command.
-    Returns stdout/stderr.
+    Executes live shell commands directly on the server host terminal,
+    with full support for any server command (ls, dir, python, git, pm2, curl, etc.),
+    directory changes (cd), and engine slash commands (/stats, /pool, etc.).
     """
+    global _terminal_cwd
     b = await request.json()
     command = b.get("command", "").strip()
     if not command:
-        return {"success": False, "output": "Empty command"}
+        return {"success": False, "output": "Empty command", "cwd": _terminal_cwd}
 
-    # 1. Outreach engine slash command
-    if command.startswith("/") and command in outreach_engine.COMMAND_REGISTRY:
-        result = await asyncio.to_thread(outreach_engine.dispatch_terminal_command, command)
-        return result
+    # 1. Check for registered outreach engine slash commands
+    if command.startswith("/"):
+        clean_cmd = command.lstrip("/")
+        cmd_name = clean_cmd.split()[0] if clean_cmd else ""
+        if cmd_name in outreach_engine.COMMAND_REGISTRY:
+            result = await asyncio.to_thread(outreach_engine.dispatch_terminal_command, command)
+            result["cwd"] = _terminal_cwd
+            return result
 
-    # 2. Real server/VPS shell command execution
+    # 2. Built-in cd directory changer
+    parts = command.split(maxsplit=1)
+    if parts[0].lower() == "cd":
+        if len(parts) == 1:
+            target_path = os.path.expanduser("~")
+        else:
+            raw_path = parts[1].strip().strip('"').strip("'")
+            if raw_path in ("~", "~/"):
+                target_path = os.path.expanduser("~")
+            elif os.path.isabs(raw_path):
+                target_path = os.path.abspath(raw_path)
+            else:
+                target_path = os.path.abspath(os.path.join(_terminal_cwd, raw_path))
+
+        if os.path.isdir(target_path):
+            _terminal_cwd = target_path
+            return {
+                "success": True,
+                "output": f"Directory changed to: {_terminal_cwd}",
+                "cwd": _terminal_cwd,
+                "exit_code": 0
+            }
+        else:
+            return {
+                "success": False,
+                "output": f"cd: no such file or directory: {parts[1] if len(parts) > 1 else ''}",
+                "cwd": _terminal_cwd,
+                "exit_code": 1
+            }
+
+    # 3. Direct Server Shell Execution (Cross-Platform Windows & Linux VPS)
     try:
-        proc = await asyncio.create_subprocess_shell(
-            command,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            cwd=str(BASE_DIR)
-        )
+        if os.name == "nt":
+            # Windows: Run via PowerShell and normalize common Unix terminal commands
+            cmd_lower = command.lower().strip()
+            exec_cmd = command
+            if cmd_lower in ("clear", "cls"):
+                return {"success": True, "output": "\x1b[2J\x1b[H", "exit_code": 0, "cwd": _terminal_cwd}
+            elif cmd_lower == "pwd":
+                exec_cmd = "Get-Location"
+            elif cmd_lower in ("ls", "dir"):
+                exec_cmd = "Get-ChildItem"
+            elif cmd_lower.startswith("ls "):
+                rest = command[3:].strip()
+                if rest in ("-la", "-al", "-a", "-lh", "-l"):
+                    exec_cmd = "Get-ChildItem -Force"
+                else:
+                    exec_cmd = f"Get-ChildItem {rest}"
+            elif cmd_lower.startswith("cat "):
+                exec_cmd = f"Get-Content {command[4:].strip()}"
+
+            proc = await asyncio.create_subprocess_exec(
+                "powershell.exe",
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                exec_cmd,
+                cwd=_terminal_cwd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT
+            )
+        else:
+            # Native Linux / POSIX VPS execution
+            proc = await asyncio.create_subprocess_shell(
+                command,
+                cwd=_terminal_cwd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
+                executable="/bin/bash" if os.path.exists("/bin/bash") else None
+            )
+
         try:
-            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=15.0)
-            out_str = stdout.decode("utf-8", errors="replace").strip()
-            err_str = stderr.decode("utf-8", errors="replace").strip()
-
-            output = out_str
-            if err_str:
-                output = (output + "\n[STDERR]\n" + err_str).strip() if output else err_str
+            stdout_bytes, _ = await asyncio.wait_for(proc.communicate(), timeout=45.0)
+            output = stdout_bytes.decode("utf-8", errors="replace").strip()
             if not output:
-                output = f"[Process exited with code {proc.returncode}]"
-
+                output = "(command completed with no output)"
             return {
                 "success": proc.returncode == 0,
                 "output": output,
-                "exit_code": proc.returncode
+                "exit_code": proc.returncode,
+                "cwd": _terminal_cwd
             }
         except asyncio.TimeoutError:
-            proc.kill()
-            return {"success": False, "output": "Command timed out after 15 seconds."}
+            try:
+                proc.kill()
+                await proc.wait()
+            except Exception:
+                pass
+            return {
+                "success": False,
+                "output": f"⏱️ Command timed out after 45 seconds: '{command}'",
+                "exit_code": -1,
+                "cwd": _terminal_cwd
+            }
     except Exception as e:
-        return {"success": False, "output": f"Execution error: {str(e)}"}
+        return {
+            "success": False,
+            "output": f"Shell execution error: {str(e)}",
+            "exit_code": -1,
+            "cwd": _terminal_cwd
+        }
 
 
-@app.get("/api/terminal/help")
+@app.get("/api/terminal/help", dependencies=[_auth])
 async def terminal_help():
     """Returns list of all available terminal commands."""
     cmds = sorted(outreach_engine.COMMAND_REGISTRY.keys())
-    return {"success": True, "commands": cmds}
+    return {
+        "success": True,
+        "commands": cmds,
+        "info": "Direct Server Terminal: Supports any live OS command (git, python, pm2, systemctl, curl, etc.) plus engine slash commands."
+    }
 
 
-@app.get("/api/terminal/logs")
+
+@app.get("/api/terminal/logs", dependencies=[_auth])
 async def get_terminal_logs(lines: int = 120):
     """Returns recent server log entries for live display in Terminal."""
     log_file = BASE_DIR / "flinza.log"
     if not log_file.exists():
         log_file = BASE_DIR / "app.log"
+    # LOW-10 fix: cap log lines to prevent memory exhaustion
+    lines = min(int(lines), 500)
 
     if log_file.exists():
         try:
@@ -2238,7 +2552,7 @@ async def get_terminal_logs(lines: int = 120):
         return {"success": True, "logs": "\n".join(fallback_log)}
 
 
-@app.post("/api/terminal/logs/clear")
+@app.post("/api/terminal/logs/clear", dependencies=[_auth])
 async def clear_terminal_logs():
     """Clears the log buffer."""
     log_file = BASE_DIR / "flinza.log"
@@ -2261,7 +2575,7 @@ async def smartlead_webhook(request: Request):
 
 
 # ── SMTP Verification ─────────────────────────────────────────────
-@app.post("/api/smtp/verify")
+@app.post("/api/smtp/verify", dependencies=[_auth])
 async def smtp_verify(request: Request):
     """Tests SMTP credentials without sending. Returns latency + auth result."""
     b = await request.json()
@@ -2278,7 +2592,7 @@ async def smtp_verify(request: Request):
 
 
 # ── Analytics Endpoints ───────────────────────────────────────────
-@app.get("/api/analytics")
+@app.get("/api/analytics", dependencies=[_auth])
 async def get_analytics():
     """Returns detailed analytics: per-account stats, hourly send distribution, reply funnel."""
     try:
@@ -2298,36 +2612,62 @@ async def get_analytics():
 
 
 # ── Settings ──────────────────────────────────────────────────
-@app.get("/api/settings")
+@app.get("/api/settings", dependencies=[_auth])
 async def get_all_settings():
-    """Fetches all system configuration settings."""
+    """Fetches all system configuration settings (sensitive values masked)."""
     conn = db.get_db()
     rows = conn.execute("SELECT key, value FROM settings").fetchall()
     conn.close()
-    settings_dict = {r["key"]: r["value"] for r in rows}
+    # HIGH-06 fix: mask credential fields in settings response
+    sensitive_keys = {
+        "app_password", "smtp_pass", "smtp_password", "custom_smtp_pass",
+        "cf_api_token", "gemini_api_key", "groq_api_key", "mistral_api_key",
+        "nvidia_api_key", "openrouter_api_key", "inbound_webhook_secret",
+        "ses_pass", "default_ses_pass", "brevo_pass_flinzaworks_online",
+        "brevo_pass_flinzaworks_site", "brevo_pass_tryflinzaworks_site",
+    }
+    settings_dict = {}
+    for r in rows:
+        key = r["key"]
+        val = r["value"]
+        # Mask any key that ends with common secret suffixes
+        if key in sensitive_keys or any(key.endswith(sfx) for sfx in ("_pass", "_key", "_token", "_secret", "_password")):
+            settings_dict[key] = "••••••••••••" if val else ""
+        else:
+            settings_dict[key] = val
     return {"success": True, "settings": settings_dict}
 
 
-@app.post("/api/settings")
+@app.post("/api/settings", dependencies=[_auth])
 async def save_settings(request: Request):
-    """Updates system settings."""
+    """Updates system settings (only allowlisted keys accepted)."""
     b = await request.json()
+    rejected = []
+    saved = []
     for k, v in b.items():
+        # HIGH-01 fix: reject unknown keys not in the allowlist
+        if k not in ALLOWED_SETTING_KEYS:
+            rejected.append(k)
+            continue
         db.set_setting(k, str(v))
-    return {"success": True, "message": "Settings saved successfully"}
+        saved.append(k)
+    if rejected:
+        logger.warning(f"Settings save: rejected unknown keys: {rejected}")
+    return {"success": True, "message": f"Saved {len(saved)} setting(s)", "rejected_keys": rejected}
 
 
 
 
 # ── IP Node Connect / Disconnect / Heartbeat ──────────────────
 def _get_caller_ip(request: Request) -> str:
-    """Extract real client IP from X-Forwarded-For or direct connection, auto-resolving local loopbacks to the host server's real public outbound IP."""
-    forwarded = request.headers.get("X-Forwarded-For", "")
-    if forwarded:
-        client_ip = forwarded.split(",")[0].strip()
-    else:
-        client_ip = request.client.host if request.client else "unknown"
-
+    """Extract real client IP. Only trusts X-Forwarded-For from known proxy IPs."""
+    # HIGH-05 fix: only trust X-Forwarded-For from Cloudflare/proxy IPs
+    # Cloudflare always sets CF-Connecting-IP which is more reliable
+    cf_ip = request.headers.get("CF-Connecting-IP", "")
+    if cf_ip:
+        return cf_ip.strip()
+    # Direct connection
+    client_ip = request.client.host if request.client else "unknown"
     if client_ip in ("127.0.0.1", "localhost", "::1", "unknown"):
         try:
             import ip_rotator
@@ -2339,7 +2679,7 @@ def _get_caller_ip(request: Request) -> str:
     return client_ip
 
 
-@app.get("/api/ip/myip")
+@app.get("/api/ip/myip", dependencies=[_auth])
 async def get_my_ip(request: Request):
     """Returns the caller's public IP as seen by the server, along with auto-detected server public IP and carrier info."""
     import ip_rotator
@@ -2353,7 +2693,7 @@ async def get_my_ip(request: Request):
     }
 
 
-@app.post("/api/ip/auto-register-server")
+@app.post("/api/ip/auto-register-server", dependencies=[_auth])
 async def api_auto_register_server():
     """Forces auto-detection and registration of the Python host server's real public IP into the sending fleet."""
     import ip_rotator
@@ -2364,7 +2704,7 @@ async def api_auto_register_server():
 
 
 
-@app.post("/api/ip/connect")
+@app.post("/api/ip/connect", dependencies=[_auth])
 async def connect_ip_node(request: Request):
     """Register caller's IP as an active sending node with carrier and daily limit."""
     try:
@@ -2381,7 +2721,7 @@ async def connect_ip_node(request: Request):
     return {"success": True, "node": node, "message": f"Connected from {ip}"}
 
 
-@app.post("/api/ip/disconnect")
+@app.post("/api/ip/disconnect", dependencies=[_auth])
 async def disconnect_ip_node(request: Request):
     """Disconnect caller's IP from the sending pool."""
     ip = _get_caller_ip(request)
@@ -2390,7 +2730,7 @@ async def disconnect_ip_node(request: Request):
     return {"success": True, "message": f"Disconnected {ip}"}
 
 
-@app.post("/api/ip/heartbeat")
+@app.post("/api/ip/heartbeat", dependencies=[_auth])
 async def heartbeat_ip_node(request: Request):
     """Keep-alive ping from connected node (call every 30s from browser)."""
     ip = _get_caller_ip(request)
@@ -2398,7 +2738,7 @@ async def heartbeat_ip_node(request: Request):
     return {"ok": True}
 
 
-@app.get("/api/ip/nodes")
+@app.get("/api/ip/nodes", dependencies=[_auth])
 async def list_ip_nodes(status: Optional[str] = None):
     """List all IP nodes, optionally filtered by status='connected'|'disconnected'."""
     nodes = db.get_ip_nodes(status=status)
@@ -2406,14 +2746,14 @@ async def list_ip_nodes(status: Optional[str] = None):
     return {"success": True, "nodes": nodes, "connected_count": len(connected)}
 
 
-@app.get("/api/ip/stats")
+@app.get("/api/ip/stats", dependencies=[_auth])
 async def get_ip_stats():
     """Returns real-time aggregate stats for the IP sending pool."""
     stats = db.get_ip_node_stats()
     return {"success": True, "stats": stats}
 
 
-@app.post("/api/ip/nodes/{node_id}/toggle-pause")
+@app.post("/api/ip/nodes/{node_id}/toggle-pause", dependencies=[_auth])
 async def toggle_pause_ip_node(node_id: int):
     """Pause or resume sending through a specific IP node."""
     node = db.toggle_pause_ip_node(node_id)
@@ -2424,7 +2764,7 @@ async def toggle_pause_ip_node(node_id: int):
     return {"success": True, "node": node, "action": action}
 
 
-@app.post("/api/ip/nodes/{node_id}/update")
+@app.post("/api/ip/nodes/{node_id}/update", dependencies=[_auth])
 async def update_ip_node_meta(node_id: int, request: Request):
     """Updates name, carrier provider, daily sending limit, and rotation webhook for an IP node."""
     b = await request.json()
@@ -2438,7 +2778,7 @@ async def update_ip_node_meta(node_id: int, request: Request):
     return {"success": True, "node": node}
 
 
-@app.post("/api/ip/nodes/{node_id}/ping")
+@app.post("/api/ip/nodes/{node_id}/ping", dependencies=[_auth])
 async def ping_ip_node(node_id: int):
     """Performs an instant real-time latency ping to the IP node."""
     conn = db.get_db()
@@ -2456,7 +2796,7 @@ async def ping_ip_node(node_id: int):
     return {"success": True, "latency_ms": latency, "node_id": node_id}
 
 
-@app.delete("/api/ip/nodes/{node_id}")
+@app.delete("/api/ip/nodes/{node_id}", dependencies=[_auth])
 async def delete_ip_node(node_id: int):
     """Permanently remove an IP node record."""
     conn = db.get_db()
@@ -2540,7 +2880,7 @@ def test_mobile_proxy(host: str, port: int, protocol: str = "socks5", username: 
     return {"success": False, "error": "Could not determine external IP through proxy"}
 
 
-@app.post("/api/ip/tunnel/test")
+@app.post("/api/ip/tunnel/test", dependencies=[_auth])
 async def api_test_tunnel(request: Request):
     """Live connectivity test for SOCKS5 or HTTP proxy tunnel with auto-detecting host:port."""
     b = await request.json()
@@ -2556,7 +2896,7 @@ async def api_test_tunnel(request: Request):
     return res
 
 
-@app.post("/api/ip/tunnel/save")
+@app.post("/api/ip/tunnel/save", dependencies=[_auth])
 async def api_save_tunnel(request: Request):
     """
     Saves a persistent Localtonet SOCKS5 / HTTP mobile tunnel into database.
@@ -2601,7 +2941,7 @@ async def api_save_tunnel(request: Request):
     return {"success": True, "node": node, "test_result": test_res}
 
 
-@app.post("/api/ip/nodes/{node_id}/rotate-ip")
+@app.post("/api/ip/nodes/{node_id}/rotate-ip", dependencies=[_auth])
 async def api_rotate_node_ip(node_id: int):
     """
     Triggers IP rotation for a mobile node via Airplane Mode / Localtonet rotation webhook.
@@ -2612,7 +2952,7 @@ async def api_rotate_node_ip(node_id: int):
     return res
 
 
-@app.post("/api/ip/nodes/{node_id}/settings")
+@app.post("/api/ip/nodes/{node_id}/settings", dependencies=[_auth])
 async def api_update_node_settings(node_id: int, request: Request):
     """Updates settings for an IP node (daily limit, webhook, auto-rotate frequency, label)."""
     b = await request.json()
@@ -2689,14 +3029,14 @@ async def startup_fleet_services():
 
 
 # ── SMTP Vault Endpoints ──────────────────────────────────────
-@app.get("/api/smtp/profiles")
+@app.get("/api/smtp/profiles", dependencies=[_auth])
 async def list_smtp_profiles():
     """Return all saved SMTP profiles (passwords masked)."""
     profiles = db.get_smtp_profiles()
     return {"success": True, "profiles": profiles}
 
 
-@app.post("/api/smtp/profiles")
+@app.post("/api/smtp/profiles", dependencies=[_auth])
 async def create_smtp_profile(request: Request):
     """Save a new SMTP credential profile to the vault."""
     b = await request.json()
@@ -2717,14 +3057,14 @@ async def create_smtp_profile(request: Request):
     return {"success": True, "id": pid, "message": "SMTP profile saved to vault"}
 
 
-@app.delete("/api/smtp/profiles/{profile_id}")
+@app.delete("/api/smtp/profiles/{profile_id}", dependencies=[_auth])
 async def delete_smtp_profile(profile_id: int):
     """Delete a saved SMTP profile."""
     db.delete_smtp_profile(profile_id)
     return {"success": True}
 
 
-@app.post("/api/smtp/profiles/{profile_id}/test")
+@app.post("/api/smtp/profiles/{profile_id}/test", dependencies=[_auth])
 async def test_smtp_profile(profile_id: int):
     """Test connectivity for a saved SMTP profile."""
     profile = db.get_smtp_profile(profile_id)
@@ -2740,7 +3080,7 @@ async def test_smtp_profile(profile_id: int):
     return result
 
 
-@app.post("/api/smtp/verify-direct")
+@app.post("/api/smtp/verify-direct", dependencies=[_auth])
 async def verify_smtp_direct(request: Request):
     """Test raw SMTP credentials directly in real-time before saving."""
     try:
