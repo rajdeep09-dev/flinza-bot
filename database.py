@@ -3,9 +3,11 @@ Flinza — Database module
 SQLite, all in one file. Leads, emails, accounts, replies, followups, settings, templates.
 """
 
+import os
 import sqlite3
 import json
 import hashlib
+from pathlib import Path
 from datetime import datetime, date, timedelta
 from config import (
     DB_PATH, DEFAULT_DAILY_LIMIT, DEFAULT_MIN_INTERVAL, DEFAULT_MAX_INTERVAL,
@@ -436,6 +438,7 @@ def init_db():
     conn.commit()
     _init_default_settings(conn)
     conn.close()
+    auto_seed_if_empty()
 
 
 def _init_default_settings(conn):
@@ -484,6 +487,83 @@ def _init_default_settings(conn):
             (key, value)
         )
     conn.commit()
+
+
+def seed_database(force: bool = False) -> dict:
+    """Seeds database with master production state from seed_data.json."""
+    seed_file = Path(__file__).parent / "seed_data.json"
+    if not seed_file.exists():
+        return {"success": False, "error": "seed_data.json not found"}
+
+    conn = get_db()
+    try:
+        alias_count = conn.execute("SELECT count(*) FROM smtp_aliases").fetchone()[0]
+        acc_count = conn.execute("SELECT count(*) FROM gmail_accounts").fetchone()[0]
+
+        if not force and (alias_count > 0 or acc_count > 0):
+            conn.close()
+            return {"success": True, "seeded": False, "message": "Database already contains aliases/accounts."}
+
+        with open(seed_file, "r", encoding="utf-8") as f:
+            seed = json.load(f)
+
+        stats = {}
+        tables_to_seed = [
+            "smtp_aliases",
+            "gmail_accounts",
+            "smtp_profiles",
+            "templates",
+            "leads",
+            "blacklist",
+            "emails_sent",
+            "replies",
+            "conversation_history",
+            "settings",
+        ]
+
+        for tbl in tables_to_seed:
+            rows = seed.get(tbl, [])
+            if not rows:
+                continue
+            inserted = 0
+            for r in rows:
+                row_dict = dict(r)
+                for col_name, val in row_dict.items():
+                    if isinstance(val, str) and val.startswith("ENV:"):
+                        env_key = val[4:]
+                        resolved = os.environ.get(env_key) or os.environ.get(env_key.lower()) or ""
+                        if not resolved and env_key == "AWS_SES_SMTP_USER":
+                            resolved = os.environ.get("AWS_ACCESS_KEY_ID", "")
+                        if not resolved and env_key == "AWS_SES_SMTP_PASS":
+                            resolved = os.environ.get("AWS_SECRET_ACCESS_KEY", "")
+                        row_dict[col_name] = resolved
+
+                cols = list(row_dict.keys())
+                placeholders = ", ".join(["?"] * len(cols))
+                col_names = ", ".join([f'"{c}"' for c in cols])
+                sql = f"INSERT OR IGNORE INTO {tbl} ({col_names}) VALUES ({placeholders})"
+                cur = conn.execute(sql, [row_dict[c] for c in cols])
+                if cur.rowcount > 0:
+                    inserted += 1
+            stats[tbl] = inserted
+
+        conn.commit()
+        conn.close()
+        return {"success": True, "seeded": True, "stats": stats}
+    except Exception as e:
+        try:
+            conn.close()
+        except Exception:
+            pass
+        return {"success": False, "error": str(e)}
+
+
+def auto_seed_if_empty():
+    """Auto-seeds database on fresh installations (e.g. Render cloud containers)."""
+    try:
+        return seed_database(force=False)
+    except Exception:
+        return {"success": False}
 
 
 # ═══════════════════════════════════════════════════════════════

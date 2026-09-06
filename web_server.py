@@ -3124,6 +3124,18 @@ async def verify_smtp_direct(request: Request):
     return result
 
 
+@app.post("/api/system/seed", dependencies=[_auth])
+async def restore_seed_data(request: Request):
+    """Restores master production seed data (21 aliases, inboxes, templates, replies)."""
+    try:
+        b = await request.json()
+    except Exception:
+        b = {}
+    force = bool(b.get("force", False))
+    res = await asyncio.to_thread(db.seed_database, force=force)
+    return res
+
+
 # ── Server Runner ─────────────────────────────────────────────
 def run_studio_server():
     """Launches the Studio web server."""
