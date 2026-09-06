@@ -13,8 +13,12 @@ import time
 import threading
 import hashlib
 import html
+import socket
 from email.header import decode_header
 from datetime import datetime, timedelta
+
+# Set a global socket timeout so IMAP operations never hang indefinitely
+socket.setdefaulttimeout(15.0)
 
 import database as db
 import ai_router
@@ -78,7 +82,7 @@ def _watch_loop(notify_callback):
     global _watcher_running
     while _watcher_running:
         try:
-            check_seconds = int(db.get_setting("reply_check_seconds", "45"))
+            check_seconds = int(db.get_setting("reply_check_seconds", "8"))
             _check_all_accounts(notify_callback)
             db.record_reply_check()
         except Exception as e:
@@ -90,22 +94,28 @@ def _watch_loop(notify_callback):
             time.sleep(1)
 
 
-# ═══════════════════════════════════════════════════════════════
-#                     IMAP CHECKING
-# ═══════════════════════════════════════════════════════════════
+_check_lock = threading.Lock()
+
 
 def _check_all_accounts(notify_callback):
-    accounts = db.get_all_accounts()
-    for account in accounts:
-        if not account["active"]:
-            continue
-        try:
-            _check_account(account, notify_callback)
-        except Exception as e:
-            logger.warning(f"Failed to check {account['email']}: {e}")
+    if not _check_lock.acquire(blocking=False):
+        logger.info("IMAP sync already in progress, skipping concurrent run.")
+        return
+
+    try:
+        accounts = db.get_all_accounts()
+        for account in accounts:
+            if not account["active"]:
+                continue
+            try:
+                _check_account(account, notify_callback, max_messages=5)
+            except Exception as e:
+                logger.warning(f"Failed to check {account['email']}: {e}")
+    finally:
+        _check_lock.release()
 
 
-def _check_account(account, notify_callback, max_messages=None):
+def _check_account(account, notify_callback, max_messages=5):
     email_addr = account["email"]
     password   = account["app_password"]
 
@@ -113,39 +123,79 @@ def _check_account(account, notify_callback, max_messages=None):
     existing_msg_ids = set(r[0] for r in conn.execute("SELECT message_id FROM replies WHERE message_id IS NOT NULL").fetchall())
     conn.close()
 
+    mail = None
     try:
-        with imaplib.IMAP4_SSL("imap.gmail.com", 993) as mail:
-            mail.login(email_addr, password)
-            mail.select("inbox")
+        mail = imaplib.IMAP4_SSL("imap.gmail.com", 993, timeout=12)
+        mail.login(email_addr, password)
+        status, select_data = mail.select("inbox")
+        total_msgs = 0
+        if status == "OK" and select_data and select_data[0]:
+            try:
+                val = select_data[0].decode() if isinstance(select_data[0], bytes) else str(select_data[0])
+                total_msgs = int(val)
+            except Exception:
+                total_msgs = 0
 
-            status, data = mail.search(None, "ALL")
-            if status != "OK" or not data or not data[0]:
-                return
+        # Fast discovery: check UNSEEN messages + latest N sequence numbers
+        candidates = []
+        try:
+            status, unseen_data = mail.search(None, "UNSEEN")
+            if status == "OK" and unseen_data and unseen_data[0]:
+                candidates.extend(unseen_data[0].split())
+        except Exception:
+            pass
 
-            msg_ids = data[0].split()
-            # Retrieve all messages in the connected master email or up to max_messages
-            check_ids = msg_ids if not max_messages else msg_ids[-max_messages:]
-            # Reverse so newest emails are processed first
-            for msg_id in reversed(check_ids):
-                try:
-                    # Fast peek at Message-ID to skip already stored messages without downloading full payload
-                    status, peek_data = mail.fetch(msg_id, "(BODY.PEEK[HEADER.FIELDS (MESSAGE-ID)])")
-                    if status == "OK" and peek_data and peek_data[0]:
+        if total_msgs > 0:
+            limit_n = max_messages or 20
+            start_seq = max(1, total_msgs - limit_n + 1)
+            candidates.extend([str(i).encode() for i in range(start_seq, total_msgs + 1)])
+
+        if not candidates:
+            return
+
+        # Deduplicate preserving order
+        unique_ids = []
+        seen = set()
+        for mid in candidates:
+            if mid not in seen:
+                seen.add(mid)
+                unique_ids.append(mid)
+
+        # Reverse so newest emails are processed first
+        for msg_id in reversed(unique_ids):
+            try:
+                # Fast peek at Message-ID to skip already stored messages without downloading full payload
+                status, peek_data = mail.fetch(msg_id, "(BODY.PEEK[HEADER.FIELDS (MESSAGE-ID)])")
+                if status == "OK" and peek_data and peek_data[0]:
+                    hdr_chunk = ""
+                    if isinstance(peek_data[0], tuple) and len(peek_data[0]) > 1 and isinstance(peek_data[0][1], bytes):
                         hdr_chunk = peek_data[0][1].decode("utf-8", errors="replace")
-                        m = re.search(r"Message-ID:\s*(<[^>]+>|\S+)", hdr_chunk, re.I)
-                        if m and m.group(1).strip() in existing_msg_ids:
-                            continue
+                    elif isinstance(peek_data[0], bytes):
+                        hdr_chunk = peek_data[0].decode("utf-8", errors="replace")
+                    m = re.search(r"Message-ID:\s*(<[^>]+>|\S+)", hdr_chunk, re.I)
+                    if m and m.group(1).strip() in existing_msg_ids:
+                        continue
 
-                    _process_message(mail, msg_id, email_addr, notify_callback)
-                except Exception as e:
-                    logger.warning(f"Failed to process message {msg_id}: {e}")
+                _process_message(mail, msg_id, email_addr, notify_callback)
+            except Exception as e:
+                logger.warning(f"Failed to process message {msg_id}: {e}")
 
-            _last_check_times[email_addr] = datetime.now()
+        _last_check_times[email_addr] = datetime.now()
 
     except imaplib.IMAP4.error as e:
         logger.warning(f"IMAP error for {email_addr}: {e}")
     except Exception as e:
         logger.warning(f"Error checking {email_addr}: {e}")
+    finally:
+        if mail is not None:
+            try:
+                mail.close()
+            except Exception:
+                pass
+            try:
+                mail.logout()
+            except Exception:
+                pass
 
 
 def _process_message(mail, msg_id, our_email, notify_callback):

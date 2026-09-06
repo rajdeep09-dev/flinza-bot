@@ -15,6 +15,12 @@ document.addEventListener("DOMContentLoaded", () => {
   let activeSearchQuery = "";
 
   function switchView(viewName) {
+    // Close mobile drawer on navigation
+    const sidebarEl = document.querySelector("aside.sidebar");
+    const mobileBackdrop = g("mobile-backdrop");
+    if (sidebarEl) sidebarEl.classList.remove("mobile-open");
+    if (mobileBackdrop) mobileBackdrop.classList.remove("active");
+
     navItems.forEach(el => el.classList.toggle("active", el.dataset.view === viewName));
 
     if (viewName.startsWith("webmail-")) {
@@ -277,6 +283,9 @@ document.addEventListener("DOMContentLoaded", () => {
     const pane = g("webmail-reading-pane");
     if (!pane) return;
 
+    const layout = document.querySelector(".webmail-layout");
+    if (layout) layout.classList.add("reading-active");
+
     pane.style.display = "flex";
     setEl("read-subject", thread.subject || "(No Subject)");
     const tag = thread.tag || "Inbound";
@@ -345,6 +354,17 @@ document.addEventListener("DOMContentLoaded", () => {
   on("btn-close-reading", "click", () => {
     const pane = g("webmail-reading-pane");
     if (pane) pane.style.display = "none";
+    const layout = document.querySelector(".webmail-layout");
+    if (layout) layout.classList.remove("reading-active");
+    selectedThreadId = null;
+    document.querySelectorAll(".mail-row").forEach(r => r.classList.remove("active"));
+  });
+
+  on("btn-mobile-back-reading", "click", () => {
+    const pane = g("webmail-reading-pane");
+    if (pane) pane.style.display = "none";
+    const layout = document.querySelector(".webmail-layout");
+    if (layout) layout.classList.remove("reading-active");
     selectedThreadId = null;
     document.querySelectorAll(".mail-row").forEach(r => r.classList.remove("active"));
   });
@@ -400,14 +420,14 @@ document.addEventListener("DOMContentLoaded", () => {
 
   on("btn-refresh-webmail", "click", async (e) => {
     const btn = e.currentTarget;
-    btn.style.animation = "spin 0.8s linear";
+    btn.style.animation = "spin 1.2s linear infinite";
     try {
       await apiFetch("/api/unibox/check", "POST");
     } catch {}
     setTimeout(() => {
       btn.style.animation = "";
       loadWebmailThreads(currentWebmailFolder, activeSearchQuery, currentWebmailPage, currentWebmailFilter);
-    }, 800);
+    }, 1200);
   });
 
   // ═══════════════════════════════════════════════════════
@@ -2740,13 +2760,186 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
 
-  let savedFolder = localStorage.getItem("flinza_last_folder");
-  if (!savedFolder || savedFolder === "inbox") {
-    savedFolder = "all-inboxes";
-    localStorage.setItem("flinza_last_folder", "all-inboxes");
+  // ═══════════════════════════════════════════════════════
+  //  AUTH, PRELOADER & MOBILE CONTROLLERS
+  // ═══════════════════════════════════════════════════════
+  function dismissPreloader() {
+    const preloader = g("app-preloader");
+    if (!preloader) return;
+    preloader.classList.add("fade-out");
+    setTimeout(() => {
+      preloader.style.display = "none";
+    }, 450);
   }
-  switchView(`webmail-${savedFolder}`);
-  loadDashboard();
+
+  function showLoginView() {
+    const loginView = g("view-login");
+    const appShell = g("main-app-shell");
+    if (loginView) loginView.style.display = "flex";
+    if (appShell) appShell.style.display = "none";
+    const emailInput = g("login-email");
+    if (emailInput && window.FLINZA_LOGIN_EMAIL) {
+      emailInput.value = window.FLINZA_LOGIN_EMAIL;
+    }
+    const pwInput = g("login-password");
+    if (pwInput) pwInput.focus();
+  }
+
+  function showAppShell() {
+    const loginView = g("view-login");
+    const appShell = g("main-app-shell");
+    if (loginView) loginView.style.display = "none";
+    if (appShell) appShell.style.display = "flex";
+  }
+
+  function bootApp() {
+    let savedFolder = localStorage.getItem("flinza_last_folder");
+    if (!savedFolder || savedFolder === "inbox") {
+      savedFolder = "all-inboxes";
+      localStorage.setItem("flinza_last_folder", "all-inboxes");
+    }
+    switchView(`webmail-${savedFolder}`);
+    loadDashboard();
+    setTimeout(dismissPreloader, 450);
+  }
+
+  async function checkAuthAndInit() {
+    let isAuthed = false;
+    try {
+      const res = await fetch("/api/auth/status", {
+        headers: {
+          "Authorization": `Bearer ${window.FLINZA_API_KEY || localStorage.getItem("flinza_api_key") || ""}`
+        }
+      });
+      const data = await res.json();
+      if (data && data.authenticated) {
+        isAuthed = true;
+        if (data.email) {
+          localStorage.setItem("flinza_auth_user", data.email);
+          setEl("user-display-email", data.email);
+        }
+      }
+    } catch (e) {
+      console.warn("Auth status check fallback:", e);
+    }
+
+    // Check if session token exists in localStorage or server context
+    if (!isAuthed && (window.FLINZA_IS_LOGGED_IN || localStorage.getItem("flinza_auth_user"))) {
+      isAuthed = true;
+    }
+
+    if (!isAuthed) {
+      showLoginView();
+      dismissPreloader();
+      return;
+    }
+
+    showAppShell();
+    bootApp();
+  }
+
+  // Login Form Submission
+  const loginForm = g("login-form");
+  if (loginForm) {
+    loginForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const email = g("login-email")?.value.trim() || "";
+      const password = g("login-password")?.value || "";
+      const errAlert = g("login-error-alert");
+      const btnSubmit = g("btn-submit-login");
+      const btnText = g("btn-login-text");
+
+      if (errAlert) { errAlert.style.display = "none"; errAlert.textContent = ""; }
+      if (btnSubmit) btnSubmit.disabled = true;
+      if (btnText) btnText.textContent = "Authenticating...";
+
+      try {
+        const res = await fetch("/api/auth/login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email, password })
+        });
+        const data = await res.json();
+        if (res.ok && data.success) {
+          if (data.token) {
+            window.FLINZA_API_KEY = data.token;
+            localStorage.setItem("flinza_api_key", data.token);
+          }
+          localStorage.setItem("flinza_auth_user", data.email || email);
+          setEl("user-display-email", data.email || email);
+          showToast(`Welcome back, ${data.email || 'Rajdeep'}!`, "success");
+          showAppShell();
+          bootApp();
+        } else {
+          const errMsg = data.detail || data.error || "Invalid email or password. Please try again.";
+          if (errAlert) {
+            errAlert.textContent = errMsg;
+            errAlert.style.display = "block";
+          }
+          showToast("Authentication failed", "error");
+        }
+      } catch (err) {
+        if (errAlert) {
+          errAlert.textContent = "Network error while logging in. Please retry.";
+          errAlert.style.display = "block";
+        }
+      } finally {
+        if (btnSubmit) btnSubmit.disabled = false;
+        if (btnText) btnText.textContent = "Sign In to Studio";
+      }
+    });
+  }
+
+  // Toggle password visibility
+  on("btn-toggle-password", "click", () => {
+    const pw = g("login-password");
+    if (!pw) return;
+    const isPw = pw.type === "password";
+    pw.type = isPw ? "text" : "password";
+  });
+
+  // Logout button
+  on("btn-sidebar-logout", "click", async () => {
+    if (confirm("Sign out of Flinza Studio?")) {
+      try {
+        await fetch("/api/auth/logout", { method: "POST" });
+      } catch (e) {}
+      localStorage.removeItem("flinza_auth_user");
+      localStorage.removeItem("flinza_api_key");
+      window.FLINZA_API_KEY = "";
+      showToast("Signed out", "info");
+      showLoginView();
+    }
+  });
+
+  // Mobile Hamburger Menu & Drawer Toggles
+  const sidebarEl = document.querySelector("aside.sidebar");
+  const mobileBackdrop = g("mobile-backdrop");
+
+  on("btn-mobile-hamburger", "click", () => {
+    if (sidebarEl) sidebarEl.classList.toggle("mobile-open");
+    if (mobileBackdrop) mobileBackdrop.classList.toggle("active");
+  });
+
+  on("btn-mobile-sidebar-close", "click", () => {
+    if (sidebarEl) sidebarEl.classList.remove("mobile-open");
+    if (mobileBackdrop) mobileBackdrop.classList.remove("active");
+  });
+
+  if (mobileBackdrop) {
+    mobileBackdrop.addEventListener("click", () => {
+      if (sidebarEl) sidebarEl.classList.remove("mobile-open");
+      mobileBackdrop.classList.remove("active");
+    });
+  }
+
+  // Mobile Compose button
+  on("btn-mobile-compose", "click", () => {
+    g("btn-open-compose")?.click();
+  });
+
+  // Start app auth flow
+  checkAuthAndInit();
 
   // Add spin keyframe dynamically
   const styleEl = document.createElement("style");
@@ -2790,13 +2983,6 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }, 5000);
 
-  // Auto-check IMAP inboxes in background every 20s
-  setInterval(async () => {
-    if (document.hidden) return;
-    try {
-      await apiFetch("/api/unibox/check", "POST", {});
-    } catch (e) {}
-  }, 20000);
 
 });
 

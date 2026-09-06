@@ -36,16 +36,28 @@ try:
 except ValueError:
     ALLOWED_USER_ID = None
 
-# ─── Dashboard Auth (API Bearer Token) ───────────────────────────
+# ─── Dashboard Auth & Login Credentials ─────────────────────────
 # If not set, a random key is auto-generated and printed on startup.
 DASHBOARD_API_KEY = os.environ.get("DASHBOARD_API_KEY", "").strip()
 # Set REQUIRE_AUTH=false to disable auth for local-only development
 REQUIRE_AUTH = os.environ.get("REQUIRE_AUTH", "true").strip().lower() not in ("false", "0", "no")
 
+DASHBOARD_LOGIN_EMAIL = os.environ.get("DASHBOARD_LOGIN_EMAIL", "rajdeep@flinzaworks.online").strip()
+DASHBOARD_LOGIN_PASSWORD = os.environ.get("DASHBOARD_LOGIN_PASSWORD", "Maa@2004").strip()
+DASHBOARD_PUBLIC_URL = os.environ.get("DASHBOARD_PUBLIC_URL", "https://dashboard.flinzaworks.online").strip()
+
 # ─── CORS ────────────────────────────────────────────────────────
-# Comma-separated list of allowed origins. Defaults to localhost only.
-_raw_origins = os.environ.get("ALLOWED_ORIGINS", "http://localhost:7880,http://localhost:8000,http://127.0.0.1:7880,http://127.0.0.1:8000").strip()
-ALLOWED_ORIGINS = [o.strip() for o in _raw_origins.split(",") if o.strip()]
+# Comma-separated list of allowed origins.
+_default_origins = [
+    "http://localhost:7880", "http://localhost:8000", "http://localhost:10000",
+    "http://127.0.0.1:7880", "http://127.0.0.1:8000", "http://127.0.0.1:10000",
+    "https://dashboard.flinzaworks.online", "http://dashboard.flinzaworks.online",
+    "https://flinza-bot.onrender.com", DASHBOARD_PUBLIC_URL
+]
+_raw_origins = os.environ.get("ALLOWED_ORIGINS", "").strip()
+if _raw_origins:
+    _default_origins.extend([o.strip() for o in _raw_origins.split(",") if o.strip()])
+ALLOWED_ORIGINS = list(dict.fromkeys(_default_origins))
 
 # ─── AI Keys ─────────────────────────────────────────────────────
 GEMINI_API_KEY     = os.environ.get("GEMINI_API_KEY", "").strip()

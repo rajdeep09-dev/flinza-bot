@@ -16,9 +16,28 @@ from config import (
 )
 
 
+class SqliteRow(dict):
+    """
+    Enhanced replacement for sqlite3.Row that:
+    1. Inherits from dict -> supports row.get(key, default), row['key'], keys(), values(), items()
+    2. Supports integer indexing -> row[0], row[1]
+    3. Is natively JSON serializable
+    """
+    __slots__ = ('_tuple',)
+
+    def __init__(self, cursor, row):
+        self._tuple = row
+        super().__init__({col[0]: row[idx] for idx, col in enumerate(cursor.description)})
+
+    def __getitem__(self, item):
+        if isinstance(item, int):
+            return self._tuple[item]
+        return super().__getitem__(item)
+
+
 def get_db():
     conn = sqlite3.connect(DB_PATH, check_same_thread=False, timeout=60.0)
-    conn.row_factory = sqlite3.Row
+    conn.row_factory = SqliteRow
     try:
         conn.execute("PRAGMA busy_timeout = 60000")
         conn.execute("PRAGMA journal_mode = WAL")

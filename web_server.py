@@ -15,6 +15,7 @@ import asyncio
 import csv
 import io
 import math
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -148,7 +149,7 @@ templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 #   AUTHENTICATION DEPENDENCY
 # ─────────────────────────────────────────────────────────────────
 async def verify_api_key(request: Request):
-    """Bearer token auth guard for all /api/* routes."""
+    """Bearer token / cookie auth guard for all /api/* routes."""
     if not config.REQUIRE_AUTH:
         return True
 
@@ -158,6 +159,11 @@ async def verify_api_key(request: Request):
         expected = config.INBOUND_WEBHOOK_SECRET or db.get_setting("inbound_webhook_secret", "flinza_cf_inbound_secret_2026")
         if expected and secret and secrets.compare_digest(secret, expected):
             return True
+
+    # Check session cookie
+    cookie_token = request.cookies.get("flinza_session")
+    if cookie_token and secrets.compare_digest(cookie_token, _api_key):
+        return True
 
     auth_header = request.headers.get("Authorization", "")
     token = ""
@@ -171,12 +177,79 @@ async def verify_api_key(request: Request):
     if not token or not secrets.compare_digest(token, _api_key):
         raise HTTPException(
             status_code=401,
-            detail="Unauthorized: Invalid or missing API key. Set it in the dashboard or pass Bearer token.",
+            detail="Unauthorized: Invalid or missing credentials. Please log in.",
             headers={"WWW-Authenticate": "Bearer"},
         )
     return True
 
 _auth = Depends(verify_api_key)
+
+
+# ═══════════════════════════════════════════════════════════════
+#                    AUTHENTICATION ENDPOINTS
+# ═══════════════════════════════════════════════════════════════
+
+@app.post("/api/auth/login")
+async def auth_login(request: Request, response: Response):
+    """Authenticates with hardcoded credentials and returns session token + sets cookie."""
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    email = (body.get("email") or "").strip().lower()
+    password = (body.get("password") or "").strip()
+
+    expected_email = config.DASHBOARD_LOGIN_EMAIL.lower().strip()
+    expected_pass = config.DASHBOARD_LOGIN_PASSWORD.strip()
+
+    is_direct_key = password and secrets.compare_digest(password, _api_key)
+    is_valid_cred = (email == expected_email and secrets.compare_digest(password, expected_pass))
+
+    if not (is_valid_cred or is_direct_key):
+        raise HTTPException(status_code=401, detail="Invalid email or password.")
+
+    response.set_cookie(
+        key="flinza_session",
+        value=_api_key,
+        max_age=86400 * 30,
+        httponly=False,
+        samesite="lax",
+        secure=request.url.scheme == "https"
+    )
+    return {
+        "success": True,
+        "token": _api_key,
+        "email": config.DASHBOARD_LOGIN_EMAIL,
+        "message": "Authenticated successfully"
+    }
+
+
+@app.post("/api/auth/logout")
+async def auth_logout(response: Response):
+    """Logs out user and clears session cookie."""
+    response.delete_cookie(key="flinza_session")
+    return {"success": True, "message": "Logged out"}
+
+
+@app.get("/api/auth/status")
+async def auth_status(request: Request):
+    """Returns session authentication status."""
+    cookie_token = request.cookies.get("flinza_session")
+    auth_header = request.headers.get("Authorization", "")
+    token = ""
+    if auth_header.startswith("Bearer "):
+        token = auth_header[7:].strip()
+    elif cookie_token:
+        token = cookie_token
+    elif request.headers.get("X-API-Key"):
+        token = request.headers.get("X-API-Key").strip()
+
+    is_auth = bool(token and secrets.compare_digest(token, _api_key))
+    return {
+        "authenticated": is_auth,
+        "email": config.DASHBOARD_LOGIN_EMAIL if is_auth else None,
+        "dashboard_url": config.DASHBOARD_PUBLIC_URL
+    }
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -186,10 +259,18 @@ _auth = Depends(verify_api_key)
 @app.api_route("/", methods=["GET", "HEAD"], response_class=HTMLResponse)
 async def index_page(request: Request):
     """Serves the main Flinza Studio application shell."""
+    cookie_token = request.cookies.get("flinza_session")
+    is_logged_in = bool(cookie_token and secrets.compare_digest(cookie_token, _api_key))
     return templates.TemplateResponse(
         request=request,
         name="index.html",
-        context={"app_name": "Flinza Studio", "dashboard_api_key": _api_key}
+        context={
+            "app_name": "Flinza Studio",
+            "dashboard_api_key": _api_key,
+            "dashboard_url": config.DASHBOARD_PUBLIC_URL,
+            "login_email": config.DASHBOARD_LOGIN_EMAIL,
+            "is_logged_in": is_logged_in
+        }
     )
 
 
@@ -968,9 +1049,17 @@ async def send_unibox_reply(request: Request):
     return {"success": False, "error": res.get("error")}
 
 
+_last_unibox_check = 0.0
+
 @app.post("/api/unibox/check", dependencies=[_auth])
 async def poll_inboxes():
-    """Fires IMAP inbox check in background thread and returns immediately."""
+    """Fires IMAP inbox check in background thread with cooldown protection."""
+    global _last_unibox_check
+    now = time.time()
+    if now - _last_unibox_check < 4.0:
+        return {"success": True, "message": "Inbox sync already in progress or recently completed."}
+    _last_unibox_check = now
+
     def _do_poll():
         try:
             reply_watcher.check_now()
@@ -1019,7 +1108,7 @@ def _query_webmail_threads(conn, folder: str, search: Optional[str], filter: str
     offset = max(0, (page - 1) * limit)
     total_count = 0
 
-    if folder in ("inbox", "all-inboxes"):
+    if folder in ("inbox", "all-inboxes", "all_inboxes"):
         base_where = []
         params = []
         if folder == "inbox":
@@ -1079,6 +1168,7 @@ def _query_webmail_threads(conn, folder: str, search: Optional[str], filter: str
             sender_lower = (r["sender"] or "").lower()
             is_verification = any(k in subj_lower or k in sender_lower for k in ["verify", "verification", "activate", "confirm", "render", "otp", "security code"])
 
+            tag = "Inbound"
             if is_lead:
                 if intent in ("interested", "rate_inquiry"):
                     tag = "Interested"
@@ -1086,6 +1176,8 @@ def _query_webmail_threads(conn, folder: str, search: Optional[str], filter: str
                     tag = "Opt-Out"
                 elif intent == "bounced":
                     tag = "Bounced"
+                else:
+                    tag = "Lead Reply"
             elif is_verification:
                 tag = "Verification"
             else:
