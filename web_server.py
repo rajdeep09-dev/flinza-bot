@@ -195,23 +195,35 @@ async def index_page(request: Request):
 # Health check endpoint (no auth — for uptime monitoring)
 @app.get("/health")
 async def health_check():
-    """System health check for uptime monitoring (UptimeRobot, Betterstack, etc.)."""
+    """System health check for uptime monitoring (Render, UptimeRobot, etc.)."""
+    db_ok = False
+    sent_today = 0
     try:
-        # Quick DB check
         conn = db.get_db()
         conn.execute("SELECT 1").fetchone()
         conn.close()
         db_ok = True
+    except Exception as e:
+        logger.warning(f"Health DB ping warning: {e}")
+
+    try:
+        stats = db.get_stats()
+        sent_today = stats.get("sent_today", 0)
+    except Exception as e:
+        logger.warning(f"Health stats warning (non-fatal): {e}")
+
+    is_running = False
+    try:
+        is_running = email_queue.is_running()
     except Exception:
-        db_ok = False
-    is_running = email_queue.is_running()
-    stats = db.get_stats()
+        pass
+
     return {
         "status": "ok" if db_ok else "degraded",
         "version": "2.2.0",
         "db": "ok" if db_ok else "error",
         "queue": "running" if is_running else "idle",
-        "sent_today": stats.get("sent_today", 0),
+        "sent_today": sent_today,
         "timestamp": datetime.utcnow().isoformat() + "Z"
     }
 

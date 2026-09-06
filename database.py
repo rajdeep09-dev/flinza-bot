@@ -15,12 +15,14 @@ from config import (
 
 
 def get_db():
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False, timeout=30.0)
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False, timeout=60.0)
     conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON")
     try:
-        conn.execute("PRAGMA journal_mode=WAL")
-    except sqlite3.OperationalError:
+        conn.execute("PRAGMA busy_timeout = 60000")
+        conn.execute("PRAGMA journal_mode = WAL")
+        conn.execute("PRAGMA synchronous = NORMAL")
+        conn.execute("PRAGMA foreign_keys = ON")
+    except Exception:
         pass
     return conn
 
@@ -695,23 +697,32 @@ def increment_account_sent(account_id: str, is_alias: bool = False):
 def total_remaining_today():
     conn = get_db()
     today = date.today().isoformat()
-    conn.execute(
-        "UPDATE gmail_accounts SET sent_today=0, last_reset_date=? WHERE last_reset_date!=? OR last_reset_date IS NULL",
-        (today, today)
-    )
-    conn.execute(
-        "UPDATE smtp_aliases SET daily_sent=0, last_reset=? WHERE last_reset!=? OR last_reset IS NULL",
-        (today, today)
-    )
-    conn.commit()
-    r1 = conn.execute(
-        "SELECT COALESCE(SUM(daily_limit-sent_today),0) as r FROM gmail_accounts WHERE active=1 AND sent_today<daily_limit"
-    ).fetchone()
-    r2 = conn.execute(
-        "SELECT COALESCE(SUM(daily_limit-daily_sent),0) as r FROM smtp_aliases WHERE is_active=1 AND daily_sent<daily_limit"
-    ).fetchone()
-    conn.close()
-    return (r1["r"] if r1 else 0) + (r2["r"] if r2 else 0)
+    try:
+        conn.execute(
+            "UPDATE gmail_accounts SET sent_today=0, last_reset_date=? WHERE last_reset_date!=? OR last_reset_date IS NULL",
+            (today, today)
+        )
+        conn.execute(
+            "UPDATE smtp_aliases SET daily_sent=0, last_reset=? WHERE last_reset!=? OR last_reset IS NULL",
+            (today, today)
+        )
+        conn.commit()
+    except Exception:
+        pass
+
+    try:
+        r1 = conn.execute(
+            "SELECT COALESCE(SUM(daily_limit-sent_today),0) as r FROM gmail_accounts WHERE active=1 AND sent_today<daily_limit"
+        ).fetchone()
+        r2 = conn.execute(
+            "SELECT COALESCE(SUM(daily_limit-daily_sent),0) as r FROM smtp_aliases WHERE is_active=1 AND daily_sent<daily_limit"
+        ).fetchone()
+        res = (r1["r"] if r1 else 0) + (r2["r"] if r2 else 0)
+    except Exception:
+        res = 0
+    finally:
+        conn.close()
+    return res
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -1216,23 +1227,31 @@ def get_stats():
     conn = get_db()
     today = date.today().isoformat()
     stats = {}
-    stats["total_leads"]       = conn.execute("SELECT COUNT(*) as c FROM leads").fetchone()["c"]
-    stats["new_leads"]         = conn.execute("SELECT COUNT(*) as c FROM leads WHERE stage='new'").fetchone()["c"]
-    stats["total_sent"]        = conn.execute("SELECT COUNT(*) as c FROM emails_sent WHERE status='sent'").fetchone()["c"]
-    stats["sent_today"]        = conn.execute(
-        "SELECT COUNT(*) as c FROM emails_sent WHERE status='sent' AND DATE(sent_at)=?", (today,)
-    ).fetchone()["c"]
-    stats["queued"]            = conn.execute("SELECT COUNT(*) as c FROM emails_sent WHERE status='queued'").fetchone()["c"]
-    stats["failed"]            = conn.execute("SELECT COUNT(*) as c FROM emails_sent WHERE status='failed'").fetchone()["c"]
-    stats["total_replies"]     = conn.execute("SELECT COUNT(*) as c FROM replies").fetchone()["c"]
-    stats["unhandled_replies"] = conn.execute("SELECT COUNT(*) as c FROM replies WHERE handled=0").fetchone()["c"]
-    stats["replied_leads"]     = conn.execute("SELECT COUNT(*) as c FROM leads WHERE stage='replied'").fetchone()["c"]
-    stats["accounts"]          = conn.execute("SELECT COUNT(*) as c FROM gmail_accounts WHERE active=1").fetchone()["c"]
-    stats["aliases"]           = conn.execute("SELECT COUNT(*) as c FROM smtp_aliases WHERE is_active=1").fetchone()["c"]
-    stats["remaining_today"]   = total_remaining_today()
-    stats["blacklisted"]       = conn.execute("SELECT COUNT(*) as c FROM leads WHERE blacklisted=1").fetchone()["c"]
-    stats["unsubscribed"]      = conn.execute("SELECT COUNT(*) as c FROM leads WHERE unsubscribed=1").fetchone()["c"]
-    conn.close()
+    try:
+        stats["total_leads"]       = conn.execute("SELECT COUNT(*) as c FROM leads").fetchone()["c"]
+        stats["new_leads"]         = conn.execute("SELECT COUNT(*) as c FROM leads WHERE stage='new'").fetchone()["c"]
+        stats["total_sent"]        = conn.execute("SELECT COUNT(*) as c FROM emails_sent WHERE status='sent'").fetchone()["c"]
+        stats["sent_today"]        = conn.execute(
+            "SELECT COUNT(*) as c FROM emails_sent WHERE status='sent' AND DATE(sent_at)=?", (today,)
+        ).fetchone()["c"]
+        stats["queued"]            = conn.execute("SELECT COUNT(*) as c FROM emails_sent WHERE status='queued'").fetchone()["c"]
+        stats["failed"]            = conn.execute("SELECT COUNT(*) as c FROM emails_sent WHERE status='failed'").fetchone()["c"]
+        stats["total_replies"]     = conn.execute("SELECT COUNT(*) as c FROM replies").fetchone()["c"]
+        stats["unhandled_replies"] = conn.execute("SELECT COUNT(*) as c FROM replies WHERE handled=0").fetchone()["c"]
+        stats["replied_leads"]     = conn.execute("SELECT COUNT(*) as c FROM leads WHERE stage='replied'").fetchone()["c"]
+        stats["accounts"]          = conn.execute("SELECT COUNT(*) as c FROM gmail_accounts WHERE active=1").fetchone()["c"]
+        stats["aliases"]           = conn.execute("SELECT COUNT(*) as c FROM smtp_aliases WHERE is_active=1").fetchone()["c"]
+        stats["blacklisted"]       = conn.execute("SELECT COUNT(*) as c FROM leads WHERE blacklisted=1").fetchone()["c"]
+        stats["unsubscribed"]      = conn.execute("SELECT COUNT(*) as c FROM leads WHERE unsubscribed=1").fetchone()["c"]
+    except Exception:
+        pass
+    finally:
+        conn.close()
+
+    try:
+        stats["remaining_today"] = total_remaining_today()
+    except Exception:
+        stats["remaining_today"] = 0
     return stats
 
 
