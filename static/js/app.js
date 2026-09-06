@@ -11,7 +11,7 @@ document.addEventListener("DOMContentLoaded", () => {
   // ═══════════════════════════════════════════════════════
   const navItems = document.querySelectorAll(".nav-item");
   const viewSections = document.querySelectorAll(".view-section");
-  let currentFolder = "inbox";
+  let currentFolder = localStorage.getItem("flinza_last_folder") || "all-inboxes";
   let activeSearchQuery = "";
 
   function switchView(viewName) {
@@ -21,17 +21,18 @@ document.addEventListener("DOMContentLoaded", () => {
       const folder = viewName.replace("webmail-", "");
       currentWebmailFolder = folder;
       currentFolder = folder;
+      localStorage.setItem("flinza_last_folder", folder);
       viewSections.forEach(s => s.classList.toggle("active", s.id === "view-webmail"));
       // Update title
       const folderTitles = {
-        inbox: "Leads Inbox",
+        inbox: "Leads CRM",
         "all-inboxes": "All Inboxes",
         starred: "Starred Emails",
         sent: "Sent Mail",
         drafts: "Drafts",
         spam: "Spam / Blacklist"
       };
-      setEl("webmail-folder-title", folderTitles[folder] || "Inbox");
+      setEl("webmail-folder-title", folderTitles[folder] || "All Inboxes");
       currentWebmailPage = 1;
       loadWebmailThreads(folder, activeSearchQuery, currentWebmailPage, currentWebmailFilter);
       return;
@@ -2691,7 +2692,8 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
 
-  loadWebmailThreads("inbox");
+  const initialFolder = localStorage.getItem("flinza_last_folder") || "all-inboxes";
+  switchView(`webmail-${initialFolder}`);
   loadDashboard();
 
   // Add spin keyframe dynamically
