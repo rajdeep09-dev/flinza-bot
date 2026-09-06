@@ -8,16 +8,18 @@ from pathlib import Path
 
 
 def load_env():
-    env_path = Path(__file__).parent / ".env"
-    if env_path.exists():
-        with open(env_path, encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line or line.startswith("#"):
-                    continue
-                if "=" in line:
-                    key, _, value = line.partition("=")
-                    os.environ.setdefault(key.strip(), value.strip())
+    # Try current directory first, then parent
+    for base in [Path(__file__).parent, Path(__file__).parent.parent]:
+        env_path = base / ".env"
+        if env_path.exists():
+            with open(env_path, encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line or line.startswith("#"):
+                        continue
+                    if "=" in line:
+                        key, _, value = line.partition("=")
+                        os.environ[key.strip()] = value.strip()
 
 
 load_env()
@@ -47,12 +49,24 @@ MISTRAL_API_KEY    = os.environ.get("MISTRAL_API_KEY", "").strip()
 GROQ_API_KEY       = os.environ.get("GROQ_API_KEY", "").strip()
 NVIDIA_API_KEY     = os.environ.get("NVIDIA_API_KEY", "").strip()
 OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "").strip()
+SCRAPINGDOG_API_KEY = os.environ.get("SCRAPINGDOG_API_KEY", "").strip()
+
+# Apify Actor Token Pool
+APIFY_TOKENS = [
+    os.environ.get(f"APIFY_API_TOKEN_{i}", "").strip()
+    for i in range(1, 10)
+    if os.environ.get(f"APIFY_API_TOKEN_{i}", "").strip()
+]
 
 # ─── Cloudflare Email Routing ─────────────────────────────────────
 CF_API_TOKEN  = os.environ.get("CF_API_TOKEN", "").strip()
 CF_ACCOUNT_ID = os.environ.get("CF_ACCOUNT_ID", "").strip()
 CF_ZONE_ID    = os.environ.get("CF_ZONE_ID", "").strip()
 CF_DOMAIN     = os.environ.get("CF_DOMAIN", "").strip()   # e.g. "yourdomain.com"
+CF_ZONE_FLINZAWORKS_SITE     = os.environ.get("CF_ZONE_FLINZAWORKS_SITE", "").strip()
+CF_ZONE_TRYFLINZAWORKS_SITE  = os.environ.get("CF_ZONE_TRYFLINZAWORKS_SITE", "").strip()
+CF_ZONE_FLINZAWORKS_ONLINE   = os.environ.get("CF_ZONE_FLINZAWORKS_ONLINE", "").strip()
+CF_ZONE_MAGICFITPARTNERS     = os.environ.get("CF_ZONE_MAGICFITPARTNERS", "").strip()
 
 # ─── Google OAuth ────────────────────────────────────────────────
 GOOGLE_CLIENT_ID     = os.environ.get("GOOGLE_CLIENT_ID", "").strip()
@@ -69,6 +83,29 @@ AWS_SES_SMTP_HOST = os.environ.get("AWS_SES_SMTP_HOST", "email-smtp.eu-north-1.a
 AWS_SES_SMTP_PORT = int(os.environ.get("AWS_SES_SMTP_PORT", "587"))
 AWS_SES_SMTP_USER = os.environ.get("AWS_SES_SMTP_USER", "AKIAX244R4WL43IRDXH5").strip()
 AWS_SES_SMTP_PASS = os.environ.get("AWS_SES_SMTP_PASS", "BAY9zz1YqpRBNoakiV4WQWoYuMH4tlKencFKs6m4LuIo").strip()
+
+# ─── Brevo SMTP Relay ────────────────────────────────────────────
+BREVO_SMTP_HOST   = os.environ.get("BREVO_SMTP_HOST", "smtp-relay.brevo.com").strip()
+BREVO_SMTP_PORT   = int(os.environ.get("BREVO_SMTP_PORT", "587"))
+BREVO_SMTP_USER   = os.environ.get("BREVO_SMTP_USER", "").strip()
+BREVO_SMTP_KEY    = os.environ.get("BREVO_SMTP_KEY", "").strip()
+
+# ─── Zoho Mail India (zoho.in) ───────────────────────────────────
+ZOHO_SMTP_HOST    = os.environ.get("ZOHO_SMTP_HOST", "smtppro.zoho.in").strip()
+ZOHO_SMTP_PORT    = int(os.environ.get("ZOHO_SMTP_PORT", "465"))
+ZOHO_IMAP_HOST    = os.environ.get("ZOHO_IMAP_HOST", "imappro.zoho.in").strip()
+ZOHO_IMAP_PORT    = int(os.environ.get("ZOHO_IMAP_PORT", "993"))
+
+# ─── Gmail Connected Inboxes ─────────────────────────────────────
+GMAIL_PRIMARY       = os.environ.get("GMAIL_PRIMARY", "").strip()
+GMAIL_PRIMARY_PASS  = os.environ.get("GMAIL_PRIMARY_PASS", "").strip()
+GMAIL_SECONDARY     = os.environ.get("GMAIL_SECONDARY", "").strip()
+GMAIL_SECONDARY_PASS= os.environ.get("GMAIL_SECONDARY_PASS", "").strip()
+
+# ─── GitHub Cloud Deployment ─────────────────────────────────────
+GITHUB_USERNAME   = os.environ.get("GITHUB_USERNAME", "").strip()
+GITHUB_TOKEN      = os.environ.get("GITHUB_TOKEN", "").strip()
+GITHUB_REPO       = os.environ.get("GITHUB_REPO", "").strip()
 
 # ─── Inbound Email Webhook (Cloudflare Worker Integration) ───────
 # REQUIRED: Generate with: python -c "import secrets; print(secrets.token_hex(32))"
