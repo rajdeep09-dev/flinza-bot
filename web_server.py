@@ -1062,7 +1062,10 @@ def _query_webmail_threads(conn, folder: str, search: Optional[str], filter: str
         for r in rows:
             is_lead = bool(r["lead_id"])
             intent = r["intent"] or "Inbound"
-            tag = "Inbound"
+            subj_lower = (r["subject"] or "").lower()
+            sender_lower = (r["sender"] or "").lower()
+            is_verification = any(k in subj_lower or k in sender_lower for k in ["verify", "verification", "activate", "confirm", "render", "otp", "security code"])
+
             if is_lead:
                 if intent in ("interested", "rate_inquiry"):
                     tag = "Interested"
@@ -1070,6 +1073,8 @@ def _query_webmail_threads(conn, folder: str, search: Optional[str], filter: str
                     tag = "Opt-Out"
                 elif intent == "bounced":
                     tag = "Bounced"
+            elif is_verification:
+                tag = "Verification"
             else:
                 tag = "Mailbox"
 

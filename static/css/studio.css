@@ -989,6 +989,7 @@ html, body {
 
 .chip-interested { background: rgba(52,211,153,0.15); color: var(--emerald); }
 .chip-inbound    { background: rgba(126,206,206,0.15); color: var(--brand-cyan); }
+.chip-verification { background: rgba(168,85,247,0.18); color: #c084fc; border: 1px solid rgba(168,85,247,0.35); font-weight: 600; }
 .chip-sent       { background: rgba(167,139,250,0.15); color: var(--violet); }
 .chip-draft      { background: rgba(251,191,36,0.15);  color: var(--amber); }
 .chip-admin      { background: rgba(255,255,255,0.06); color: var(--text-secondary); }

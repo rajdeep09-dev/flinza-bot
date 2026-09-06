@@ -274,7 +274,41 @@ document.addEventListener("DOMContentLoaded", () => {
     setEl("read-time", thread.timestamp ? new Date(thread.timestamp).toLocaleString([], { month:"short", day:"numeric", hour:"2-digit", minute:"2-digit" }) : "Recently");
 
     const bodyEl = g("read-body");
-    if (bodyEl) bodyEl.textContent = thread.body || "No message content.";
+    const bannerEl = g("read-action-banner");
+
+    // Extract any verification / action link
+    const bodyText = thread.body || "";
+    const urlMatches = bodyText.match(/https?:\/\/[^\s<>"')]+/g) || [];
+    const actionUrl = urlMatches.find(u => u.includes("render.com") || u.includes("confirm") || u.includes("verify") || u.includes("activate") || u.includes("token=")) || (urlMatches.length > 0 ? urlMatches[0] : null);
+
+    if (bannerEl && actionUrl && (thread.tag === "Verification" || bodyText.toLowerCase().includes("verify") || bodyText.toLowerCase().includes("activate") || bodyText.toLowerCase().includes("confirm") || bodyText.toLowerCase().includes("render"))) {
+      bannerEl.style.display = "block";
+      bannerEl.innerHTML = `
+        <div style="background: linear-gradient(135deg, rgba(168, 85, 247, 0.16), rgba(99, 102, 241, 0.16)); border: 1px solid rgba(168, 85, 247, 0.5); border-radius: 10px; padding: 14px 18px; margin-bottom: 14px; display: flex; align-items: center; justify-content: space-between; gap: 14px; flex-wrap: wrap; box-shadow: 0 4px 15px rgba(0,0,0,0.25);">
+          <div>
+            <div style="font-weight: 700; color: #d8b4fe; font-size: 13.5px; display: flex; align-items: center; gap: 6px;">
+              <span>⚡ Action / Verification Link Detected</span>
+            </div>
+            <div style="font-size: 11.5px; color: var(--text-muted); margin-top: 4px; word-break: break-all;">${esc(actionUrl)}</div>
+          </div>
+          <a href="${esc(actionUrl)}" target="_blank" rel="noopener noreferrer" style="background: linear-gradient(135deg, #a855f7, #6366f1); color: #fff; border: none; padding: 9px 20px; border-radius: 8px; font-weight: 700; font-size: 13px; text-decoration: none; display: inline-flex; align-items: center; gap: 6px; box-shadow: 0 4px 14px rgba(168, 85, 247, 0.4); cursor: pointer; white-space: nowrap;">
+            👉 Open Verification Link ↗
+          </a>
+        </div>
+      `;
+    } else if (bannerEl) {
+      bannerEl.style.display = "none";
+      bannerEl.innerHTML = "";
+    }
+
+    if (bodyEl) {
+      let formatted = esc(bodyText);
+      formatted = formatted.replace(
+        /(https?:\/\/[^\s<>"')]+)/g,
+        '<a href="$1" target="_blank" rel="noopener noreferrer" style="color:#38bdf8; text-decoration:underline; font-weight:600; word-break:break-all;">$1</a>'
+      );
+      bodyEl.innerHTML = `<div style="white-space: pre-wrap; font-family: inherit; line-height: 1.6;">${formatted || "No message content."}</div>`;
+    }
 
     // Update Prev / Next buttons
     const curIdx = currentLoadedThreads.findIndex(t => t.id === id);
@@ -1811,6 +1845,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   function tagToClass(tag) {
     const t = (tag || "").toLowerCase();
+    if (t.includes("verif"))    return "chip-verification";
     if (t.includes("interest")) return "chip-interested";
     if (t.includes("sent"))     return "chip-sent";
     if (t.includes("draft"))    return "chip-draft";
@@ -2692,8 +2727,12 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
 
-  const initialFolder = localStorage.getItem("flinza_last_folder") || "all-inboxes";
-  switchView(`webmail-${initialFolder}`);
+  let savedFolder = localStorage.getItem("flinza_last_folder");
+  if (!savedFolder || savedFolder === "inbox") {
+    savedFolder = "all-inboxes";
+    localStorage.setItem("flinza_last_folder", "all-inboxes");
+  }
+  switchView(`webmail-${savedFolder}`);
   loadDashboard();
 
   // Add spin keyframe dynamically
