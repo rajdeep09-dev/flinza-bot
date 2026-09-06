@@ -44,10 +44,10 @@ def check_and_migrate_db():
         import database as db
         db.init_db()
 
-        # Run auxiliary migrations
+        # Run auxiliary migrations for robustness
         import sqlite3
         conn = sqlite3.connect("flinza.db")
-        # IP Nodes & SMTP Profiles
+        # Ensure ip_nodes has all columns
         conn.execute("""
             CREATE TABLE IF NOT EXISTS ip_nodes (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -55,6 +55,23 @@ def check_and_migrate_db():
                 ip_address TEXT NOT NULL,
                 status TEXT DEFAULT 'connected',
                 user_agent TEXT,
+                provider TEXT DEFAULT 'Cellular / 5G',
+                daily_limit INTEGER DEFAULT 150,
+                sent_today INTEGER DEFAULT 0,
+                latency_ms INTEGER DEFAULT 32,
+                is_paused INTEGER DEFAULT 0,
+                last_reset_date TEXT DEFAULT '',
+                is_persistent_tunnel INTEGER DEFAULT 0,
+                proxy_protocol TEXT DEFAULT 'socks5',
+                proxy_host TEXT DEFAULT '',
+                proxy_port INTEGER DEFAULT 1080,
+                proxy_user TEXT DEFAULT '',
+                proxy_pass TEXT DEFAULT '',
+                rotation_webhook TEXT DEFAULT '',
+                auto_rotate_count INTEGER DEFAULT 0,
+                last_rotated_at TEXT DEFAULT '',
+                rotate_every_n INTEGER DEFAULT 5,
+                sends_since_last_rotation INTEGER DEFAULT 0,
                 connected_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 assigned_accounts TEXT DEFAULT '[]'
@@ -77,8 +94,14 @@ def check_and_migrate_db():
         # Ensure column additions
         for col_sql in [
             "ALTER TABLE replies ADD COLUMN message_id TEXT",
+            "ALTER TABLE replies ADD COLUMN to_email TEXT",
             "ALTER TABLE replies ADD COLUMN is_read INTEGER DEFAULT 0",
             "ALTER TABLE replies ADD COLUMN is_starred INTEGER DEFAULT 0",
+            "ALTER TABLE ip_nodes ADD COLUMN provider TEXT DEFAULT 'Cellular / 5G'",
+            "ALTER TABLE ip_nodes ADD COLUMN daily_limit INTEGER DEFAULT 150",
+            "ALTER TABLE ip_nodes ADD COLUMN sent_today INTEGER DEFAULT 0",
+            "ALTER TABLE ip_nodes ADD COLUMN latency_ms INTEGER DEFAULT 32",
+            "ALTER TABLE ip_nodes ADD COLUMN is_paused INTEGER DEFAULT 0",
         ]:
             try:
                 conn.execute(col_sql)

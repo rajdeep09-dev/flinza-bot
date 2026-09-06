@@ -49,6 +49,13 @@ def init_db():
             blacklisted INTEGER DEFAULT 0,
             unsubscribed INTEGER DEFAULT 0,
             notes TEXT,
+            custom_hook TEXT,
+            linkedin TEXT,
+            ai_subject TEXT,
+            ai_draft TEXT,
+            deliverability_status TEXT DEFAULT 'unverified',
+            deliverability_score INTEGER DEFAULT 100,
+            last_audit_details TEXT,
             added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             last_contact TIMESTAMP
         );
@@ -65,6 +72,11 @@ def init_db():
             warmup_mode INTEGER DEFAULT 0,
             warmup_day INTEGER DEFAULT 1,
             label TEXT,
+            provider TEXT DEFAULT 'smtp',
+            smtp_host TEXT,
+            smtp_port INTEGER,
+            smtp_user TEXT,
+            smtp_pass TEXT,
             added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             last_used TIMESTAMP
         );
@@ -82,6 +94,12 @@ def init_db():
             warmup_day INTEGER DEFAULT 1,
             source TEXT DEFAULT 'manual',
             cf_rule_id TEXT,
+            routing_mode TEXT DEFAULT 'gmail_send_as',
+            smtp_host TEXT,
+            smtp_port INTEGER,
+            custom_smtp_user TEXT,
+            custom_smtp_pass TEXT,
+            forward_to TEXT,
             added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
 
@@ -100,6 +118,8 @@ def init_db():
             error_msg TEXT,
             message_id TEXT,
             campaign_id INTEGER,
+            is_starred INTEGER DEFAULT 0,
+            provider TEXT DEFAULT 'amazon_ses',
             FOREIGN KEY (lead_id) REFERENCES leads(id)
         );
 
@@ -107,6 +127,7 @@ def init_db():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             lead_id INTEGER,
             from_email TEXT,
+            to_email TEXT,
             received_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             subject TEXT,
             body TEXT,
@@ -116,6 +137,9 @@ def init_db():
             ai_draft_body TEXT,
             handled INTEGER DEFAULT 0,
             action_taken TEXT,
+            is_read INTEGER DEFAULT 0,
+            is_starred INTEGER DEFAULT 0,
+            message_id TEXT,
             FOREIGN KEY (lead_id) REFERENCES leads(id)
         );
 
@@ -257,6 +281,7 @@ def init_db():
             dkim_status TEXT,
             dmarc_record TEXT,
             dmarc_status TEXT,
+            mx_record TEXT,
             mx_status TEXT,
             overall_score INTEGER DEFAULT 0,
             last_audited TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -278,6 +303,23 @@ def init_db():
             ip_address TEXT NOT NULL,
             status TEXT DEFAULT 'connected',
             user_agent TEXT,
+            provider TEXT DEFAULT 'Cellular / 5G',
+            daily_limit INTEGER DEFAULT 150,
+            sent_today INTEGER DEFAULT 0,
+            latency_ms INTEGER DEFAULT 32,
+            is_paused INTEGER DEFAULT 0,
+            last_reset_date TEXT DEFAULT '',
+            is_persistent_tunnel INTEGER DEFAULT 0,
+            proxy_protocol TEXT DEFAULT 'socks5',
+            proxy_host TEXT DEFAULT '',
+            proxy_port INTEGER DEFAULT 1080,
+            proxy_user TEXT DEFAULT '',
+            proxy_pass TEXT DEFAULT '',
+            rotation_webhook TEXT DEFAULT '',
+            auto_rotate_count INTEGER DEFAULT 0,
+            last_rotated_at TEXT DEFAULT '',
+            rotate_every_n INTEGER DEFAULT 5,
+            sends_since_last_rotation INTEGER DEFAULT 0,
             connected_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             assigned_accounts TEXT DEFAULT '[]'
@@ -297,26 +339,7 @@ def init_db():
         );
     """)
 
-    # Indices for performance
-    conn.executescript("""
-        CREATE INDEX IF NOT EXISTS idx_leads_stage ON leads(stage);
-        CREATE INDEX IF NOT EXISTS idx_leads_email ON leads(email);
-        CREATE INDEX IF NOT EXISTS idx_emails_status ON emails_sent(status, queued_at);
-        CREATE INDEX IF NOT EXISTS idx_emails_lead ON emails_sent(lead_id);
-        CREATE INDEX IF NOT EXISTS idx_replies_lead ON replies(lead_id);
-        CREATE INDEX IF NOT EXISTS idx_followups_due ON followups_scheduled(status, scheduled_for);
-        CREATE UNIQUE INDEX IF NOT EXISTS idx_blacklist_email ON blacklist(email) WHERE email IS NOT NULL;
-        CREATE UNIQUE INDEX IF NOT EXISTS idx_blacklist_domain ON blacklist(domain) WHERE domain IS NOT NULL;
-        CREATE INDEX IF NOT EXISTS idx_tracking_token ON email_tracking(tracking_token);
-        CREATE INDEX IF NOT EXISTS idx_sequences_camp ON campaign_sequences(campaign_id, step_number);
-        CREATE INDEX IF NOT EXISTS idx_replies_msg_id ON replies(message_id);
-        CREATE INDEX IF NOT EXISTS idx_replies_handled_rec ON replies(handled, received_at DESC);
-        CREATE INDEX IF NOT EXISTS idx_replies_starred ON replies(is_starred);
-        CREATE INDEX IF NOT EXISTS idx_replies_from ON replies(from_email);
-        CREATE INDEX IF NOT EXISTS idx_emails_sent_at ON emails_sent(sent_at DESC);
-    """)
-
-    # Multi-provider column migrations for gmail_accounts (Cloudflare API, Amazon SES, SMTP)
+    # Multi-provider column migrations for existing databases
     for col, col_type in [
         ("provider", "TEXT DEFAULT 'smtp'"),
         ("smtp_host", "TEXT"),
@@ -329,7 +352,6 @@ def init_db():
         except sqlite3.OperationalError:
             pass
 
-    # Out-of-the-box routing mode migrations for smtp_aliases (Gmail Send-As vs Cloudflare API vs Amazon SES)
     for col, col_type in [
         ("routing_mode", "TEXT DEFAULT 'gmail_send_as'"),
         ("smtp_host", "TEXT"),
@@ -343,7 +365,6 @@ def init_db():
         except sqlite3.OperationalError:
             pass
 
-    # Migrations for leads: AI hyper-personalization & deep deliverability checks
     for col, col_type in [
         ("custom_hook", "TEXT"),
         ("linkedin", "TEXT"),
@@ -365,37 +386,52 @@ def init_db():
         ("replies", "message_id", "TEXT"),
         ("emails_sent", "is_starred", "INTEGER DEFAULT 0"),
         ("emails_sent", "provider", "TEXT DEFAULT 'amazon_ses'"),
+        ("ip_nodes", "provider", "TEXT DEFAULT 'Cellular / 5G'"),
+        ("ip_nodes", "daily_limit", "INTEGER DEFAULT 150"),
+        ("ip_nodes", "sent_today", "INTEGER DEFAULT 0"),
+        ("ip_nodes", "latency_ms", "INTEGER DEFAULT 32"),
+        ("ip_nodes", "is_paused", "INTEGER DEFAULT 0"),
+        ("ip_nodes", "last_reset_date", "TEXT DEFAULT ''"),
+        ("ip_nodes", "is_persistent_tunnel", "INTEGER DEFAULT 0"),
+        ("ip_nodes", "proxy_protocol", "TEXT DEFAULT 'socks5'"),
+        ("ip_nodes", "proxy_host", "TEXT DEFAULT ''"),
+        ("ip_nodes", "proxy_port", "INTEGER DEFAULT 1080"),
+        ("ip_nodes", "proxy_user", "TEXT DEFAULT ''"),
+        ("ip_nodes", "proxy_pass", "TEXT DEFAULT ''"),
+        ("ip_nodes", "rotation_webhook", "TEXT DEFAULT ''"),
+        ("ip_nodes", "auto_rotate_count", "INTEGER DEFAULT 0"),
+        ("ip_nodes", "last_rotated_at", "TEXT DEFAULT ''"),
+        ("ip_nodes", "rotate_every_n", "INTEGER DEFAULT 5"),
+        ("ip_nodes", "sends_since_last_rotation", "INTEGER DEFAULT 0"),
     ]:
         try:
             conn.execute(f"ALTER TABLE {tbl} ADD COLUMN {col} {col_type}")
         except sqlite3.OperationalError:
             pass
 
-    # Migration: create ip_nodes and smtp_profiles tables if they don't exist yet
-    conn.executescript("""
-        CREATE TABLE IF NOT EXISTS ip_nodes (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT,
-            ip_address TEXT NOT NULL,
-            status TEXT DEFAULT 'connected',
-            user_agent TEXT,
-            connected_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            assigned_accounts TEXT DEFAULT '[]'
-        );
-        CREATE TABLE IF NOT EXISTS smtp_profiles (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL,
-            provider TEXT DEFAULT 'custom',
-            smtp_host TEXT NOT NULL,
-            smtp_port INTEGER DEFAULT 587,
-            smtp_user TEXT NOT NULL,
-            smtp_pass TEXT,
-            use_ssl INTEGER DEFAULT 0,
-            notes TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        );
-    """)
+    # Indices for performance (run each safely)
+    indices = [
+        "CREATE INDEX IF NOT EXISTS idx_leads_stage ON leads(stage)",
+        "CREATE INDEX IF NOT EXISTS idx_leads_email ON leads(email)",
+        "CREATE INDEX IF NOT EXISTS idx_emails_status ON emails_sent(status, queued_at)",
+        "CREATE INDEX IF NOT EXISTS idx_emails_lead ON emails_sent(lead_id)",
+        "CREATE INDEX IF NOT EXISTS idx_replies_lead ON replies(lead_id)",
+        "CREATE INDEX IF NOT EXISTS idx_followups_due ON followups_scheduled(status, scheduled_for)",
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_blacklist_email ON blacklist(email) WHERE email IS NOT NULL",
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_blacklist_domain ON blacklist(domain) WHERE domain IS NOT NULL",
+        "CREATE INDEX IF NOT EXISTS idx_tracking_token ON email_tracking(tracking_token)",
+        "CREATE INDEX IF NOT EXISTS idx_sequences_camp ON campaign_sequences(campaign_id, step_number)",
+        "CREATE INDEX IF NOT EXISTS idx_replies_msg_id ON replies(message_id)",
+        "CREATE INDEX IF NOT EXISTS idx_replies_handled_rec ON replies(handled, received_at DESC)",
+        "CREATE INDEX IF NOT EXISTS idx_replies_starred ON replies(is_starred)",
+        "CREATE INDEX IF NOT EXISTS idx_replies_from ON replies(from_email)",
+        "CREATE INDEX IF NOT EXISTS idx_emails_sent_at ON emails_sent(sent_at DESC)",
+    ]
+    for idx_sql in indices:
+        try:
+            conn.execute(idx_sql)
+        except sqlite3.OperationalError:
+            pass
 
     conn.commit()
     _init_default_settings(conn)
@@ -448,36 +484,6 @@ def _init_default_settings(conn):
             (key, value)
         )
     conn.commit()
-
-    # Dynamic column migrations
-    for col_def in [
-        "ALTER TABLE replies ADD COLUMN message_id TEXT",
-        "ALTER TABLE replies ADD COLUMN is_read INTEGER DEFAULT 0",
-        "ALTER TABLE replies ADD COLUMN is_starred INTEGER DEFAULT 0",
-        "ALTER TABLE ip_nodes ADD COLUMN provider TEXT DEFAULT 'Cellular / 5G'",
-        "ALTER TABLE ip_nodes ADD COLUMN daily_limit INTEGER DEFAULT 150",
-        "ALTER TABLE ip_nodes ADD COLUMN sent_today INTEGER DEFAULT 0",
-        "ALTER TABLE ip_nodes ADD COLUMN latency_ms INTEGER DEFAULT 32",
-        "ALTER TABLE ip_nodes ADD COLUMN is_paused INTEGER DEFAULT 0",
-        "ALTER TABLE ip_nodes ADD COLUMN last_reset_date TEXT DEFAULT ''",
-        "ALTER TABLE ip_nodes ADD COLUMN is_persistent_tunnel INTEGER DEFAULT 0",
-        "ALTER TABLE ip_nodes ADD COLUMN proxy_protocol TEXT DEFAULT 'socks5'",
-        "ALTER TABLE ip_nodes ADD COLUMN proxy_host TEXT DEFAULT ''",
-        "ALTER TABLE ip_nodes ADD COLUMN proxy_port INTEGER DEFAULT 1080",
-        "ALTER TABLE ip_nodes ADD COLUMN proxy_user TEXT DEFAULT ''",
-        "ALTER TABLE ip_nodes ADD COLUMN proxy_pass TEXT DEFAULT ''",
-        "ALTER TABLE ip_nodes ADD COLUMN rotation_webhook TEXT DEFAULT ''",
-        "ALTER TABLE ip_nodes ADD COLUMN auto_rotate_count INTEGER DEFAULT 0",
-        "ALTER TABLE ip_nodes ADD COLUMN last_rotated_at TEXT DEFAULT ''",
-        "ALTER TABLE ip_nodes ADD COLUMN rotate_every_n INTEGER DEFAULT 5",
-        "ALTER TABLE ip_nodes ADD COLUMN sends_since_last_rotation INTEGER DEFAULT 0",
-    ]:
-        try:
-            conn.execute(col_def)
-            conn.commit()
-        except Exception:
-            pass
-    conn.close()
 
 
 # ═══════════════════════════════════════════════════════════════

@@ -19,7 +19,11 @@ def load_env():
                         continue
                     if "=" in line:
                         key, _, value = line.partition("=")
-                        os.environ[key.strip()] = value.strip()
+                        k = key.strip()
+                        # Never overwrite platform-provided PORT from cloud runners (e.g. Render, Railway)
+                        if k == "PORT" and "PORT" in os.environ:
+                            continue
+                        os.environ[k] = value.strip()
 
 
 load_env()

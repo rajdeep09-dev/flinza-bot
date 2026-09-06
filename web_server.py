@@ -182,7 +182,7 @@ _auth = Depends(verify_api_key)
 #                    SPA DASHBOARD ROUTE
 # ═══════════════════════════════════════════════════════════════
 
-@app.get("/", response_class=HTMLResponse)
+@app.api_route("/", methods=["GET", "HEAD"], response_class=HTMLResponse)
 async def index_page(request: Request):
     """Serves the main Flinza Studio application shell."""
     return templates.TemplateResponse(
@@ -193,7 +193,7 @@ async def index_page(request: Request):
 
 
 # Health check endpoint (no auth — for uptime monitoring)
-@app.get("/health")
+@app.api_route("/health", methods=["GET", "HEAD"])
 async def health_check():
     """System health check for uptime monitoring (Render, UptimeRobot, etc.)."""
     db_ok = False
