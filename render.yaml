@@ -13,3 +13,6 @@ services:
         value: 3.12.0
       - key: REQUIRE_AUTH
         value: "true"
+      - key: PORT
+        value: "10000"
+

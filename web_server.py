@@ -129,9 +129,10 @@ app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=config.ALLOWED_ORIGINS,
+    allow_origin_regex=r"https://.*\.onrender\.com|https://.*\.flinzaworks\.(site|online)",
     allow_credentials=False,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allow_headers=["Content-Type", "Authorization", "X-Webhook-Secret", "X-API-Key"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "HEAD"],
+    allow_headers=["*"],
 )
 
 # Static files and templates

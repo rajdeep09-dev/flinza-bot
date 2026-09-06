@@ -208,11 +208,67 @@ def send_startup_telegram_alert(port: int):
     t.start()
 
 
+def start_port_forwarder(source_port: int, target_port: int):
+    """Bridges traffic from source_port to target_port so both 10000 and 7880 respond seamlessly."""
+    if source_port == target_port:
+        return
+    import socket
+
+    def _forward(src, dst):
+        try:
+            while True:
+                data = src.recv(4096)
+                if not data:
+                    break
+                dst.sendall(data)
+        except Exception:
+            pass
+        finally:
+            try:
+                src.close()
+            except Exception:
+                pass
+            try:
+                dst.close()
+            except Exception:
+                pass
+
+    def _listen():
+        time.sleep(1.0)  # Brief pause to allow primary web server to bind
+        try:
+            server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            server.bind(("0.0.0.0", source_port))
+            server.listen(20)
+            logger.info(f"🔗 Dual-Port Bridge active: forwarding 0.0.0.0:{source_port} ➜ 127.0.0.1:{target_port}")
+            while True:
+                client_sock, _ = server.accept()
+                target_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                try:
+                    target_sock.connect(("127.0.0.1", target_port))
+                    threading.Thread(target=_forward, args=(client_sock, target_sock), daemon=True).start()
+                    threading.Thread(target=_forward, args=(target_sock, client_sock), daemon=True).start()
+                except Exception:
+                    try:
+                        client_sock.close()
+                    except Exception:
+                        pass
+                    try:
+                        target_sock.close()
+                    except Exception:
+                        pass
+        except Exception as e:
+            logger.debug(f"Dual-Port Bridge ({source_port}->{target_port}) notice: {e}")
+
+    t = threading.Thread(target=_listen, daemon=True, name=f"Bridge-{source_port}-{target_port}")
+    t.start()
+
+
 def print_banner(port: int):
     banner = f"""
 ====================================================================
                     FLINZA OUTREACH OS v2.2                         
-                Nexcloud 1-Click Production Server                  
+                Nexcloud & Render Production Server                  
 ====================================================================
   * Web Command Center : http://0.0.0.0:{port}
   * RAM Footprint      : ~150 MB (Optimal for 1GB Instances)
@@ -230,10 +286,32 @@ def print_banner(port: int):
 def main():
     check_and_migrate_db()
 
-    port = int(os.environ.get("PORT", 7880))
+    # Smart port detection:
+    # Render's load balancer expects web services on port 10000.
+    is_render = (
+        os.environ.get("RENDER") == "true"
+        or "RENDER_SERVICE_ID" in os.environ
+        or "RENDER_EXTERNAL_HOSTNAME" in os.environ
+        or "onrender.com" in os.environ.get("RENDER_EXTERNAL_URL", "")
+    )
+
+    if is_render:
+        raw_port = os.environ.get("PORT", "10000")
+        # If user copied PORT=7880 from local .env into Render dashboard env vars, override to 10000
+        # because Render internal health check expects port 10000
+        port = 10000 if str(raw_port).strip() == "7880" else int(raw_port)
+    else:
+        port = int(os.environ.get("PORT", 7880))
+
     host = os.environ.get("HOST", "0.0.0.0")
 
     print_banner(port)
+
+    # Launch dual-port bridge:
+    # If primary is 10000 (Render), bridge 7880 -> 10000 so legacy scripts & CF origin rules work.
+    # If primary is 7880 (VPS/Local), bridge 10000 -> 7880 so Render probes also get 200 OK.
+    secondary_port = 7880 if port == 10000 else 10000
+    start_port_forwarder(secondary_port, port)
 
     # Launch Telegram Bot thread if configured
     start_telegram_bot_thread()
