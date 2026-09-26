@@ -39,7 +39,8 @@ export default {
 
     // 4. Dispatch webhook to Flinza
     const webhookUrl = env.FLINZA_WEBHOOK_URL || "http://localhost:8000/api/webhooks/inbound";
-    const webhookSecret = env.FLINZA_WEBHOOK_SECRET || "flinza_cf_inbound_secret_2026";
+    // Never ship a default here: set FLINZA_WEBHOOK_SECRET as a Worker secret.
+    const webhookSecret = env.FLINZA_WEBHOOK_SECRET;
 
     try {
       const resp = await fetch(webhookUrl, {

@@ -5,6 +5,7 @@ daily limit tracking, bounce detection.
 """
 
 import smtplib
+import imaplib
 import socket
 import logging
 import re
@@ -279,6 +280,7 @@ def send_email_now(to_email: str, subject: str, body: str, account: dict, tracki
         "zoho_in": "smtppro.zoho.in",
         "outlook": "smtp.office365.com",
         "sendgrid": "smtp.sendgrid.net",
+        "spacemail": "mail.spacemail.com",
     }
 
     # Dynamic Relay Resolution for Aliases & Custom SMTP (SES vs Brevo rotation & failover)
@@ -292,7 +294,7 @@ def send_email_now(to_email: str, subject: str, body: str, account: dict, tracki
         logger.info(f"Resolved relay for {from_email}: {provider} via {target_host}:{target_port} ({relay_info.get('reason')})")
     else:
         target_host = account.get("smtp_host") or default_hosts.get(provider, "smtp.gmail.com")
-        target_port = int(account.get("smtp_port") or (465 if provider in ("namecheap", "zoho_in") else 587))
+        target_port = int(account.get("smtp_port") or (465 if provider in ("namecheap", "zoho_in", "spacemail") else 587))
 
     try:
         # Proper MIME formatting: use pure text/plain if no HTML, multipart/alternative only if HTML is present
@@ -719,15 +721,39 @@ def _make_display_name(email: str) -> str:
 
 
 def test_account_connection(email: str, app_password: str, smtp_host: str = "smtp.gmail.com", smtp_port: int = 587) -> dict:
-    """Quick SMTP auth test without sending. Returns {success, error}."""
+    """
+    Quick SMTP auth test without sending. Returns {success, error}.
+
+    Handles implicit-SSL relays (port 465, e.g. Spacemail or Namecheap Private
+    Email) as well as STARTTLS relays (587 / 2525). Testing a 465 relay through
+    the old STARTTLS-only path always failed, even with perfect credentials.
+    """
     try:
-        with smtplib.SMTP(smtp_host, smtp_port, timeout=15) as server:
-            server.ehlo()
-            server.starttls()
-            server.ehlo()
-            server.login(email, app_password)
+        port = int(smtp_port or 587)
+        if port == 465:
+            with smtplib.SMTP_SSL(smtp_host, port, timeout=15) as server:
+                server.ehlo()
+                server.login(email, app_password)
+        else:
+            with smtplib.SMTP(smtp_host, port, timeout=15) as server:
+                server.ehlo()
+                server.starttls()
+                server.ehlo()
+                server.login(email, app_password)
         return {"success": True}
     except smtplib.SMTPAuthenticationError:
         return {"success": False, "error": f"Authentication failed for {email} on {smtp_host}. Check credentials."}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+def test_imap_connection(email: str, password: str, imap_host: str = "imap.gmail.com", imap_port: int = 993) -> dict:
+    """Quick IMAP auth test without modifying anything. Returns {success, error}."""
+    try:
+        with imaplib.IMAP4_SSL(imap_host, int(imap_port or 993), timeout=15) as mail:
+            mail.login(email, password)
+        return {"success": True}
+    except imaplib.IMAP4.error as e:
+        return {"success": False, "error": f"IMAP login rejected for {email} on {imap_host}: {e}"}
     except Exception as e:
         return {"success": False, "error": str(e)}

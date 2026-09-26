@@ -58,8 +58,8 @@ HOST=0.0.0.0
 AWS_SES_REGION=eu-north-1
 AWS_SES_SMTP_HOST=email-smtp.eu-north-1.amazonaws.com
 AWS_SES_SMTP_PORT=587
-AWS_SES_SMTP_USER=AKIAX244R4WL43IRDXH5
-AWS_SES_SMTP_PASS=BAY9zz1YqpRBNoakiV4WQWoYuMH4tlKencFKs6m4LuIo
+AWS_SES_SMTP_USER=your_ses_smtp_username
+AWS_SES_SMTP_PASS=your_ses_smtp_password
 
 # ─── AI Intent & Reply Models ───────────────────────────────────
 GEMINI_API_KEY=your_gemini_api_key_here

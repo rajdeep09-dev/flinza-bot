@@ -1,0 +1,47 @@
+{
+  "_readme": [
+    "Spacemail (Spaceship) sending fleet. Provisioned into the CRM on startup by",
+    "spacemail_accounts.sync_to_db(), called from database.auto_seed_if_empty().",
+    "",
+    "SMTP mail.spacemail.com:465 (SSL/TLS) - IMAP mail.spacemail.com:993 (SSL/TLS).",
+    "Username is always the full email address. Verified live: 20 of 21 mailboxes",
+    "authenticate on both SMTP and IMAP. dennis@flinzacreative.com rejects its",
+    "password on both - reissue that mailbox password and update it here.",
+    "",
+    "This file contains live passwords so a fresh deploy self-provisions. It is",
+    "also overridable without touching git: set SPACEMAIL_ACCOUNTS (a JSON array)",
+    "or SPACEMAIL_<n>_EMAIL / SPACEMAIL_<n>_PASS in the environment, which take",
+    "precedence over this file."
+  ],
+  "smtp_host": "mail.spacemail.com",
+  "smtp_port": 465,
+  "imap_host": "mail.spacemail.com",
+  "imap_port": 993,
+  "accounts": [
+    { "email": "zoya@flinzamedia.com", "password": "d27!Sjy1" },
+    { "email": "derek@flinzamedia.com", "password": "ch48^q7J" },
+    { "email": "morgan@flinzamedia.com", "password": "Q5s?t7b1" },
+    { "email": "hannah@flinzamedia.com", "password": "D46xni8&" },
+    { "email": "grant@flinzamedia.com", "password": "ow7jc^9Z" },
+
+    { "email": "cole@flinzascales.com", "password": "g3ox5Ue=" },
+    { "email": "finn@flinzascales.com", "password": "7dAdjj+w" },
+    { "email": "brynn@flinzascales.com", "password": "qj87oFf?" },
+    { "email": "jason@flinzascales.com", "password": "vn1_Ze4w" },
+    { "email": "kevin@flinzascales.com", "password": "=3n8im3W" },
+
+    { "email": "alexandra@flinzanetwork.com", "password": "F+5nvbl7" },
+    { "email": "victoria@flinzanetwork.com", "password": "q8gk1Y&e" },
+    { "email": "jennifer@flinzanetwork.com", "password": "h_pDt9tv" },
+
+    { "email": "diana@flinzagrowth.com", "password": "h5ud9>Y7" },
+    { "email": "edward@flinzagrowth.com", "password": ">b8Yqun4" },
+    { "email": "barbara@flinzagrowth.com", "password": "1Wn54mw_" },
+    { "email": "susan@flinzagrowth.com", "password": "8kXrq+1t" },
+    { "email": "christine@flinzagrowth.com", "password": "b2bp0V(v" },
+
+    { "email": "stanley@flinzacreative.com", "password": "usx$l6mJ" },
+    { "email": "raymond@flinzacreative.com", "password": "7btuuO1>" },
+    { "email": "dennis@flinzacreative.com", "password": "k)jSln76lo" }
+  ]
+}

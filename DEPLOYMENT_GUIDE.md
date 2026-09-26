@@ -30,7 +30,7 @@ Cloudflare provides free inbound email routing for any domain on Cloudflare with
    - Copy the entire contents of [`cloudflare_email_worker.js`](file:///c:/Users/Nabir%20Hossain/OneDrive/antigravity%20tele/flinza/cloudflare_email_worker.js) and paste it into the Worker editor.
    - Go to Worker **Settings → Variables**:
      - Add `FLINZA_WEBHOOK_URL`: `https://your-flinza-domain.com/api/webhooks/inbound` (or your ngrok / Cloudflare Tunnel URL during local testing)
-     - Add `FLINZA_WEBHOOK_SECRET`: `flinza_cf_inbound_secret_2026`
+     - Add `FLINZA_WEBHOOK_SECRET`: generate one with `python -c "import secrets; print(secrets.token_hex(32))"`
      - *(Optional)* Add `FORWARD_TO`: `your-personal-gmail@gmail.com` to keep a copy in your personal inbox.
    - Click **Save and deploy**.
 4. Route Inbound Emails to Your Worker:

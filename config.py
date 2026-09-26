@@ -42,8 +42,10 @@ DASHBOARD_API_KEY = os.environ.get("DASHBOARD_API_KEY", "").strip()
 # Set REQUIRE_AUTH=false to disable auth for local-only development
 REQUIRE_AUTH = os.environ.get("REQUIRE_AUTH", "true").strip().lower() not in ("false", "0", "no")
 
-DASHBOARD_LOGIN_EMAIL = os.environ.get("DASHBOARD_LOGIN_EMAIL", "rajdeep@flinzaworks.online").strip()
-DASHBOARD_LOGIN_PASSWORD = os.environ.get("DASHBOARD_LOGIN_PASSWORD", "Maa@2004").strip()
+# Credentials are read from .env / host env vars only — never hardcoded here.
+# An empty password disables password login entirely (see web_server.auth_login).
+DASHBOARD_LOGIN_EMAIL = os.environ.get("DASHBOARD_LOGIN_EMAIL", "").strip()
+DASHBOARD_LOGIN_PASSWORD = os.environ.get("DASHBOARD_LOGIN_PASSWORD", "").strip()
 DASHBOARD_PUBLIC_URL = os.environ.get("DASHBOARD_PUBLIC_URL", "https://dashboard.flinzaworks.online").strip()
 
 # ─── CORS ────────────────────────────────────────────────────────
@@ -97,8 +99,8 @@ TRACKING_BASE_URL = os.environ.get("TRACKING_BASE_URL", "http://localhost:8000")
 AWS_SES_REGION    = os.environ.get("AWS_SES_REGION", "eu-north-1").strip()
 AWS_SES_SMTP_HOST = os.environ.get("AWS_SES_SMTP_HOST", "email-smtp.eu-north-1.amazonaws.com").strip()
 AWS_SES_SMTP_PORT = int(os.environ.get("AWS_SES_SMTP_PORT", "587"))
-AWS_SES_SMTP_USER = os.environ.get("AWS_SES_SMTP_USER", "AKIAX244R4WL43IRDXH5").strip()
-AWS_SES_SMTP_PASS = os.environ.get("AWS_SES_SMTP_PASS", "BAY9zz1YqpRBNoakiV4WQWoYuMH4tlKencFKs6m4LuIo").strip()
+AWS_SES_SMTP_USER = os.environ.get("AWS_SES_SMTP_USER", "").strip()
+AWS_SES_SMTP_PASS = os.environ.get("AWS_SES_SMTP_PASS", "").strip()
 
 # ─── Brevo SMTP Relay ────────────────────────────────────────────
 BREVO_SMTP_HOST   = os.environ.get("BREVO_SMTP_HOST", "smtp-relay.brevo.com").strip()
@@ -112,11 +114,15 @@ ZOHO_SMTP_PORT    = int(os.environ.get("ZOHO_SMTP_PORT", "465"))
 ZOHO_IMAP_HOST    = os.environ.get("ZOHO_IMAP_HOST", "imappro.zoho.in").strip()
 ZOHO_IMAP_PORT    = int(os.environ.get("ZOHO_IMAP_PORT", "993"))
 
-# ─── Gmail Connected Inboxes ─────────────────────────────────────
-GMAIL_PRIMARY       = os.environ.get("GMAIL_PRIMARY", "").strip()
-GMAIL_PRIMARY_PASS  = os.environ.get("GMAIL_PRIMARY_PASS", "").strip()
-GMAIL_SECONDARY     = os.environ.get("GMAIL_SECONDARY", "").strip()
-GMAIL_SECONDARY_PASS= os.environ.get("GMAIL_SECONDARY_PASS", "").strip()
+# ─── Spacemail (Spaceship) Fleet ─────────────────────────────────
+# SMTP mail.spacemail.com:465 (SSL/TLS) · IMAP mail.spacemail.com:993 (SSL/TLS)
+# Username is always the full email address. Mailboxes live in .env as
+# SPACEMAIL_<n>_EMAIL / SPACEMAIL_<n>_PASS and are read by
+# spacemail_accounts.load_accounts().
+SPACEMAIL_SMTP_HOST = os.environ.get("SPACEMAIL_SMTP_HOST", "mail.spacemail.com").strip() or "mail.spacemail.com"
+SPACEMAIL_SMTP_PORT = int(os.environ.get("SPACEMAIL_SMTP_PORT", "465") or 465)
+SPACEMAIL_IMAP_HOST = os.environ.get("SPACEMAIL_IMAP_HOST", "mail.spacemail.com").strip() or "mail.spacemail.com"
+SPACEMAIL_IMAP_PORT = int(os.environ.get("SPACEMAIL_IMAP_PORT", "993") or 993)
 
 # ─── GitHub Cloud Deployment ─────────────────────────────────────
 GITHUB_USERNAME   = os.environ.get("GITHUB_USERNAME", "").strip()

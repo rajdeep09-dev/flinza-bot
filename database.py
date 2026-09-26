@@ -509,7 +509,7 @@ def _init_default_settings(conn):
         "aws_ses_smtp_port":     "587",
         "aws_ses_smtp_user":     "",
         "aws_ses_smtp_pass":     "",
-        "inbound_webhook_secret": "flinza_cf_inbound_secret_2026",
+        "inbound_webhook_secret": "",   # set INBOUND_WEBHOOK_SECRET in the environment, never in the repo
     }
     for key, value in defaults.items():
         conn.execute(
@@ -591,9 +591,19 @@ def seed_database(force: bool = False) -> dict:
 def auto_seed_if_empty():
     """Auto-seeds database on fresh installations (e.g. Render cloud containers)."""
     try:
-        return seed_database(force=False)
+        result = seed_database(force=False)
     except Exception:
-        return {"success": False}
+        result = {"success": False}
+
+    # Provision/refresh the Spacemail sending fleet (idempotent). Fleet sources,
+    # in precedence order: SPACEMAIL_ACCOUNTS, SPACEMAIL_<n>_EMAIL/PASS, then
+    # spacemail_accounts.json.
+    try:
+        import spacemail_accounts
+        result["spacemail"] = spacemail_accounts.sync_to_db()
+    except Exception as exc:
+        result["spacemail"] = {"success": False, "error": str(exc)}
+    return result
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -2571,8 +2581,8 @@ def get_active_relay_for_alias(alias: str) -> dict:
     # 2. Amazon SES credentials for this domain
     ses_host = get_setting(f"ses_host_{domain}", get_setting("aws_ses_smtp_host", "email-smtp.eu-north-1.amazonaws.com"))
     ses_port = int(get_setting(f"ses_port_{domain}", "587"))
-    ses_user = get_setting(f"ses_user_{domain}", "AKIAX244R4WL43IRDXH5")
-    ses_pass = get_setting(f"ses_pass_{domain}", "BAY9zz1YqpRBNoakiV4WQWoYuMH4tlKencFKs6m4LuIo")
+    ses_user = get_setting(f"ses_user_{domain}", "")
+    ses_pass = get_setting(f"ses_pass_{domain}", "")
 
     # 3. Quota & Limits
     today_str = date.today().isoformat()

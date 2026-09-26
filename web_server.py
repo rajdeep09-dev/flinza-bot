@@ -156,7 +156,7 @@ async def verify_api_key(request: Request):
     # Cloudflare Inbound Webhook authenticates via X-Webhook-Secret
     if request.url.path.startswith("/api/webhooks/inbound"):
         secret = request.headers.get("x-webhook-secret", "")
-        expected = config.INBOUND_WEBHOOK_SECRET or db.get_setting("inbound_webhook_secret", "flinza_cf_inbound_secret_2026")
+        expected = config.INBOUND_WEBHOOK_SECRET or db.get_setting("inbound_webhook_secret", "")
         if expected and secret and secrets.compare_digest(secret, expected):
             return True
 
@@ -202,8 +202,15 @@ async def auth_login(request: Request, response: Response):
     expected_email = config.DASHBOARD_LOGIN_EMAIL.lower().strip()
     expected_pass = config.DASHBOARD_LOGIN_PASSWORD.strip()
 
-    is_direct_key = password and secrets.compare_digest(password, _api_key)
-    is_valid_cred = (email == expected_email and secrets.compare_digest(password, expected_pass))
+    # Guard: an unset login or password must never authenticate. Otherwise an
+    # empty expected_pass would make compare_digest("", "") succeed for anyone.
+    is_direct_key = bool(password) and secrets.compare_digest(
+        password.encode("utf-8"), str(_api_key).encode("utf-8")
+    )
+    is_valid_cred = bool(expected_email and expected_pass) and (
+        email == expected_email
+        and secrets.compare_digest(password.encode("utf-8"), expected_pass.encode("utf-8"))
+    )
 
     if not (is_valid_cred or is_direct_key):
         raise HTTPException(status_code=401, detail="Invalid email or password.")
@@ -850,7 +857,7 @@ async def inbound_email_webhook(request: Request):
     generates suggested reply draft, and pushes instant alert to Telegram.
     """
     secret = request.headers.get("x-webhook-secret", "")
-    expected_secret = config.INBOUND_WEBHOOK_SECRET or db.get_setting("inbound_webhook_secret", "flinza_cf_inbound_secret_2026")
+    expected_secret = config.INBOUND_WEBHOOK_SECRET or db.get_setting("inbound_webhook_secret", "")
 
     if expected_secret and secret != expected_secret:
         raise HTTPException(status_code=401, detail="Invalid webhook secret")

@@ -1,7 +1,8 @@
 """
 Flinza — Reply Watcher
-Polls Gmail via IMAP to detect replies from leads.
-Detects auto-replies, deduplicates, generates AI draft, notifies via callback.
+Polls each account's mailbox via IMAP to detect replies from leads.
+Supports Gmail and Spacemail (host resolved per account), detects
+auto-replies, deduplicates, generates an AI draft, notifies via callback.
 """
 
 import imaplib
@@ -22,6 +23,7 @@ socket.setdefaulttimeout(15.0)
 
 import database as db
 import ai_router
+import spacemail_accounts
 
 logger = logging.getLogger(__name__)
 
@@ -125,7 +127,9 @@ def _check_account(account, notify_callback, max_messages=5):
 
     mail = None
     try:
-        mail = imaplib.IMAP4_SSL("imap.gmail.com", 993, timeout=12)
+        # Spacemail mailboxes live on mail.spacemail.com; Gmail stays the default.
+        imap_host, imap_port = spacemail_accounts.imap_settings(account)
+        mail = imaplib.IMAP4_SSL(imap_host, imap_port, timeout=12)
         mail.login(email_addr, password)
         status, select_data = mail.select("inbox")
         total_msgs = 0

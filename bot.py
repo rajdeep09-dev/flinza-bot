@@ -33,6 +33,7 @@ import followup_scheduler
 import leads_importer
 import cloudflare_aliases
 import email_toolkit
+import spacemail_accounts
 
 logging.basicConfig(
     format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
@@ -454,7 +455,12 @@ async def cb_ui_dispatcher(update: Update, context: ContextTypes.DEFAULT_TYPE):
         res_lines = ["🧪 <b>Inbox Authentication Test Results:</b>\n"]
         for a in accs:
             if a.get("active"):
-                res = email_sender.test_account_connection(a["email"], a.get("app_password"))
+                res = email_sender.test_account_connection(
+                    a["email"],
+                    a.get("smtp_pass") or a.get("app_password"),
+                    smtp_host=a.get("smtp_host") or "smtp.gmail.com",
+                    smtp_port=a.get("smtp_port") or 587,
+                )
                 icon = "✅" if res["success"] else "❌"
                 res_lines.append(f"{icon} <code>{a['email']}</code>: {'Authenticated' if res['success'] else res.get('error', 'Failed')}")
         keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Back to Accounts", callback_data="ui:accounts")]])
@@ -840,7 +846,6 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "<b>── Stats & Diagnostics ──</b>\n"
         "/stats — Full stats dashboard\n"
         "/activity — Recent activity log\n"
-        "/seedtest — Verify real migrated & demo accounts\n"
         "/start — Status overview\n"
     )
     await reply(update, msg)
@@ -892,12 +897,19 @@ async def acc_get_proxy(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Quick connection test
     await reply(update, "🔄 Testing connection…")
-    test_result = email_sender.test_account_connection(email_v, password)
+    provider, smtp_host, smtp_port = spacemail_accounts.relay_for(email_v)
+    test_result = email_sender.test_account_connection(
+        email_v, password, smtp_host=smtp_host, smtp_port=smtp_port
+    )
     if not test_result["success"]:
         await reply(update, f"❌ Auth test failed: {test_result['error']}\n\nAccount NOT added. Check credentials.")
         return ConversationHandler.END
 
-    ok = db.add_account(email_v, password, daily_limit=limit, proxy_url=proxy)
+    ok = db.add_account(
+        email_v, password, daily_limit=limit, proxy_url=proxy,
+        provider=provider, smtp_host=smtp_host, smtp_port=smtp_port,
+        smtp_user=email_v, smtp_pass=password,
+    )
     if ok:
         proxy_str = f" (proxy: {proxy})" if proxy else ""
         await reply(update, f"✅ Account <code>{email_v}</code> added!\n• Limit: {limit}/day{proxy_str}")
@@ -990,7 +1002,12 @@ async def cmd_testaccount(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await reply(update, f"Account <code>{email_val}</code> not found.")
         return
     await reply(update, "🔄 Testing SMTP connection…")
-    result = email_sender.test_account_connection(email_val, accs[0]["app_password"])
+    result = email_sender.test_account_connection(
+        email_val,
+        accs[0]["smtp_pass"] or accs[0]["app_password"],
+        smtp_host=accs[0]["smtp_host"] or "smtp.gmail.com",
+        smtp_port=accs[0]["smtp_port"] or 587,
+    )
     if result["success"]:
         await reply(update, f"✅ <code>{email_val}</code> SMTP connection OK!")
     else:
@@ -2060,56 +2077,6 @@ async def cmd_activity(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ═══════════════════════════════════════════════════════════════
-#                  SEED TEST DATA
-# ═══════════════════════════════════════════════════════════════
-
-@auth_required
-async def cmd_seedtest(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Seed demo data for testing without real credentials."""
-    await reply(update, "🌱 Seeding test data…")
-
-    # Add test accounts (fake — won't actually send)
-    db.add_account("test1@gmail.com", "test_app_password_1", daily_limit=50)
-    db.add_account("test2@gmail.com", "test_app_password_2", daily_limit=50)
-
-    # Add test aliases
-    db.add_alias("outreach@example.com",    "test1@gmail.com", display_name="Outreach Hub")
-    db.add_alias("hello@example.com",       "test1@gmail.com", display_name="Hello Team")
-    db.add_alias("connect@example.com",     "test2@gmail.com", display_name="Connect Desk")
-    db.add_alias("partner@example.com",     "test2@gmail.com", display_name="Partnership")
-
-    # Add SMMA test prospects
-    test_leads = [
-        {"email": "marcus@luminaskin.com", "name": "Marcus Vance", "company": "Lumina Skin",
-         "niche": "e-commerce / skincare", "website": "https://luminaskin.com", "notes": "DTC skincare brand looking to scale TikTok and Reels"},
-        {"email": "elena@apexdental.com", "name": "Dr. Elena Rostova", "company": "Apex Dental Care",
-         "niche": "dental / healthcare", "website": "https://apexdentalcare.com", "notes": "Cosmetic dental practice looking for high-ticket patient bookings"},
-        {"email": "david@peakgym.com", "name": "David Miller", "company": "Peak Performance Gym",
-         "niche": "fitness / gym", "website": "https://peakperformancegym.com", "notes": "Boutique gym facility wanting local membership signups"},
-        {"email": "chloe@havenhome.com", "name": "Chloe Bennett", "company": "Haven Home Goods",
-         "niche": "home decor / retail", "website": "https://havenhome.com", "notes": "Home accessories brand wanting viral short-form organic video"},
-        {"email": "rajdeep@magicfitpartners.com", "name": "Rajdeep Test", "company": "Test Brand Co",
-         "niche": "agency testing", "website": "https://testbrand.com", "notes": "Internal verification lead"}
-    ]
-    added = 0
-    for ld in test_leads:
-        _, is_new = db.add_or_get_lead(ld["email"], source="smma_seed", **{k:v for k,v in ld.items() if k != "email"})
-        if is_new:
-            added += 1
-
-    accs = db.get_all_accounts()
-    aliases = db.get_all_aliases()
-    await reply(update,
-        f"✅ <b>Test Environment Ready!</b>\n\n"
-        f"• <b>Active Accounts:</b> {len(accs)}\n"
-        f"• <b>Active Aliases:</b> {len(aliases)}\n"
-        f"• <b>Sample Leads Added:</b> {added}\n\n"
-        f"🔥 <i>You have 4 real master accounts & 10 custom domain aliases loaded from migration!</i>\n"
-        f"Try sending a test email to your own inbox: <code>/testsend your@email.com</code>"
-    )
-
-
-# ═══════════════════════════════════════════════════════════════
 #             ENTERPRISE OUTREACH COMMANDS
 # ═══════════════════════════════════════════════════════════════
 
@@ -2643,7 +2610,6 @@ def build_app() -> Application:
     app.add_handler(CommandHandler("autoreply",      cmd_autoreply))
     app.add_handler(CommandHandler("stats",          cmd_stats))
     app.add_handler(CommandHandler("activity",       cmd_activity))
-    app.add_handler(CommandHandler("seedtest",       cmd_seedtest))
     app.add_handler(CommandHandler("testsend",       cmd_testsend))
     app.add_handler(CommandHandler("spamcheck",      cmd_spamcheck))
     app.add_handler(CommandHandler("checkemail",     cmd_checkemail))
