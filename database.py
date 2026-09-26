@@ -9,6 +9,7 @@ import json
 import hashlib
 from pathlib import Path
 from datetime import datetime, date, timedelta
+import supabase_db as _sb
 from config import (
     DB_PATH, DEFAULT_DAILY_LIMIT, DEFAULT_MIN_INTERVAL, DEFAULT_MAX_INTERVAL,
     DEFAULT_FOLLOWUP_DAYS, DEFAULT_MAX_FOLLOWUPS, DEFAULT_REPLY_CHECK_MINUTES,
@@ -35,7 +36,14 @@ class SqliteRow(dict):
         return super().__getitem__(item)
 
 
+def _integrity_exc():
+    """IntegrityError class matching the active backend (SQLite or Supabase)."""
+    return _sb.IntegrityError if _sb.is_enabled() else sqlite3.IntegrityError
+
+
 def get_db():
+    if _sb.is_enabled():
+        return _sb.get_db()
     conn = sqlite3.connect(DB_PATH, check_same_thread=False, timeout=60.0)
     conn.row_factory = SqliteRow
     try:
@@ -50,6 +58,9 @@ def get_db():
 
 def init_db():
     """Create all tables and indices."""
+    if _sb.is_enabled():
+        _sb.ensure_schema()
+        return
     conn = get_db()
     conn.executescript("""
         CREATE TABLE IF NOT EXISTS leads (
@@ -640,7 +651,7 @@ def add_account(
         )
         conn.commit()
         return True
-    except sqlite3.IntegrityError:
+    except _integrity_exc():
         return False
     finally:
         conn.close()
@@ -861,7 +872,7 @@ def add_alias(
         )
         conn.commit()
         return True
-    except sqlite3.IntegrityError:
+    except _integrity_exc():
         return False
     finally:
         conn.close()

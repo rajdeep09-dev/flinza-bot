@@ -855,6 +855,42 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
 
+  // ── Circular socials + Meta Ads Library buttons (enrichment lives in notes JSON) ──
+  function socialCircles(l) {
+    let meta = {};
+    try { meta = JSON.parse(l.notes || "{}") || {}; } catch (e) { meta = {}; }
+    const circ = (href, glyph, title, bg) => href
+      ? `<a href="${esc(href)}" target="_blank" rel="noopener" title="${esc(title)}" style="width:26px;height:26px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:#fff;text-decoration:none;background:${bg};box-shadow:0 0 0 1.5px rgba(255,255,255,0.14);transition:transform .15s ease;" onmouseover="this.style.transform='scale(1.2)'" onmouseout="this.style.transform='scale(1)'">${glyph}</a>`
+      : `<span title="${esc(title)} — not found" style="width:26px;height:26px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:12px;color:#475569;background:#1e293b;box-shadow:0 0 0 1.5px rgba(255,255,255,0.06);">${glyph}</span>`;
+    // Defensive: handle may hold a raw URL from imports — extract the real handle.
+    let handle = String(l.handle || "").replace(/^@/, "");
+    const igMatch = handle.match(/instagram\.com\/([A-Za-z0-9._]+)/i);
+    if (igMatch) handle = igMatch[1];
+    handle = handle.replace(/[^A-Za-z0-9._]/g, "");
+    const ig = (/^[A-Za-z0-9._]{1,30}$/.test(handle) && !/^https?$/i.test(handle))
+      ? `https://www.instagram.com/${handle}/` : "";
+    let li = String(l.linkedin || "").trim();
+    if (li && !/^https:\/\/[^\/]*linkedin\.com\/(company|in)\//.test(li)) li = "";
+    const ads = meta.meta_ads_url
+      || (l.website ? `https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=ALL&q=${encodeURIComponent(String(l.company || l.website).replace(/^https?:\/\//, "").replace(/\/$/, ""))}` : "");
+    const rev = meta.revenue_est
+      ? `<span title="Estimated monthly revenue (band: ${esc(meta.revenue_band || "n/a")})" style="font-size:10px;font-weight:700;color:#34d399;background:rgba(52,211,153,0.12);border:1px solid rgba(52,211,153,0.3);padding:2px 7px;border-radius:10px;">💰 ${esc(meta.revenue_est)}</span>`
+      : "";
+    const ver = meta.verify_tier
+      ? `<span title="Email verification tier: ${esc(meta.verify_tier)}" style="font-size:10px;font-weight:700;color:#a78bfa;background:rgba(167,139,250,0.12);border:1px solid rgba(167,139,250,0.3);padding:2px 7px;border-radius:10px;">✓ ${esc(String(meta.verify_tier).replace("verified_", ""))}</span>`
+      : "";
+    return `
+      <div style="display:flex; align-items:center; gap:6px; margin-top:4px; flex-wrap:wrap;">
+        ${rev}${ver}
+        <span style="display:inline-flex; align-items:center; gap:5px; margin-left:2px;">
+          ${circ(l.website, "🌐", "Brand website", "linear-gradient(135deg,#334155,#1e293b)")}
+          ${circ(ig, "📷", "Instagram", "linear-gradient(135deg,#f58529,#dd2a7b 60%,#8134af)")}
+          ${circ(l.linkedin, "in", "LinkedIn", "linear-gradient(135deg,#0a66c2,#084d94)")}
+          ${circ(ads, "📊", "Meta Ads Library — check live ads", "linear-gradient(135deg,#0866ff,#0064e0)")}
+        </span>
+      </div>`;
+  }
+
   function renderLeadsTable(leads) {
     const tbody = g("leads-tbody");
     if (!tbody) return;
@@ -916,9 +952,8 @@ document.addEventListener("DOMContentLoaded", () => {
             <div style="font-weight:500; color:#e2e8f0;">${esc(l.company || "Company")}</div>
             <div style="display:flex; align-items:center; gap:6px; margin-top:2px;">
               <span class="intent-chip chip-inbound" style="font-size:10px;">${esc(l.niche || "B2B")}</span>
-              ${l.website ? `<a href="${esc(l.website)}" target="_blank" style="color:#38bdf8; font-size:11px; text-decoration:none;" title="Website">🌐</a>` : ""}
-              ${l.linkedin ? `<a href="${esc(l.linkedin)}" target="_blank" style="color:#38bdf8; font-size:11px; text-decoration:none;" title="LinkedIn">🔗</a>` : ""}
             </div>
+            ${socialCircles(l)}
           </td>
           <td>${delivBadge}</td>
           <td>${aiDraftCell}</td>
