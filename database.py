@@ -999,10 +999,11 @@ def get_leads(stage=None, blacklisted=False, unsubscribed=False, limit=None, sea
     conn = get_db()
     query = "SELECT * FROM leads WHERE 1=1"
     params = []
+    # COALESCE keeps rows whose flags are NULL (e.g. bulk imports) visible.
     if not blacklisted:
-        query += " AND blacklisted=0"
+        query += " AND COALESCE(blacklisted, 0)=0"
     if not unsubscribed:
-        query += " AND unsubscribed=0"
+        query += " AND COALESCE(unsubscribed, 0)=0"
     if stage:
         if isinstance(stage, list):
             placeholders = ",".join("?" * len(stage))

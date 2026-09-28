@@ -92,6 +92,14 @@ def _translate(sql: str):
     # SQLite LIKE is case-insensitive by default; Postgres needs ILIKE.
     s = re.sub(r"\bLIKE\b", "ILIKE", s, flags=re.I)
 
+    # SQLite's NOCASE collation doesn't exist in Postgres; emulate with lower().
+    s = re.sub(
+        r"(\w+)\s*=\s*(\?)\s+COLLATE\s+NOCASE\b",
+        lambda m: f"lower({m.group(1)}) = lower({m.group(2)})",
+        s, flags=re.I,
+    )
+    s = re.sub(r"\s+COLLATE\s+NOCASE\b", "", s, flags=re.I)
+
     wants_id = False
 
     # INSERT OR REPLACE -> per-table upsert

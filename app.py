@@ -38,11 +38,20 @@ logger = logging.getLogger("flinza-runner")
 
 
 def check_and_migrate_db():
-    """Initializes flinza.db and ensures all required tables and columns exist."""
+    """Initializes the database and ensures all required tables and columns exist."""
     logger.info("📦 Checking database and running auto-migrations...")
     try:
         import database as db
         db.init_db()
+
+        # Supabase mode: schema is managed by supabase_db.ensure_schema() (Postgres
+        # DDL); the SQLite-only DDL below does not apply. Provision the mailboxes,
+        # templates and settings through the normal seed path instead.
+        import supabase_db
+        if supabase_db.is_enabled():
+            seed_result = db.auto_seed_if_empty()
+            logger.info(f"✅ Supabase schema verified; seed/fleet sync: {seed_result}")
+            return
 
         # Run auxiliary migrations for robustness
         import sqlite3
