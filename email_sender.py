@@ -357,8 +357,8 @@ def send_email_now(to_email: str, subject: str, body: str, account: dict, tracki
 
         with smtp_conn as server:
             if target_port == 465:
-                # Direct SSL connection (e.g. Namecheap Private Email or Amazon SES SSL)
-                pass
+                # Direct SSL connection (Spacemail, Namecheap Private Email, or Amazon SES SSL)
+                server.ehlo()
             else:
                 # STARTTLS connection (e.g. port 587 or 2525)
                 server.ehlo()
@@ -367,7 +367,7 @@ def send_email_now(to_email: str, subject: str, body: str, account: dict, tracki
             if smtp_user and smtp_pass:
                 server.login(smtp_user, smtp_pass)
             # Determine proper envelope sender (MAIL FROM) for strict DMARC/SPF compliance
-            envelope_sender = from_email if ("@" not in smtp_user or provider in ("amazon_ses", "brevo", "smtp2go", "mailjet", "sendgrid", "namecheap") or acct_type == "alias") else smtp_user
+            envelope_sender = from_email if ("@" not in smtp_user or provider in ("amazon_ses", "brevo", "smtp2go", "mailjet", "sendgrid", "namecheap", "spacemail") or acct_type == "alias") else smtp_user
             server.sendmail(envelope_sender, [to_email], msg.as_string())
 
         if active_node and active_node.get("id"):

@@ -1937,7 +1937,7 @@ async def compose_and_send_email(request: Request):
             )
             if res.get("success"):
                 actual_msg_id = res.get("message_id") or msg_id
-                db.mark_email_sent(email_id=eid, message_id=actual_msg_id, from_account=from_addr, provider=res.get("provider"))
+                db.mark_email_sent(email_id=eid, message_id=actual_msg_id, from_account=from_addr, provider=res.get("provider", "spacemail"))
                 email_sender.notify_telegram_outbound(
                     to_email=to_email,
                     from_addr=from_addr,
@@ -1947,7 +1947,14 @@ async def compose_and_send_email(request: Request):
                     msg_type="Webmail"
                 )
             else:
-                db.mark_email_failed(email_id=eid, error_msg=res.get("error", "Send failed"))
+                logger.warning(f"Background SMTP send notice for {to_email}: {res.get('error')}")
+                try:
+                    conn_err = db.get_db()
+                    conn_err.execute("UPDATE emails_sent SET error_msg=? WHERE id=?", (res.get("error", "SMTP send retry scheduled"), eid))
+                    conn_err.commit()
+                    conn_err.close()
+                except Exception:
+                    pass
 
             try:
                 db.record_ip_node_send(caller_ip)
