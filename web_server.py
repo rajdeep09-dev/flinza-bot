@@ -1332,6 +1332,16 @@ def _query_webmail_threads(conn, folder: str, search: Optional[str], filter: str
         AND LOWER(r.subject) NOT LIKE '%confirm%'
     """
 
+    # Check if replies is empty (e.g. freshly booted container on cloud host)
+    all_inbox_cnt = conn.execute("SELECT COUNT(*) as c FROM replies").fetchone()["c"]
+    if all_inbox_cnt == 0:
+        try:
+            import reply_watcher
+            reply_watcher.check_now()
+            all_inbox_cnt = conn.execute("SELECT COUNT(*) as c FROM replies").fetchone()["c"]
+        except Exception as e_sync:
+            logger.warning(f"Auto-sync on zero inboxes: {e_sync}")
+
     # Folder Counts: inbox = leads & direct human inquiries; all_inboxes = every incoming email
     leads_inbox_cnt = conn.execute(f"""
         SELECT COUNT(*) as c FROM replies r 
@@ -1340,7 +1350,6 @@ def _query_webmail_threads(conn, folder: str, search: Optional[str], filter: str
           AND (r.lead_id IS NOT NULL OR (COALESCE(r.sentiment, '') != 'bounced' AND COALESCE(r.intent, '') != 'bounced'))
           {system_filter_sql}
     """).fetchone()["c"]
-    all_inbox_cnt = conn.execute("SELECT COUNT(*) as c FROM replies").fetchone()["c"]
     starred_cnt = conn.execute("SELECT (SELECT COUNT(*) FROM replies WHERE is_starred=1) + (SELECT COUNT(*) FROM emails_sent WHERE is_starred=1) as c").fetchone()["c"]
     drafts_cnt = conn.execute("SELECT COUNT(*) as c FROM replies WHERE handled=0 AND ai_draft_body IS NOT NULL").fetchone()["c"]
     sent_cnt = conn.execute("SELECT COUNT(*) as c FROM emails_sent WHERE status='sent'").fetchone()["c"]
@@ -3329,10 +3338,34 @@ async def api_update_node_settings(node_id: int, request: Request):
 
 @app.on_event("startup")
 async def startup_fleet_services():
-    """Starts background fleet keepalive, tunnel monitoring, and auto-sets Python host server's real public IP."""
+    """Initializes database, seeds leads & accounts, starts reply watcher, and fleet keepalive."""
     import ip_rotator
+    import spacemail_accounts
+    import reply_watcher
 
-    # Automatically detect and register this Python server's public IP as an active node immediately
+    # 1. Initialize SQLite schema & run all column migrations and auto-seeding
+    try:
+        await asyncio.to_thread(db.init_db)
+        logger.info("✅ Database initialized with migrations and auto-seed on startup.")
+    except Exception as e_init:
+        logger.error(f"Failed to initialize database on startup: {e_init}")
+
+    # 2. Synchronize all 29 Spacemail accounts into database
+    try:
+        res_sm = await asyncio.to_thread(spacemail_accounts.sync_to_db)
+        logger.info(f"✅ Spacemail fleet synced on startup: {res_sm}")
+    except Exception as e_sm:
+        logger.error(f"Failed to sync Spacemail fleet on startup: {e_sm}")
+
+    # 3. Start background IMAP reply watcher loop & trigger immediate background check
+    try:
+        reply_watcher.start_watcher(notify_callback=None)
+        logger.info("✅ Reply watcher background service started.")
+        asyncio.create_task(asyncio.to_thread(reply_watcher.check_now))
+    except Exception as e_rw:
+        logger.error(f"Failed to start reply watcher: {e_rw}")
+
+    # 4. Automatically detect and register this Python server's public IP as an active node immediately
     try:
         await asyncio.to_thread(ip_rotator.auto_register_server_node)
         logger.info("🚀 Python server public IP auto-registered into IP fleet.")

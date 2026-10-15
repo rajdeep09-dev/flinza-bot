@@ -560,13 +560,6 @@ def seed_database(force: bool = False) -> dict:
 
     conn = get_db()
     try:
-        alias_count = conn.execute("SELECT count(*) FROM smtp_aliases").fetchone()[0] if conn.execute("SELECT count(*) FROM sqlite_master WHERE type='table' AND name='smtp_aliases'").fetchone()[0] else 0
-        acc_count = conn.execute("SELECT count(*) FROM gmail_accounts").fetchone()[0] if conn.execute("SELECT count(*) FROM sqlite_master WHERE type='table' AND name='gmail_accounts'").fetchone()[0] else 0
-        leads_count = conn.execute("SELECT count(*) FROM leads").fetchone()[0] if conn.execute("SELECT count(*) FROM sqlite_master WHERE type='table' AND name='leads'").fetchone()[0] else 0
-        if not force and (alias_count > 0 or acc_count > 0) and (leads_count > 0):
-            conn.close()
-            return {"success": True, "seeded": False, "message": "Database already contains aliases/accounts/leads."}
-
         with open(seed_file, "r", encoding="utf-8") as f:
             seed = json.load(f)
 
@@ -588,6 +581,13 @@ def seed_database(force: bool = False) -> dict:
             rows = seed.get(tbl, [])
             if not rows:
                 continue
+            if not force:
+                try:
+                    cnt = conn.execute(f"SELECT count(*) FROM {tbl}").fetchone()[0]
+                    if cnt > 0:
+                        continue
+                except Exception:
+                    pass
             existing_cols = {row[1] for row in conn.execute(f"PRAGMA table_info({tbl})").fetchall()}
             inserted = 0
             for r in rows:

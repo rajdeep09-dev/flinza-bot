@@ -422,12 +422,16 @@ document.addEventListener("DOMContentLoaded", () => {
     const btn = e.currentTarget;
     btn.style.animation = "spin 1.2s linear infinite";
     try {
-      await apiFetch("/api/unibox/check", "POST");
-    } catch {}
-    setTimeout(() => {
+      const res = await apiFetch("/api/unibox/check", "POST");
+      if (res && res.message) {
+        showToast(res.message, res.success ? "success" : "info");
+      }
+    } catch (err) {
+      console.warn("Sync error:", err);
+    } finally {
       btn.style.animation = "";
-      loadWebmailThreads(currentWebmailFolder, activeSearchQuery, currentWebmailPage, currentWebmailFilter);
-    }, 1200);
+      await loadWebmailThreads(currentWebmailFolder, activeSearchQuery, currentWebmailPage, currentWebmailFilter);
+    }
   });
 
   // ═══════════════════════════════════════════════════════
