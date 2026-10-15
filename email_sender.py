@@ -295,8 +295,20 @@ def send_email_now(to_email: str, subject: str, body: str, account: dict, tracki
         smtp_pass = relay_info.get("smtp_pass") or smtp_pass
         logger.info(f"Resolved relay for {from_email}: {provider} via {target_host}:{target_port} ({relay_info.get('reason')})")
     else:
-        target_host = account.get("smtp_host") or default_hosts.get(provider, "mail.spacemail.com")
-        target_port = int(account.get("smtp_port") or (465 if provider in ("namecheap", "zoho_in", "spacemail") else 587))
+        is_spacemail = (
+            provider == "spacemail" or
+            "spacemail" in str(account.get("smtp_host", "")).lower() or
+            any(from_email.lower().endswith(dom) for dom in (
+                "@flinzamedia.com", "@growflinza.com", "@flinzabiz.com", "@flinzaleads.com", "@flinzascales.com", "@flinzaoutreach.com"
+            ))
+        )
+        if is_spacemail:
+            provider = "spacemail"
+            target_host = account.get("smtp_host") or "mail.spacemail.com"
+            target_port = int(account.get("smtp_port") or 465)
+        else:
+            target_host = account.get("smtp_host") or default_hosts.get(provider, "mail.spacemail.com")
+            target_port = int(account.get("smtp_port") or (465 if provider in ("namecheap", "zoho_in", "spacemail") else 587))
 
     try:
         # Proper MIME formatting: use pure text/plain if no HTML, multipart/alternative only if HTML is present
@@ -328,7 +340,7 @@ def send_email_now(to_email: str, subject: str, body: str, account: dict, tracki
 
         # Build SMTP connection (with optional proxy, port 465 SSL vs port 587 STARTTLS)
         active_node = None
-        if not proxy_url and provider not in ("amazon_ses", "brevo", "smtp2go", "mailjet", "cloudflare_api"):
+        if not proxy_url and provider not in ("spacemail", "amazon_ses", "brevo", "smtp2go", "mailjet", "cloudflare_api"):
             # Route outbound outreach through smart IP rotator fleet pool (multi-node balancing)
             try:
                 import ip_rotator
@@ -628,12 +640,12 @@ def send_with_logging(lead_id: int, to_email: str, subject: str, body: str,
 #                    PROXY SOCKET SUPPORT
 # ═══════════════════════════════════════════════════════════════
 
-def _make_smtp_connection(proxy_url: str | None, target_host: str = "smtp.gmail.com", target_port: int = 587) -> smtplib.SMTP:
+def _make_smtp_connection(proxy_url: str | None, target_host: str = "mail.spacemail.com", target_port: int = 465, timeout: int = 6) -> smtplib.SMTP:
     """Create SMTP connection, optionally routed through a proxy, supporting both SSL (465) and STARTTLS (587)."""
     if not proxy_url:
         if target_port == 465:
-            return smtplib.SMTP_SSL(target_host, target_port, timeout=30)
-        return smtplib.SMTP(target_host, target_port, timeout=30)
+            return smtplib.SMTP_SSL(target_host, target_port, timeout=timeout)
+        return smtplib.SMTP(target_host, target_port, timeout=timeout)
 
     parsed = urlparse(proxy_url)
     scheme = (parsed.scheme or "").lower()
@@ -656,27 +668,27 @@ def _make_smtp_connection(proxy_url: str | None, target_host: str = "smtp.gmail.
                 proxy_port=port,
                 proxy_username=username,
                 proxy_password=password,
-                timeout=30,
+                timeout=timeout,
             )
             if target_port == 465:
                 import ssl
                 context = ssl.create_default_context()
                 sock = context.wrap_socket(sock, server_hostname=target_host)
-                conn = smtplib.SMTP_SSL(timeout=30)
+                conn = smtplib.SMTP_SSL(timeout=timeout)
                 conn.sock = sock
                 conn._host = target_host
                 return conn
             else:
-                conn = smtplib.SMTP(timeout=30)
+                conn = smtplib.SMTP(timeout=timeout)
                 conn.sock = sock
                 conn._host = target_host
                 return conn
         except ImportError:
             logger.warning("PySocks not installed — ignoring SOCKS proxy, falling back to direct connection.")
-            return smtplib.SMTP_SSL(target_host, target_port, timeout=30) if target_port == 465 else smtplib.SMTP(target_host, target_port, timeout=30)
+            return smtplib.SMTP_SSL(target_host, target_port, timeout=timeout) if target_port == 465 else smtplib.SMTP(target_host, target_port, timeout=timeout)
         except Exception as e_sock:
             logger.warning(f"SOCKS proxy connect to {host}:{port} failed ({e_sock}) — falling back to direct connection.")
-            return smtplib.SMTP_SSL(target_host, target_port, timeout=30) if target_port == 465 else smtplib.SMTP(target_host, target_port, timeout=30)
+            return smtplib.SMTP_SSL(target_host, target_port, timeout=timeout) if target_port == 465 else smtplib.SMTP(target_host, target_port, timeout=timeout)
 
     elif scheme in ("http", "https"):
         # HTTP proxy via CONNECT tunnel
@@ -684,23 +696,32 @@ def _make_smtp_connection(proxy_url: str | None, target_host: str = "smtp.gmail.
             proxy_host = parsed.hostname
             proxy_port = parsed.port or 3128
             sock = _http_proxy_connect(proxy_host, proxy_port, target_host, target_port,
-                                       parsed.username, parsed.password)
-            conn = smtplib.SMTP(timeout=30)
-            conn.sock = sock
-            conn._host = target_host
-            return conn
+                                       parsed.username, parsed.password, timeout=timeout)
+            if target_port == 465:
+                import ssl
+                context = ssl.create_default_context()
+                sock = context.wrap_socket(sock, server_hostname=target_host)
+                conn = smtplib.SMTP_SSL(timeout=timeout)
+                conn.sock = sock
+                conn._host = target_host
+                return conn
+            else:
+                conn = smtplib.SMTP(timeout=timeout)
+                conn.sock = sock
+                conn._host = target_host
+                return conn
         except Exception as e:
             logger.warning(f"HTTP proxy connect failed ({e}) — using direct connection")
-            return smtplib.SMTP(target_host, target_port, timeout=30)
+            return smtplib.SMTP_SSL(target_host, target_port, timeout=timeout) if target_port == 465 else smtplib.SMTP(target_host, target_port, timeout=timeout)
 
     # Unknown scheme — direct
-    return smtplib.SMTP(target_host, target_port, timeout=30)
+    return smtplib.SMTP_SSL(target_host, target_port, timeout=timeout) if target_port == 465 else smtplib.SMTP(target_host, target_port, timeout=timeout)
 
 
 def _http_proxy_connect(proxy_host, proxy_port, target_host, target_port,
-                        proxy_user=None, proxy_pass=None):
+                        proxy_user=None, proxy_pass=None, timeout: int = 6):
     """Establish CONNECT tunnel through HTTP proxy."""
-    sock = socket.create_connection((proxy_host, proxy_port), timeout=30)
+    sock = socket.create_connection((proxy_host, proxy_port), timeout=timeout)
     connect_str = f"CONNECT {target_host}:{target_port} HTTP/1.1\r\nHost: {target_host}:{target_port}\r\n"
     if proxy_user and proxy_pass:
         import base64
@@ -736,7 +757,7 @@ def _make_display_name(email: str) -> str:
     return name.strip() or "Flinza"
 
 
-def test_account_connection(email: str, app_password: str, smtp_host: str = "smtp.gmail.com", smtp_port: int = 587) -> dict:
+def test_account_connection(email: str, app_password: str, smtp_host: str = "mail.spacemail.com", smtp_port: int = 465) -> dict:
     """
     Quick SMTP auth test without sending. Returns {success, error}.
 
@@ -745,13 +766,13 @@ def test_account_connection(email: str, app_password: str, smtp_host: str = "smt
     the old STARTTLS-only path always failed, even with perfect credentials.
     """
     try:
-        port = int(smtp_port or 587)
+        port = int(smtp_port or 465)
         if port == 465:
-            with smtplib.SMTP_SSL(smtp_host, port, timeout=15) as server:
+            with smtplib.SMTP_SSL(smtp_host, port, timeout=6) as server:
                 server.ehlo()
                 server.login(email, app_password)
         else:
-            with smtplib.SMTP(smtp_host, port, timeout=15) as server:
+            with smtplib.SMTP(smtp_host, port, timeout=6) as server:
                 server.ehlo()
                 server.starttls()
                 server.ehlo()
@@ -763,10 +784,10 @@ def test_account_connection(email: str, app_password: str, smtp_host: str = "smt
         return {"success": False, "error": str(e)}
 
 
-def test_imap_connection(email: str, password: str, imap_host: str = "imap.gmail.com", imap_port: int = 993) -> dict:
+def test_imap_connection(email: str, password: str, imap_host: str = "mail.spacemail.com", imap_port: int = 993) -> dict:
     """Quick IMAP auth test without modifying anything. Returns {success, error}."""
     try:
-        with imaplib.IMAP4_SSL(imap_host, int(imap_port or 993), timeout=15) as mail:
+        with imaplib.IMAP4_SSL(imap_host, int(imap_port or 993), timeout=6) as mail:
             mail.login(email, password)
         return {"success": True}
     except imaplib.IMAP4.error as e:

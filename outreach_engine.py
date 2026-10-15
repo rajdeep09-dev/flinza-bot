@@ -601,18 +601,25 @@ def pick_best_account(lead_email: str = "", exclude: Optional[List[str]] = None)
             "provider":     d.get("routing_mode", "gmail_send_as"),
         }
     else:
+        is_space = (
+            (d.get("provider") or "").lower() == "spacemail" or
+            "spacemail" in (d.get("smtp_host") or "").lower() or
+            any(d["email"].lower().endswith(dom) for dom in (
+                "@flinzamedia.com", "@growflinza.com", "@flinzabiz.com", "@flinzaleads.com", "@flinzascales.com", "@flinzaoutreach.com"
+            ))
+        )
         return {
             "id":           d["email"],
-            "type":         "gmail",
+            "type":         "spacemail" if is_space else d.get("type", "gmail"),
             "from_email":   d["email"],
-            "smtp_user":    d["email"],
-            "smtp_pass":    d.get("app_password"),
-            "smtp_host":    d.get("smtp_host") or "smtp.gmail.com",
-            "smtp_port":    d.get("smtp_port") or 587,
+            "smtp_user":    d.get("smtp_user") or d["email"],
+            "smtp_pass":    d.get("smtp_pass") or d.get("app_password"),
+            "smtp_host":    d.get("smtp_host") or ("mail.spacemail.com" if is_space else "smtp.gmail.com"),
+            "smtp_port":    int(d.get("smtp_port") or (465 if is_space else 587)),
             "proxy_url":    d.get("proxy_url"),
             "display_name": d.get("label") or d["email"].split("@")[0].replace(".", " ").title(),
-            "routing_mode": "gmail",
-            "provider":     d.get("provider") or "gmail",
+            "routing_mode": "spacemail" if is_space else "gmail",
+            "provider":     d.get("provider") or ("spacemail" if is_space else "gmail"),
         }
 
 
