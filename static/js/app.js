@@ -845,8 +845,23 @@ document.addEventListener("DOMContentLoaded", () => {
 
   async function loadLeads() {
     try {
-      const url = currentStageFilter === "all" ? "/api/leads?stage=all" : `/api/leads?stage=${currentStageFilter}`;
-      const data = await apiFetch(url);
+      const params = new URLSearchParams();
+      const priority = g("leads-filter-priority")?.value;
+      const stage    = g("leads-filter-stage")?.value   || currentStageFilter;
+      const niche    = g("leads-filter-niche")?.value;
+      const country  = g("leads-filter-country")?.value;
+      const deliv    = g("leads-filter-deliv")?.value;
+      const sort     = g("leads-filter-sort")?.value    || "crm_priority_asc";
+      const search   = g("leads-search-input")?.value?.trim();
+      if (stage)                      params.set("stage",                stage);
+      if (priority !== undefined && priority !== "") params.set("crm_priority", priority);
+      if (niche)                      params.set("niche",                niche);
+      if (country)                    params.set("country",              country);
+      if (deliv)                      params.set("deliverability_status",deliv);
+      if (search)                     params.set("search",               search);
+      params.set("sort",  sort);
+      params.set("limit", "1000");
+      const data = await apiFetch("/api/leads?" + params);
       if (!data.success) return;
       currentLeads = data.leads || [];
       renderLeadsTable(currentLeads);
@@ -896,9 +911,18 @@ document.addEventListener("DOMContentLoaded", () => {
     if (!tbody) return;
 
     if (leads.length === 0) {
-      tbody.innerHTML = `<tr><td colspan="6" class="table-empty">No leads found in this stage. Click <strong>📥 Example CSV</strong> or <strong>📤 Import CSV</strong> to load prospects.</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="9" class="table-empty">No leads found in this stage. Click <strong>📥 Example CSV</strong> or <strong>📤 Import CSV</strong> to load prospects.</td></tr>`;
       return;
     }
+
+    // Priority tier label helper
+    const priorityLabel = (p) => {
+      const tier = parseInt(p);
+      if (tier === 1) return `<span style="background:rgba(239,68,68,0.18);color:#ef4444;border:1px solid rgba(239,68,68,0.35);padding:2px 7px;border-radius:8px;font-size:10px;font-weight:700;">🔥 P1</span>`;
+      if (tier === 2) return `<span style="background:rgba(245,158,11,0.18);color:#f59e0b;border:1px solid rgba(245,158,11,0.35);padding:2px 7px;border-radius:8px;font-size:10px;font-weight:700;">⚡ P2</span>`;
+      if (tier === 3) return `<span style="background:rgba(99,102,241,0.18);color:#a5b4fc;border:1px solid rgba(99,102,241,0.35);padding:2px 7px;border-radius:8px;font-size:10px;font-weight:700;">🎯 P3</span>`;
+      return `<span style="color:#475569;font-size:10px;">—</span>`;
+    };
 
     tbody.innerHTML = leads.map(l => {
       // Deliverability badge
@@ -937,6 +961,12 @@ document.addEventListener("DOMContentLoaded", () => {
 
       return `
         <tr>
+          <td style="width:32px;text-align:center;"><input type="checkbox" class="lead-row-check" data-id="${l.id}" style="accent-color:#6366f1;width:15px;height:15px;cursor:pointer;" /></td>
+          <td style="text-align:center;">
+            <button class="btn-cycle-priority" data-id="${l.id}" data-priority="${l.crm_priority || ''}" title="Click to cycle priority tier" style="background:none;border:none;cursor:pointer;padding:2px;">
+              ${priorityLabel(l.crm_priority)}
+            </button>
+          </td>
           <td>
             <div style="display:flex; align-items:center; gap:10px;">
               <div style="width:30px; height:30px; border-radius:8px; background:linear-gradient(135deg, rgba(126,206,206,0.3) 0%, rgba(33,84,232,0.4) 100%); display:flex; align-items:center; justify-content:center; font-weight:700; font-size:13px; color:#fff;">
@@ -954,6 +984,10 @@ document.addEventListener("DOMContentLoaded", () => {
               <span class="intent-chip chip-inbound" style="font-size:10px;">${esc(l.niche || "B2B")}</span>
             </div>
             ${socialCircles(l)}
+          </td>
+          <td>
+            <div style="font-size:11.5px;color:#cbd5e1;">${esc(l.country || "—")}</div>
+            ${l.instagram_followers ? `<div style="font-size:10px;color:#94a3b8;margin-top:2px;">👥 ${Number(l.instagram_followers).toLocaleString()}</div>` : ""}
           </td>
           <td>${delivBadge}</td>
           <td>${aiDraftCell}</td>
@@ -1069,24 +1103,37 @@ document.addEventListener("DOMContentLoaded", () => {
       });
     });
 
-    // Wire Send Test Preview for this Lead
+    // Wire Send Test Preview — opens Email Outreach Preview modal
     tbody.querySelectorAll(".btn-send-lead-preview").forEach(btn => {
       btn.addEventListener("click", async (e) => {
         e.stopPropagation();
         closeAllKebabMenus();
-        showToast("Sending test email to f12x.studio@gmail.com…", "info");
-        try {
-          const d = await apiFetch("/api/signature/test-preview", "POST", { to_email: "f12x.studio@gmail.com" });
-          if (d.success) {
-            showToast("Test email dispatched!", "success");
-            showAlert("🚀 Test email with Apple-minimal Signature delivered to f12x.studio@gmail.com!", "success", 5000);
-          } else {
-            showToast("Failed to dispatch test", "error");
-          }
-        } catch (err) {
-          showToast(`Error: ${err}`, "error");
-        }
+        const leadId = btn.dataset.id;
+        previewEmailLead = currentLeads.find(l => String(l.id) === String(leadId));
+        if (!previewEmailLead) return;
+        await fetchNextSenderName();
+        const pInfo = g("em-preview-lead-info");
+        if (pInfo) pInfo.textContent = `Lead: ${previewEmailLead.name || "Founder"} • ${previewEmailLead.company || "Brand"} • ${previewEmailLead.email} • Sender: ${nextSenderName}`;
+        switchEmailPreviewTab("a");
+        g("backdrop-email-preview")?.classList.add("active");
       });
+    });
+
+    // Wire cycle-priority buttons
+    tbody.querySelectorAll(".btn-cycle-priority").forEach(btn => {
+      btn.addEventListener("click", async (e) => {
+        e.stopPropagation();
+        const leadId = btn.dataset.id;
+        const cur = parseInt(btn.dataset.priority) || 0;
+        const next = cur >= 3 ? 1 : cur + 1;
+        const d = await apiFetch(`/api/leads/${leadId}`, "PATCH", { crm_priority: next });
+        if (d && d.success) { loadLeads(); } else showToast("Failed to update priority", "error");
+      });
+    });
+
+    // Wire row checkboxes → update bulk bar
+    tbody.querySelectorAll(".lead-row-check").forEach(cb => {
+      cb.addEventListener("change", () => updateBulkBar());
     });
 
     // Wire Zero-Bounce MX Audit
@@ -1130,6 +1177,144 @@ document.addEventListener("DOMContentLoaded", () => {
   document.addEventListener("click", () => closeAllKebabMenus());
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape") closeAllKebabMenus();
+  });
+
+  // ═══════════════════════════════════════════════════════
+  //  ADVANCED FILTERS — dynamic niche/country population
+  // ═══════════════════════════════════════════════════════
+  apiFetch("/api/leads/filter-options").then(d => {
+    if (!d || !d.niches) return;
+    const nn = g("leads-filter-niche");
+    if (nn) d.niches.forEach(n => { const o = document.createElement("option"); o.value = n; o.textContent = n; nn.appendChild(o); });
+    const cc = g("leads-filter-country");
+    if (cc) d.countries.forEach(c => { const o = document.createElement("option"); o.value = c; o.textContent = c; cc.appendChild(o); });
+  }).catch(() => {});
+
+  // Filter change handlers
+  ["leads-filter-priority","leads-filter-stage","leads-filter-niche","leads-filter-country","leads-filter-deliv","leads-filter-sort"].forEach(id => {
+    on(id, "change", () => loadLeads());
+  });
+  let leadsSearchTimer;
+  on("leads-search-input", "input", () => { clearTimeout(leadsSearchTimer); leadsSearchTimer = setTimeout(loadLeads, 350); });
+  on("btn-leads-clear-filters", "click", () => {
+    ["leads-filter-priority","leads-filter-stage","leads-filter-niche","leads-filter-country","leads-filter-deliv"].forEach(id => { const el = g(id); if (el) el.value = ""; });
+    const sortEl = g("leads-filter-sort"); if (sortEl) sortEl.value = "crm_priority_asc";
+    loadLeads();
+  });
+
+  // ═══════════════════════════════════════════════════════
+  //  BULK ACTIONS BAR
+  // ═══════════════════════════════════════════════════════
+  let selectedLeadIds = new Set();
+  function updateBulkBar() {
+    selectedLeadIds = new Set([...document.querySelectorAll(".lead-row-check:checked")].map(cb => parseInt(cb.dataset.id)));
+    const bar = g("leads-bulk-bar");
+    if (!bar) return;
+    if (selectedLeadIds.size > 0) {
+      bar.style.display = "flex";
+      const cnt = g("leads-bulk-count"); if (cnt) cnt.textContent = `${selectedLeadIds.size} selected`;
+    } else {
+      bar.style.display = "none";
+    }
+  }
+  on("leads-check-all", "change", (e) => {
+    document.querySelectorAll(".lead-row-check").forEach(cb => cb.checked = e.target.checked);
+    updateBulkBar();
+  });
+  on("leads-bulk-cancel", "click", () => {
+    document.querySelectorAll(".lead-row-check").forEach(cb => cb.checked = false);
+    const all = g("leads-check-all"); if (all) all.checked = false;
+    updateBulkBar();
+  });
+  on("leads-bulk-action", "change", () => {
+    const action = g("leads-bulk-action")?.value;
+    const pv = g("leads-bulk-priority-val"); if (pv) pv.style.display = action === "set_priority" ? "inline-block" : "none";
+    const sv = g("leads-bulk-stage-val");    if (sv) sv.style.display = action === "set_stage"    ? "inline-block" : "none";
+  });
+  on("btn-leads-bulk-apply", "click", async () => {
+    const action = g("leads-bulk-action")?.value;
+    if (!action || selectedLeadIds.size === 0) return showToast("Select leads and an action first", "error");
+    let val;
+    if (action === "set_priority") val = g("leads-bulk-priority-val")?.value;
+    if (action === "set_stage")    val = g("leads-bulk-stage-val")?.value;
+    if (action === "delete" && !confirm(`Delete ${selectedLeadIds.size} leads permanently?`)) return;
+    const d = await apiFetch("/api/leads/bulk", "POST", { ids: [...selectedLeadIds], action, value: val });
+    if (d && d.success) { showToast(`Applied ${action} to ${d.affected} leads ✅`); loadLeads(); }
+    else showToast((d && d.error) || "Bulk action failed", "error");
+  });
+
+  // ═══════════════════════════════════════════════════════
+  //  EMAIL OUTREACH PREVIEW MODAL
+  // ═══════════════════════════════════════════════════════
+  let nextSenderName = "Zoya";
+  let previewEmailLead = null;
+
+  async function fetchNextSenderName() {
+    try {
+      const d = await apiFetch("/api/accounts/next-sender");
+      if (d && d.success) nextSenderName = d.first_name || "Zoya";
+    } catch (e) {}
+  }
+  fetchNextSenderName();
+
+  function switchEmailPreviewTab(tab) {
+    ["a","b","f1"].forEach(t => {
+      const btn = g(`btn-tab-tpl-${t}`);
+      if (btn) { btn.style.background = t === tab ? "#6366f1" : ""; btn.style.color = t === tab ? "#fff" : ""; }
+    });
+    if (!previewEmailLead) return;
+    const l = previewEmailLead;
+    const firstName = ((l.name || "there").split(" ")[0] || "there");
+    const company   = l.company || "your brand";
+    const icebreaker = l.personalized_icebreaker || l.custom_hook || `Loved what ${company} is building — really stands out.`;
+    const followers = parseInt(l.instagram_followers) || 0;
+    let orderLift = "15-25 more orders a day";
+    let revLift   = "$30k-$50k in monthly revenue";
+    if (followers >= 200000) { orderLift = "35-50 more orders a day"; revLift = "$50k-$80k in monthly revenue"; }
+    const sig = `${nextSenderName}\nFlinza Media`;
+    const subEl  = g("em-preview-subject");
+    const bodyEl = g("em-preview-body");
+    if (!subEl || !bodyEl) return;
+    if (tab === "a") {
+      subEl.value  = `${firstName} — quick one on ${company}'s ad spend`;
+      bodyEl.value = `Hey ${firstName},\n\n${icebreaker}\n\nI checked out your ad account and found a gap you're leaving on the table. We think we can get you ${orderLift} and ${revLift}.\n\nWant me to show you what I found?\n\n${sig}\n\nPS: got a skincare brand 15 more orders a day in 5 weeks.`;
+    } else if (tab === "b") {
+      subEl.value  = `${firstName} — quick question on ${company}'s creative`;
+      bodyEl.value = `Hi ${firstName},\n\n${icebreaker}\n\nWe'll get you ${orderLift} and ${revLift} in 60 days. We run the creative end to end, you stay on delivery. No result, no invoice.\n\nWant to hear how?\n\n${sig}`;
+    } else if (tab === "f1") {
+      subEl.value  = `Re: ${firstName} — quick one on ${company}'s ad spend`;
+      bodyEl.value = `Hi ${firstName},\n\nJust circling up in case it got lost. Still happy to show you what we found for ${company} if useful.\n\nWorth a quick look?\n\n${sig}`;
+    }
+  }
+
+  ["a","b","f1"].forEach(t => on(`btn-tab-tpl-${t}`, "click", () => switchEmailPreviewTab(t)));
+
+  on("btn-close-email-preview", "click", () => g("backdrop-email-preview")?.classList.remove("active"));
+  on("btn-close-preview-done",  "click", () => g("backdrop-email-preview")?.classList.remove("active"));
+
+  on("btn-copy-preview-email", "click", () => {
+    const sub  = g("em-preview-subject")?.value || "";
+    const body = g("em-preview-body")?.value    || "";
+    navigator.clipboard.writeText(`Subject: ${sub}\n\n${body}`).then(() => showToast("Email copied to clipboard 📋"));
+  });
+
+  on("btn-send-preview-test-email", "click", async () => {
+    const btn = g("btn-send-preview-test-email");
+    if (!btn) return;
+    const origText = btn.textContent;
+    btn.textContent = "Sending…"; btn.disabled = true;
+    const d = await apiFetch("/api/accounts/test", "POST", {
+      to_email: "f12x.studio@gmail.com",
+      subject:  g("em-preview-subject")?.value,
+      body:     g("em-preview-body")?.value
+    });
+    btn.textContent = origText; btn.disabled = false;
+    if (d && d.success) {
+      await fetchNextSenderName();
+      showToast(`✅ Sent from ${d.from || ""} (${d.sender_name || nextSenderName})`);
+    } else {
+      showToast("❌ " + ((d && d.error) || "Send failed"), "error");
+    }
   });
 
   // Download Sample CSV

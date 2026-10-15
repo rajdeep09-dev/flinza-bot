@@ -405,6 +405,26 @@ def init_db():
         ("deliverability_status", "TEXT DEFAULT 'unverified'"),
         ("deliverability_score", "INTEGER DEFAULT 100"),
         ("last_audit_details", "TEXT"),
+        ("crm_priority", "INTEGER DEFAULT 0"),
+        ("country", "TEXT"),
+        ("revenue", "TEXT"),
+        ("company_size", "TEXT"),
+        ("icp_fit", "TEXT"),
+        ("instagram_handle", "TEXT"),
+        ("instagram_followers", "INTEGER DEFAULT 0"),
+        ("email_confidence", "INTEGER DEFAULT 100"),
+        ("email_type", "TEXT"),
+        ("contact_title", "TEXT"),
+        ("sub_niche", "TEXT"),
+        ("brand_confidence", "INTEGER DEFAULT 100"),
+        ("instagram_url", "TEXT"),
+        ("mx_status", "TEXT"),
+        ("dmarc_status", "TEXT"),
+        ("spf_status", "TEXT"),
+        ("personalized_icebreaker", "TEXT"),
+        ("exec_name", "TEXT"),
+        ("exec_title", "TEXT"),
+        ("exec_email", "TEXT"),
     ]:
         try:
             conn.execute(f"ALTER TABLE leads ADD COLUMN {col} {col_type}")
@@ -995,16 +1015,30 @@ def get_lead_by_email(email: str):
     return row
 
 
-def get_leads(stage=None, blacklisted=False, unsubscribed=False, limit=None, search=None):
+def get_leads(
+    stage=None,
+    blacklisted=False,
+    unsubscribed=False,
+    limit=None,
+    search=None,
+    crm_priority=None,
+    niche=None,
+    country=None,
+    company_size=None,
+    revenue=None,
+    icp_fit=None,
+    deliverability_status=None,
+    sort_by="crm_priority_asc"
+):
     conn = get_db()
     query = "SELECT * FROM leads WHERE 1=1"
     params = []
-    # COALESCE keeps rows whose flags are NULL (e.g. bulk imports) visible.
+    # COALESCE keeps rows whose flags are NULL visible
     if not blacklisted:
         query += " AND COALESCE(blacklisted, 0)=0"
     if not unsubscribed:
         query += " AND COALESCE(unsubscribed, 0)=0"
-    if stage:
+    if stage and stage != "all":
         if isinstance(stage, list):
             placeholders = ",".join("?" * len(stage))
             query += f" AND stage IN ({placeholders})"
@@ -1012,16 +1046,115 @@ def get_leads(stage=None, blacklisted=False, unsubscribed=False, limit=None, sea
         else:
             query += " AND stage=?"
             params.append(stage)
+    if crm_priority is not None and str(crm_priority) != "" and str(crm_priority) != "all":
+        query += " AND crm_priority=?"
+        params.append(int(crm_priority))
+    if niche and niche != "all":
+        query += " AND (niche LIKE ? OR sub_niche LIKE ?)"
+        params.extend([f"%{niche}%", f"%{niche}%"])
+    if country and country != "all":
+        query += " AND country LIKE ?"
+        params.append(f"%{country}%")
+    if company_size and company_size != "all":
+        query += " AND company_size LIKE ?"
+        params.append(f"%{company_size}%")
+    if revenue and revenue != "all":
+        query += " AND revenue LIKE ?"
+        params.append(f"%{revenue}%")
+    if icp_fit and icp_fit != "all":
+        query += " AND icp_fit LIKE ?"
+        params.append(f"%{icp_fit}%")
+    if deliverability_status and deliverability_status != "all":
+        query += " AND deliverability_status=?"
+        params.append(deliverability_status)
     if search:
-        query += " AND (email LIKE ? OR name LIKE ? OR handle LIKE ?)"
+        query += " AND (email LIKE ? OR name LIKE ? OR company LIKE ? OR handle LIKE ? OR niche LIKE ?)"
         s = f"%{search}%"
-        params.extend([s, s, s])
-    query += " ORDER BY added_at DESC"
+        params.extend([s, s, s, s, s])
+
+    sort_map = {
+        "crm_priority_asc":  "CASE WHEN crm_priority=0 THEN 9 ELSE crm_priority END ASC, added_at DESC",
+        "crm_priority_desc": "crm_priority DESC, added_at DESC",
+        "added_desc":        "added_at DESC",
+        "added_asc":         "added_at ASC",
+        "company_asc":       "company ASC",
+        "score_desc":        "score DESC",
+        "followers_desc":    "instagram_followers DESC",
+    }
+    order = sort_map.get(sort_by, "CASE WHEN crm_priority=0 THEN 9 ELSE crm_priority END ASC, added_at DESC")
+    query += f" ORDER BY {order}"
     if limit:
         query += f" LIMIT {int(limit)}"
     rows = conn.execute(query, params).fetchall()
     conn.close()
     return rows
+
+
+def bulk_update_leads(ids: list, action: str, value=None) -> dict:
+    """Executes bulk actions across a list of lead IDs."""
+    if not ids:
+        return {"success": False, "error": "No lead IDs provided"}
+    ids = [int(i) for i in ids]
+    placeholders = ",".join("?" * len(ids))
+    conn = get_db()
+    try:
+        if action == "delete":
+            conn.execute(f"DELETE FROM leads WHERE id IN ({placeholders})", ids)
+            conn.commit()
+            return {"success": True, "action": "delete", "affected": len(ids)}
+        elif action == "set_priority":
+            prio = int(value or 0)
+            conn.execute(f"UPDATE leads SET crm_priority=? WHERE id IN ({placeholders})", [prio] + ids)
+            conn.commit()
+            return {"success": True, "action": "set_priority", "value": prio, "affected": len(ids)}
+        elif action == "set_stage":
+            stage = str(value or "new")
+            conn.execute(f"UPDATE leads SET stage=? WHERE id IN ({placeholders})", [stage] + ids)
+            conn.commit()
+            return {"success": True, "action": "set_stage", "value": stage, "affected": len(ids)}
+        elif action == "set_niche":
+            niche = str(value or "")
+            conn.execute(f"UPDATE leads SET niche=? WHERE id IN ({placeholders})", [niche] + ids)
+            conn.commit()
+            return {"success": True, "action": "set_niche", "value": niche, "affected": len(ids)}
+        elif action == "blacklist":
+            conn.execute(f"UPDATE leads SET blacklisted=1, stage='blacklisted' WHERE id IN ({placeholders})", ids)
+            conn.commit()
+            return {"success": True, "action": "blacklist", "affected": len(ids)}
+        elif action == "unsubscribe":
+            conn.execute(f"UPDATE leads SET unsubscribed=1, stage='unsubscribed' WHERE id IN ({placeholders})", ids)
+            conn.commit()
+            return {"success": True, "action": "unsubscribe", "affected": len(ids)}
+        else:
+            return {"success": False, "error": f"Unknown action: {action}"}
+    finally:
+        conn.close()
+
+
+def get_leads_filter_options() -> dict:
+    """Returns distinct filter metadata for CRM dropdowns."""
+    conn = get_db()
+    niches = [r[0] for r in conn.execute(
+        "SELECT DISTINCT niche FROM leads WHERE niche IS NOT NULL AND niche!='' ORDER BY niche"
+    ).fetchall()]
+    countries = [r[0] for r in conn.execute(
+        "SELECT DISTINCT country FROM leads WHERE country IS NOT NULL AND country!='' ORDER BY country"
+    ).fetchall()]
+    stages = [r[0] for r in conn.execute(
+        "SELECT DISTINCT stage FROM leads WHERE stage IS NOT NULL ORDER BY stage"
+    ).fetchall()]
+    conn.close()
+    return {
+        "niches": niches,
+        "countries": countries,
+        "stages": stages,
+        "priorities": [
+            {"value": 0, "label": "Unassigned"},
+            {"value": 1, "label": "⭐ Tier 1 — Next Send"},
+            {"value": 2, "label": "Tier 2 — Secondary"},
+            {"value": 3, "label": "Tier 3 — Backup"},
+        ]
+    }
 
 
 def get_lead_by_id(lead_id: int):

@@ -580,30 +580,108 @@
               </button>
             </div>
           </div>
-          <!-- Stage Filter Tabs -->
-          <div class="stage-tabs-row" id="lead-stage-tabs">
-            <button class="stage-tab active" data-stage="all">All Leads</button>
-            <button class="stage-tab" data-stage="new">New</button>
-            <button class="stage-tab" data-stage="contacted">Contacted</button>
-            <button class="stage-tab" data-stage="opened">Opened</button>
-            <button class="stage-tab" data-stage="replied">Replied</button>
-            <button class="stage-tab" data-stage="bounced">Bounced / Dead</button>
+          <!-- Advanced Lead Filters -->
+          <div class="leads-filter-bar" style="display:flex; flex-wrap:wrap; gap:10px; align-items:center; background:rgba(18,24,38,0.7); border:1px solid rgba(255,255,255,0.08); border-radius:12px; padding:12px 16px; margin-bottom:12px;">
+            <div style="display:flex; flex-direction:column; gap:3px;">
+              <span style="font-size:10px; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.5px;">Priority Tier</span>
+              <select id="leads-filter-priority" style="background:#0b1120; border:1px solid rgba(255,255,255,0.12); color:#fff; border-radius:6px; padding:6px 10px; font-size:12px; outline:none;">
+                <option value="">All Priorities</option>
+                <option value="1">⭐ Tier 1 — Next Send</option>
+                <option value="2">Tier 2 — Secondary</option>
+                <option value="3">Tier 3 — Backup</option>
+                <option value="0">Unassigned</option>
+              </select>
+            </div>
+            <div style="display:flex; flex-direction:column; gap:3px;">
+              <span style="font-size:10px; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.5px;">Stage</span>
+              <select id="leads-filter-stage" style="background:#0b1120; border:1px solid rgba(255,255,255,0.12); color:#fff; border-radius:6px; padding:6px 10px; font-size:12px; outline:none;">
+                <option value="">All Stages</option>
+                <option value="new">New</option>
+                <option value="contacted">Contacted</option>
+                <option value="opened">Opened</option>
+                <option value="replied">Replied</option>
+                <option value="bounced">Bounced / Dead</option>
+              </select>
+            </div>
+            <div style="display:flex; flex-direction:column; gap:3px;">
+              <span style="font-size:10px; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.5px;">Niche</span>
+              <select id="leads-filter-niche" style="background:#0b1120; border:1px solid rgba(255,255,255,0.12); color:#fff; border-radius:6px; padding:6px 10px; font-size:12px; outline:none; max-width:180px;">
+                <option value="">All Niches</option>
+              </select>
+            </div>
+            <div style="display:flex; flex-direction:column; gap:3px;">
+              <span style="font-size:10px; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.5px;">Country</span>
+              <select id="leads-filter-country" style="background:#0b1120; border:1px solid rgba(255,255,255,0.12); color:#fff; border-radius:6px; padding:6px 10px; font-size:12px; outline:none;">
+                <option value="">All Countries</option>
+              </select>
+            </div>
+            <div style="display:flex; flex-direction:column; gap:3px;">
+              <span style="font-size:10px; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.5px;">Email Verification</span>
+              <select id="leads-filter-deliv" style="background:#0b1120; border:1px solid rgba(255,255,255,0.12); color:#fff; border-radius:6px; padding:6px 10px; font-size:12px; outline:none;">
+                <option value="">All</option>
+                <option value="verified">Verified MX</option>
+                <option value="catch_all">Catch-All</option>
+                <option value="unverified">Unverified</option>
+              </select>
+            </div>
+            <div style="display:flex; flex-direction:column; gap:3px;">
+              <span style="font-size:10px; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.5px;">Sort By</span>
+              <select id="leads-filter-sort" style="background:#0b1120; border:1px solid rgba(255,255,255,0.12); color:#fff; border-radius:6px; padding:6px 10px; font-size:12px; outline:none;">
+                <option value="crm_priority_asc">Priority (Tier 1 → Tier 3)</option>
+                <option value="added_desc">Newest First</option>
+                <option value="company_asc">Company A-Z</option>
+                <option value="followers_desc">Most Followers</option>
+                <option value="score_desc">Highest Health Score</option>
+              </select>
+            </div>
+            <button class="btn-ghost-sm" id="btn-leads-clear-filters" style="margin-top:auto; height:32px; font-size:11px;" title="Reset all filters">✕ Clear</button>
           </div>
+
+          <!-- Bulk Actions Floating Bar -->
+          <div id="leads-bulk-bar" style="display:none; align-items:center; gap:12px; background:linear-gradient(135deg,rgba(99,102,241,0.25),rgba(59,130,246,0.3)); border:1px solid rgba(99,102,241,0.4); border-radius:10px; padding:8px 14px; margin-bottom:12px;">
+            <span id="leads-bulk-count" style="font-size:12px; font-weight:700; color:#fff;">0 selected</span>
+            <select id="leads-bulk-action" style="background:#0f172a; border:1px solid rgba(255,255,255,0.2); color:#fff; border-radius:6px; padding:5px 10px; font-size:12px;">
+              <option value="">— Choose Bulk Action —</option>
+              <option value="set_priority">Set Priority Tier</option>
+              <option value="set_stage">Set Stage</option>
+              <option value="blacklist">Blacklist</option>
+              <option value="delete">Delete Permanently</option>
+            </select>
+            <select id="leads-bulk-priority-val" style="display:none; background:#0f172a; border:1px solid rgba(255,255,255,0.2); color:#fff; border-radius:6px; padding:5px 10px; font-size:12px;">
+              <option value="1">⭐ Tier 1 — Next Send</option>
+              <option value="2">Tier 2 — Secondary</option>
+              <option value="3">Tier 3 — Backup</option>
+              <option value="0">Unassigned</option>
+            </select>
+            <select id="leads-bulk-stage-val" style="display:none; background:#0f172a; border:1px solid rgba(255,255,255,0.2); color:#fff; border-radius:6px; padding:5px 10px; font-size:12px;">
+              <option value="new">New</option>
+              <option value="contacted">Contacted</option>
+              <option value="opened">Opened</option>
+              <option value="replied">Replied</option>
+              <option value="closed">Closed</option>
+            </select>
+            <button class="btn-primary-sm" id="btn-leads-bulk-apply" style="padding:5px 14px; font-size:12px;">Apply Action</button>
+            <button class="btn-ghost-sm" id="btn-leads-bulk-cancel" style="margin-left:auto; font-size:11px;">Deselect All</button>
+          </div>
+
           <!-- Table -->
           <div class="data-table-wrap">
             <table class="data-table">
               <thead>
                 <tr>
+                  <th style="width:36px;"><input type="checkbox" id="leads-check-all" title="Select all leads on screen" /></th>
+                  <th style="width:130px;">Priority Tier</th>
                   <th>Prospect & Contact</th>
                   <th>Company & Niche</th>
-                  <th>Deliverability Health</th>
-                  <th>AI Personalized Pitch</th>
+                  <th>Country & Reach</th>
+                  <th>Deliverability</th>
+                  <th>AI Pitch</th>
                   <th>Stage</th>
-                  <th style="width: 50px; text-align: right;"></th>
+                  <th style="width:90px; text-align:right;">Actions</th>
                 </tr>
               </thead>
               <tbody id="leads-tbody">
-                <tr><td colspan="6" class="table-empty">Loading leads…</td></tr>
+                <tr><td colspan="9" class="table-empty">Loading leads…</td></tr>
               </tbody>
             </table>
           </div>
@@ -1953,8 +2031,41 @@
     </div>
   </div>
 
+  <!-- EMAIL OUTREACH PREVIEW MODAL -->
+  <div class="modal-overlay" id="backdrop-email-preview">
+    <div class="modal-box" style="max-width: 680px;">
+      <div class="modal-header">
+        <h3 id="em-preview-title">Email Outreach Preview</h3>
+        <button class="modal-close" id="btn-close-email-preview">✕</button>
+      </div>
 
+      <div style="font-size:12px; color:var(--text-muted); margin-bottom:12px;" id="em-preview-lead-info"></div>
 
+      <div style="display:flex; gap:8px; border-bottom:1px solid rgba(255,255,255,0.08); padding-bottom:10px; margin-bottom:14px;">
+        <button type="button" class="btn-ghost-sm" id="btn-tab-tpl-a" style="background:#6366f1; color:#fff;">Template A (Ad Spend)</button>
+        <button type="button" class="btn-ghost-sm" id="btn-tab-tpl-b">Template B (Creative 60D)</button>
+        <button type="button" class="btn-ghost-sm" id="btn-tab-tpl-f1">Follow Up 1</button>
+      </div>
+
+      <div class="form-field">
+        <label>Subject Line</label>
+        <input type="text" id="em-preview-subject" style="font-weight:600;" />
+      </div>
+
+      <div class="form-field">
+        <label>Email Body</label>
+        <textarea id="em-preview-body" rows="9" style="font-family:inherit; font-size:13px; line-height:1.5;"></textarea>
+      </div>
+
+      <div class="modal-footer" style="justify-content: space-between;">
+        <button type="button" class="btn-ghost-sm" id="btn-send-preview-test-email">📧 Send Test to f12x.studio@gmail.com</button>
+        <div style="display:flex; gap:8px;">
+          <button type="button" class="btn-ghost-sm" id="btn-copy-preview-email">📋 Copy Text</button>
+          <button type="button" class="btn-primary-sm" id="btn-close-preview-done">Done</button>
+        </div>
+      </div>
+    </div>
+  </div>
 
   <!-- EDIT IP NODE MODAL -->
   <div class="modal-overlay" id="backdrop-edit-ip-node">

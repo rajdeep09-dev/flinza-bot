@@ -468,16 +468,52 @@ def _valid_email_json(parsed) -> bool:
 
 def _fallback_opener(lead_info: dict, sender_name: str, reason: str) -> dict:
     name = lead_info.get("name") or "there"
+    first_name = lead_info.get("first_name") or (name.split()[0] if name else "there")
     company = lead_info.get("company") or "your brand"
-    niche = lead_info.get("niche") or "industry"
+    niche = (lead_info.get("niche") or "DTC Brand").lower()
+    followers = int(lead_info.get("instagram_followers") or lead_info.get("followers") or 0)
+
+    # Dynamic lifts based on brand scale and niche
+    if followers >= 200000:
+        order_lift = "35-50 more orders a day"
+        rev_lift = "$50k-$80k in monthly revenue"
+    elif "beauty" in niche or "skincare" in niche:
+        order_lift = "15-20 more orders a day"
+        rev_lift = "$28k-$45k in monthly revenue"
+    elif "apparel" in niche or "fashion" in niche:
+        order_lift = "20-30 more orders a day"
+        rev_lift = "$35k-$60k in monthly revenue"
+    elif "supplement" in niche or "health" in niche:
+        order_lift = "15-25 more orders a day"
+        rev_lift = "$30k-$50k in monthly revenue"
+    elif "jewelry" in niche:
+        order_lift = "10-18 more orders a day"
+        rev_lift = "$25k-$40k in monthly revenue"
+    else:
+        order_lift = "15-25 more orders a day"
+        rev_lift = "$30k-$50k in monthly revenue"
+
+    email_copy = lead_info.get("personalized_icebreaker") or lead_info.get("custom_hook") or f"I took a look at what you're building at {company} — love the creative direction and product positioning."
+    
+    resolved_sender = sender_name
+    if not resolved_sender or resolved_sender in ("Rajdeep", "The Team", "Flinza"):
+        from_email = lead_info.get("from_account") or lead_info.get("sender_email") or ""
+        if "@" in from_email:
+            resolved_sender = from_email.split("@")[0].split(".")[0].capitalize()
+        else:
+            resolved_sender = "Zoya"
+    sig = f"{resolved_sender}\nFlinza Media"
+
+    # User's Template A
     return {
-        "subject": f"Quick idea for {company}'s socials",
+        "subject": f"{first_name} — quick one on {company}'s ad spend",
         "body": (
-            f"Hey {name},\n\n"
-            f"Came across {company} while researching leaders in the {niche} space and loved what you're building.\n\n"
-            f"Noticed a couple of untapped angles on your social channels that could drive a lot more organic customer acquisition with short-form video.\n\n"
-            f"Mind if I send over a quick 2-minute breakdown with 3 content concepts we mapped out for you?\n\n"
-            f"Best,\n{sender_name}"
+            f"Hey {first_name},\n\n"
+            f"{email_copy}\n\n"
+            f"I checked out your ad account and found a gap you're leaving on the table. We think we can get you {order_lift} and {rev_lift}.\n\n"
+            f"Want me to show you what I found?\n\n"
+            f"{sig}\n\n"
+            f"PS: got a skincare brand 15 more orders a day in 5 weeks."
         ),
         "used_fallback": True,
         "fallback_reason": reason,
@@ -486,22 +522,27 @@ def _fallback_opener(lead_info: dict, sender_name: str, reason: str) -> dict:
 
 def _fallback_followup(lead_info: dict, num: int, sender_name: str, reason: str) -> dict:
     name = lead_info.get("name") or "there"
+    first_name = lead_info.get("first_name") or (name.split()[0] if name else "there")
     company = lead_info.get("company") or "your brand"
-    is_final = num >= int(db.get_setting("max_followups", "3"))
-    if is_final:
-        body = (
-            f"Hey {name}, just circling back one last time. Totally understand if social media marketing isn't a priority for {company} right now.\n\n"
-            f"Feel free to reach out down the road if you ever want to explore scaling your socials.\n\n"
-            f"Best,\n{sender_name}"
-        )
-    else:
-        body = (
-            f"Hey {name}, just bumping this up in case it got buried. Still have those 3 social media growth ideas ready for {company} if you'd like to take a look!\n\n"
-            f"Let me know if you're open to seeing them.\n\n"
-            f"Best,\n{sender_name}"
-        )
+    
+    resolved_sender = sender_name
+    if not resolved_sender or resolved_sender in ("Rajdeep", "The Team", "Flinza"):
+        from_email = lead_info.get("from_account") or lead_info.get("sender_email") or ""
+        if "@" in from_email:
+            resolved_sender = from_email.split("@")[0].split(".")[0].capitalize()
+        else:
+            resolved_sender = "Zoya"
+    sig = f"{resolved_sender}\nFlinza Media"
+
+    # User's Follow Up 1
+    body = (
+        f"Hi {first_name},\n\n"
+        f"Just circling up in case it got lost. Still happy to show you what we found for {company} if useful.\n\n"
+        f"Worth a quick look?\n\n"
+        f"{sig}"
+    )
     return {
-        "subject": f"Re: Quick idea for {company}'s socials",
+        "subject": f"Re: {first_name} — quick one on {company}'s ad spend",
         "body": body,
         "used_fallback": True,
         "fallback_reason": reason,

@@ -15,8 +15,11 @@ import asyncio
 import csv
 import io
 import math
-import time
-from datetime import datetime
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+from email.utils import formataddr, make_msgid, formatdate
+from datetime import datetime, date
 from pathlib import Path
 from typing import Optional
 from urllib.parse import urlparse
@@ -412,13 +415,82 @@ async def get_dashboard_stats():
 
 
 @app.get("/api/leads", dependencies=[_auth])
-async def list_leads(stage: Optional[str] = None, search: Optional[str] = None):
-    """Returns leads list with optional stage and text filter."""
-    if search:
-        leads = db.search_leads(search)
-    else:
-        leads = db.get_leads(stage=stage if stage and stage != "all" else None, limit=150)
-    return {"success": True, "count": len(leads), "leads": leads}
+async def list_leads(
+    stage: Optional[str] = None,
+    search: Optional[str] = None,
+    crm_priority: Optional[str] = None,
+    niche: Optional[str] = None,
+    country: Optional[str] = None,
+    revenue: Optional[str] = None,
+    company_size: Optional[str] = None,
+    icp_fit: Optional[str] = None,
+    deliverability_status: Optional[str] = None,
+    sort: Optional[str] = None,
+    limit: int = 500,
+):
+    """Returns advanced filtered leads list."""
+    prio_val = None
+    if crm_priority is not None and str(crm_priority) != "" and str(crm_priority) != "all":
+        try:
+            prio_val = int(crm_priority)
+        except ValueError:
+            pass
+
+    leads = db.get_leads(
+        stage=stage if stage and stage != "all" else None,
+        search=search,
+        crm_priority=prio_val,
+        niche=niche,
+        country=country,
+        revenue=revenue,
+        company_size=company_size,
+        icp_fit=icp_fit,
+        deliverability_status=deliverability_status,
+        sort_by=sort or "crm_priority_asc",
+        limit=limit,
+    )
+    return {"success": True, "count": len(leads), "leads": [dict(l) for l in leads]}
+
+
+@app.post("/api/leads/bulk", dependencies=[_auth])
+async def bulk_action_leads(request: Request):
+    """Bulk operations on selected leads (delete, set_priority, set_stage, set_niche, blacklist)."""
+    body = await request.json()
+    ids = body.get("ids", [])
+    action = body.get("action", "")
+    val = body.get("value")
+    res = db.bulk_update_leads(ids, action, val)
+    return res
+
+
+@app.patch("/api/leads/{lead_id}", dependencies=[_auth])
+@app.put("/api/leads/{lead_id}", dependencies=[_auth])
+async def update_lead_endpoint(lead_id: int, request: Request):
+    """Updates fields on an individual lead (priority tier, stage, niche, etc.)."""
+    body = await request.json()
+    allowed = ["name", "email", "company", "niche", "website", "linkedin", "stage",
+               "tier", "notes", "custom_hook", "crm_priority", "country", "revenue",
+               "company_size", "icp_fit", "sub_niche", "contact_title"]
+    sets = []
+    vals = []
+    for k in allowed:
+        if k in body:
+            sets.append(f"{k}=?")
+            vals.append(body[k])
+    if not sets:
+        raise HTTPException(status_code=400, detail="No valid fields to update")
+    vals.append(lead_id)
+    conn = db.get_db()
+    conn.execute(f"UPDATE leads SET {','.join(sets)} WHERE id=?", vals)
+    conn.commit()
+    conn.close()
+    return {"success": True, "id": lead_id}
+
+
+@app.get("/api/leads/filter-options", dependencies=[_auth])
+async def get_filter_options_endpoint():
+    """Returns distinct options for CRM filter dropdowns."""
+    return db.get_leads_filter_options()
 
 
 @app.post("/api/leads", dependencies=[_auth])
@@ -836,16 +908,164 @@ async def add_ses_sending_account(request: Request):
     return {"success": ok, "account": from_email, "provider": "amazon_ses"}
 
 
+def _sender_first_name(email_addr: str) -> str:
+    local = email_addr.split("@")[0]
+    return local.split(".")[0].split("_")[0].capitalize()
+
+
+@app.get("/api/accounts/next-sender", dependencies=[_auth])
+async def get_next_sender():
+    """Returns the first name of the next available mailbox in the pool."""
+    conn = db.get_db()
+    row = conn.execute("""
+        SELECT email FROM gmail_accounts
+        WHERE active=1
+        AND COALESCE(sent_today, 0) < COALESCE(daily_limit, 50)
+        ORDER BY COALESCE(last_used, '1970-01-01') ASC
+        LIMIT 1
+    """).fetchone()
+    conn.close()
+    if not row:
+        return {"success": False, "first_name": "Flinza"}
+    first_name = _sender_first_name(row["email"])
+    return {"success": True, "first_name": first_name, "email": row["email"]}
+
+
+@app.get("/api/settings/sending-hours", dependencies=[_auth])
+async def get_sending_hours():
+    conn = db.get_db()
+    row = conn.execute("SELECT value FROM settings WHERE key='sending_hours'").fetchone()
+    conn.close()
+    if row:
+        return {"success": True, "sending_hours": json.loads(row[0])}
+    defaults = {
+        "US": {"start": "09:00", "end": "18:00", "timezone": "America/New_York", "enabled": True},
+        "UK": {"start": "09:00", "end": "17:30", "timezone": "Europe/London",   "enabled": True},
+        "UAE": {"start": "10:00", "end": "17:00", "timezone": "Asia/Dubai",     "enabled": True},
+        "AU": {"start": "09:00", "end": "17:00", "timezone": "Australia/Sydney","enabled": True},
+        "CA": {"start": "09:00", "end": "18:00", "timezone": "America/Toronto", "enabled": True},
+        "IN": {"start": "10:00", "end": "19:00", "timezone": "Asia/Kolkata",    "enabled": True},
+        "default": {"start": "09:00", "end": "18:00", "timezone": "UTC",        "enabled": True},
+    }
+    return {"success": True, "sending_hours": defaults}
+
+
+@app.post("/api/settings/sending-hours", dependencies=[_auth])
+async def save_sending_hours(request: Request):
+    body = await request.json()
+    hours = body.get("sending_hours", {})
+    conn = db.get_db()
+    conn.execute(
+        "INSERT OR REPLACE INTO settings (key, value) VALUES ('sending_hours', ?)",
+        (json.dumps(hours),)
+    )
+    conn.commit()
+    conn.close()
+    return {"success": True}
+
+
 @app.post("/api/accounts/test", dependencies=[_auth])
 async def test_account_creds(request: Request):
-    """Tests authentication for an account."""
+    """Tests authentication or sends a live test email with failover and dynamic signature."""
     body = await request.json()
-    email = body.get("email")
-    pwd = body.get("password")
-    host = body.get("smtp_host") or "smtp.gmail.com"
-    port = int(body.get("smtp_port") or 587)
-    res = email_sender.test_account_connection(email, pwd, smtp_host=host, smtp_port=port)
-    return res
+    to_email = body.get("to_email")
+    account_email = body.get("email")
+
+    if not to_email:
+        # Credential test only
+        pwd = body.get("password")
+        host = body.get("smtp_host") or "mail.spacemail.com"
+        port = int(body.get("smtp_port") or 465)
+        res = email_sender.test_account_connection(account_email, pwd, smtp_host=host, smtp_port=port)
+        return res
+
+    # Live test send requested
+    conn = db.get_db()
+    if account_email:
+        rows = conn.execute(
+            "SELECT * FROM gmail_accounts WHERE email=? AND active=1",
+            (account_email,)
+        ).fetchall()
+    else:
+        rows = conn.execute("""
+            SELECT * FROM gmail_accounts
+            WHERE active=1
+            AND COALESCE(sent_today, 0) < COALESCE(daily_limit, 50)
+            ORDER BY COALESCE(last_used, '1970-01-01') ASC
+            LIMIT 3
+        """).fetchall()
+    conn.close()
+
+    if not rows:
+        return {"success": False, "error": "No active mailbox with capacity found"}
+
+    last_error = None
+    for row in rows:
+        acc = dict(row)
+        email_addr = acc["email"]
+        password = acc.get("smtp_pass") or acc.get("app_password")
+        smtp_host = acc.get("smtp_host", "mail.spacemail.com")
+        smtp_port = int(acc.get("smtp_port", 465))
+
+        sender_first = _sender_first_name(email_addr)
+        display_name = f"{sender_first} from Flinza"
+
+        try:
+            custom_subject = body.get("subject")
+            custom_body = body.get("body")
+
+            if custom_body:
+                import re as _re
+                custom_body = _re.sub(r'\bRajdeep\b', sender_first, custom_body)
+
+            msg = MIMEMultipart("alternative")
+            msg["From"] = formataddr((display_name, email_addr))
+            msg["To"] = to_email
+            msg["Subject"] = custom_subject or f"✅ Test Email from {email_addr}"
+            msg["Date"] = formatdate(localtime=True)
+            msg["Message-ID"] = make_msgid(domain=email_addr.split("@")[-1])
+
+            body_text = custom_body or (
+                f"This is a live test email sent from the Flinza outreach system.\n\n"
+                f"Sender: {display_name} <{email_addr}>\n"
+                f"SMTP: {smtp_host}:{smtp_port}\n\n"
+                f"✅ Sending pipeline is working!\n\n— {sender_first}\nFlinza Media"
+            )
+            msg.attach(MIMEText(body_text, "plain", "utf-8"))
+
+            if smtp_port == 465:
+                with smtplib.SMTP_SSL(smtp_host, smtp_port, timeout=25) as server:
+                    server.login(email_addr, password)
+                    server.sendmail(email_addr, [to_email], msg.as_string())
+            else:
+                with smtplib.SMTP(smtp_host, smtp_port, timeout=25) as server:
+                    server.ehlo()
+                    server.starttls()
+                    server.ehlo()
+                    server.login(email_addr, password)
+                    server.sendmail(email_addr, [to_email], msg.as_string())
+
+            conn2 = db.get_db()
+            conn2.execute(
+                "UPDATE gmail_accounts SET last_used=?, sent_today=COALESCE(sent_today,0)+1 WHERE email=?",
+                (datetime.now().isoformat(), email_addr)
+            )
+            conn2.commit()
+            conn2.close()
+
+            return {
+                "success": True,
+                "from": email_addr,
+                "sender_name": sender_first,
+                "to": to_email,
+                "message_id": msg["Message-ID"],
+                "smtp": f"{smtp_host}:{smtp_port}"
+            }
+        except Exception as e:
+            last_error = f"{email_addr}: {str(e)}"
+            continue
+
+    return {"success": False, "error": last_error or "All candidate mailboxes failed"}
 
 
 # ── Inbound Email Webhook (Cloudflare Routing Worker) ──────────

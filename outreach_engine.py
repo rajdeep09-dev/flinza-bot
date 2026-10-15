@@ -217,8 +217,9 @@ def preview_spin_variants(text: str, count: int = 5, mock_lead: Optional[dict] =
 def apply_merge_tags(text: str, lead: dict, sender_name: str = "") -> str:
     """
     Replaces {{merge_tags}} with lead-specific values.
-    Supports: name, first_name, email, company, niche, handle,
-              sender_name, weekday, month, year
+    Supports: name, first_name, firstName, email, company, companyName, niche, handle,
+              sender_name, accountSignature, Email Copy, orderLift, revenueLift,
+              weekday, month, year
     """
     if not text:
         return ""
@@ -226,25 +227,78 @@ def apply_merge_tags(text: str, lead: dict, sender_name: str = "") -> str:
     name = lead.get("name", "") or ""
     first_name = lead.get("first_name") or (name.split()[0] if name else "there")
     name = name or "there"
+    company = lead.get("company", "your brand") or "your brand"
+    niche = (lead.get("niche", "DTC Brand") or "DTC Brand").lower()
+    followers = int(lead.get("instagram_followers") or lead.get("followers") or 0)
+    
+    # Calculate lifts based on niche and follower tier
+    if followers >= 200000:
+        order_lift = "35-50 more orders a day"
+        revenue_lift = "$50k-$80k in monthly revenue"
+    elif "beauty" in niche or "skincare" in niche:
+        order_lift = "15-20 more orders a day"
+        revenue_lift = "$28k-$45k in monthly revenue"
+    elif "apparel" in niche or "fashion" in niche:
+        order_lift = "20-30 more orders a day"
+        revenue_lift = "$35k-$60k in monthly revenue"
+    elif "supplement" in niche or "health" in niche:
+        order_lift = "15-25 more orders a day"
+        revenue_lift = "$30k-$50k in monthly revenue"
+    elif "jewelry" in niche:
+        order_lift = "10-18 more orders a day"
+        revenue_lift = "$25k-$40k in monthly revenue"
+    else:
+        order_lift = "15-25 more orders a day"
+        revenue_lift = "$30k-$50k in monthly revenue"
+
+    email_copy = lead.get("personalized_icebreaker") or lead.get("custom_hook") or f"Loved what you're building at {company} — your creative direction and product positioning really stand out."
+    
+    # Sign off using the first name of the mailbox being used
+    if sender_name:
+        sender = sender_name
+    else:
+        from_acc = lead.get("from_account") or lead.get("sender_email") or ""
+        if "@" in from_acc:
+            sender = from_acc.split("@")[0].split(".")[0].capitalize()
+        else:
+            try:
+                acc = mailbox_pool.select_next_mailbox()
+                sender = acc["email"].split("@")[0].split(".")[0].capitalize() if acc and acc.get("email") else "Zoya"
+            except Exception:
+                sender = "Zoya"
+
+    signature = f"{sender}\nFlinza Media"
     now = datetime.now()
 
     tags = {
-        "{{name}}":        name,
-        "{{first_name}}":  first_name,
-        "{{email}}":       lead.get("email", ""),
-        "{{company}}":     lead.get("company", "your company") or "your company",
-        "{{niche}}":       lead.get("niche", "your niche") or "your niche",
-        "{{handle}}":      lead.get("handle", "") or "",
-        "{{sender_name}}": sender_name or db.get_setting("sender_name", "Flinza"),
-        "{{weekday}}":     now.strftime("%A"),
-        "{{month}}":       now.strftime("%B"),
-        "{{year}}":        str(now.year),
+        "{{name}}":             name,
+        "{{first_name}}":       first_name,
+        "{{firstName}}":        first_name,
+        "{{firstname}}":        first_name,
+        "{{email}}":            lead.get("email", ""),
+        "{{company}}":          company,
+        "{{companyName}}":      company,
+        "{{companyname}}":      company,
+        "{{niche}}":            lead.get("niche", "DTC Brand") or "DTC Brand",
+        "{{handle}}":           lead.get("handle", "") or "",
+        "{{Email Copy}}":       email_copy,
+        "{{email_copy}}":       email_copy,
+        "{{orderLift}}":        order_lift,
+        "{{order_lift}}":       order_lift,
+        "{{revenueLift}}":      revenue_lift,
+        "{{revenue_lift}}":     revenue_lift,
+        "{{accountSignature}}": signature,
+        "{{signature}}":        signature,
+        "{{sender_name}}":      sender,
+        "{{weekday}}":          now.strftime("%A"),
+        "{{month}}":            now.strftime("%B"),
+        "{{year}}":             str(now.year),
     }
 
     for tag, value in tags.items():
         text = text.replace(tag, str(value))
 
-    # Also handle single-brace tags {first_name}, {company}
+    # Also handle single-brace tags
     for tag, value in tags.items():
         single = tag[1:-1]
         text = text.replace(single, str(value))
@@ -725,18 +779,24 @@ def launch_campaign(campaign_id: int = 1, dry_run: bool = False) -> Dict[str, An
             skipped.append({"email": lead["email"], "reason": "no accounts with capacity"})
             continue
 
+        # Extract mailbox first name for the sign-off
+        acct_from = account.get("from_email", "")
+        mailbox_sender_name = acct_from.split("@")[0].split(".")[0].capitalize() if "@" in acct_from else sender_name
+
         # Check if lead has a 100% unique AI hyper-personalized draft!
         if lead.get("ai_draft") and lead.get("ai_subject"):
             subject = lead["ai_subject"]
             body = lead["ai_draft"]
         else:
             # Personalize with lead-specific seed (reproducible for that lead)
+            lead_dict = dict(lead)
+            lead_dict["from_account"] = acct_from
             seed = int(hashlib.md5(lead["email"].encode()).hexdigest(), 16) % 10000
             subject, body = personalize(
                 step_1.get("subject_a", ""),
                 step_1.get("body_a", ""),
-                lead=dict(lead),
-                sender_name=sender_name,
+                lead=lead_dict,
+                sender_name=mailbox_sender_name,
                 seed=seed,
             )
 
