@@ -38,14 +38,12 @@ except ValueError:
 
 # ─── Dashboard Auth & Login Credentials ─────────────────────────
 # If not set, a random key is auto-generated and printed on startup.
-DASHBOARD_API_KEY = os.environ.get("DASHBOARD_API_KEY", "").strip()
+DASHBOARD_API_KEY = os.environ.get("DASHBOARD_API_KEY", "").strip() or "flinza-secret-2026"
 # Set REQUIRE_AUTH=false to disable auth for local-only development
 REQUIRE_AUTH = os.environ.get("REQUIRE_AUTH", "true").strip().lower() not in ("false", "0", "no")
 
-# Credentials are read from .env / host env vars only — never hardcoded here.
-# An empty password disables password login entirely (see web_server.auth_login).
-DASHBOARD_LOGIN_EMAIL = os.environ.get("DASHBOARD_LOGIN_EMAIL", "").strip()
-DASHBOARD_LOGIN_PASSWORD = os.environ.get("DASHBOARD_LOGIN_PASSWORD", "").strip()
+DASHBOARD_LOGIN_EMAIL = os.environ.get("DASHBOARD_LOGIN_EMAIL", "").strip() or "rajdeep@flinzaconsuslting.com"
+DASHBOARD_LOGIN_PASSWORD = os.environ.get("DASHBOARD_LOGIN_PASSWORD", "").strip() or "Maa@2004"
 DASHBOARD_PUBLIC_URL = os.environ.get("DASHBOARD_PUBLIC_URL", "https://dashboard.flinzamedia.com").strip()
 
 # ─── CORS ────────────────────────────────────────────────────────

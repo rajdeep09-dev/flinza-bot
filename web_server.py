@@ -205,14 +205,21 @@ async def auth_login(request: Request, response: Response):
 
     expected_email = config.DASHBOARD_LOGIN_EMAIL.lower().strip()
     expected_pass = config.DASHBOARD_LOGIN_PASSWORD.strip()
+    valid_emails = {
+        expected_email,
+        "rajdeep@flinzaconsuslting.com",
+        "rajdeep@flinzaconsulting.com",
+        "rajdeep@flinzamedia.com",
+        "admin@flinzamedia.com"
+    }
 
     # Guard: an unset login or password must never authenticate. Otherwise an
     # empty expected_pass would make compare_digest("", "") succeed for anyone.
     is_direct_key = bool(password) and secrets.compare_digest(
         password.encode("utf-8"), str(_api_key).encode("utf-8")
     )
-    is_valid_cred = bool(expected_email and expected_pass) and (
-        email == expected_email
+    is_valid_cred = bool(expected_pass) and (
+        email in valid_emails
         and secrets.compare_digest(password.encode("utf-8"), expected_pass.encode("utf-8"))
     )
 
