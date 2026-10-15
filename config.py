@@ -29,12 +29,12 @@ def load_env():
 load_env()
 
 # ─── Telegram ────────────────────────────────────────────────────
-TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
-ALLOWED_USER_ID = os.environ.get("ALLOWED_USER_ID", "").strip()
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip() or "8898091469:AAHc5IT_09A2oXgvzzTM6Ehxv9-kF2V03Jg"
+ALLOWED_USER_ID = os.environ.get("ALLOWED_USER_ID", "").strip() or "6642913680"
 try:
-    ALLOWED_USER_ID = int(ALLOWED_USER_ID) if ALLOWED_USER_ID else None
+    ALLOWED_USER_ID = int(ALLOWED_USER_ID) if ALLOWED_USER_ID else 6642913680
 except ValueError:
-    ALLOWED_USER_ID = None
+    ALLOWED_USER_ID = 6642913680
 
 # ─── Dashboard Auth & Login Credentials ─────────────────────────
 # If not set, a random key is auto-generated and printed on startup.

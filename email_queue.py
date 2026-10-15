@@ -193,17 +193,30 @@ def _process_loop(status_callback=None):
 
             if result["success"]:
                 db.mark_email_sent(email_id, result.get("message_id"), from_addr)
+                lead_name = ""
+                lead_company = ""
                 if lead_id:
                     db.add_conversation_message(lead_id, "us", f"[{msg_type.upper()}] Subject: {subject}\n\n{body}")
                     # Update lead stage if still 'new'
                     lead = db.get_lead(lead_id)
-                    if lead and lead["stage"] == "new":
-                        db.update_lead_stage(lead_id, "contacted")
+                    if lead:
+                        lead_name = lead.get("name") or ""
+                        lead_company = lead.get("company") or ""
+                        if lead["stage"] == "new":
+                            db.update_lead_stage(lead_id, "contacted")
                     # Schedule first followup if opener
                     if msg_type == "opener":
                         db.schedule_first_followup(lead_id)
                 db.log_activity("sent", f"To: {to_email} | From: {account['from_email']}{node_tag}")
                 _notify(status_callback, f"✅ Sent → {to_email}{node_tag}")
+                email_sender.notify_telegram_outbound(
+                    to_email=to_email,
+                    from_addr=from_addr,
+                    subject=subject,
+                    lead_name=lead_name,
+                    company=lead_company,
+                    msg_type="Campaign"
+                )
             else:
                 db.mark_email_failed(email_id, result.get("error"))
                 _notify(status_callback, f"❌ Failed → {to_email}: {result.get('error')}")

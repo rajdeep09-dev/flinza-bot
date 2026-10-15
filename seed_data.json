@@ -19950,7 +19950,44 @@
       "added_at": "2026-09-05 17:45:57"
     }
   ],
-  "emails_sent": [],
+  "emails_sent": [
+    {
+      "id": 1,
+      "lead_id": null,
+      "from_account": "zoya@flinzamedia.com",
+      "to_email": "rajdep.f12x@gmail.com",
+      "subject": "Quick question regarding your setup",
+      "body": "Hi,\n\nWanted to send a quick note your way.\n\nJust wanted to reach out directly to say hello and see how things are going with your current projects.\n\nWould love to connect when you have a moment.\n\nAll the best,",
+      "message_type": "quick_test",
+      "status": "sent",
+      "queued_at": "2026-10-15 08:01:34",
+      "sent_at": "2026-10-15T13:31:39.664057",
+      "error_msg": null,
+      "message_id": "<179205129492.7677.11629220175888387635@flinzamedia.com>",
+      "is_starred": 0,
+      "provider": "spacemail",
+      "campaign_id": null,
+      "scheduled_for": null
+    },
+    {
+      "id": 2,
+      "lead_id": null,
+      "from_account": "zoya@flinzamedia.com",
+      "to_email": "f12x.studio@gmail.com",
+      "subject": "Flinza Outreach Test - Direct Dispatch",
+      "body": "Hi Rajdeep,\n\nThis is a direct SMTP test to f12x.studio@gmail.com.\nPlease check Inbox and Spam folder.\n\nBest,\nFlinza Team",
+      "message_type": "manual_webmail",
+      "status": "sent",
+      "queued_at": "2026-10-15 14:23:10",
+      "sent_at": "2026-10-15T14:23:10.000000",
+      "error_msg": null,
+      "message_id": "<179207419066.14716.11114187692771338860@flinzamedia.com>",
+      "is_starred": 0,
+      "provider": "spacemail",
+      "campaign_id": null,
+      "scheduled_for": null
+    }
+  ],
   "replies": [
     {
       "id": 1,

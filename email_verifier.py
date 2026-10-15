@@ -62,16 +62,65 @@ def is_disposable(email: str) -> bool:
     return parts[1] in DISPOSABLE_DOMAINS
 
 
+# Known MX fallbacks for top webmail providers (prevents false negatives if DNS resolver times out)
+KNOWN_MX = {
+    "gmail.com": ["gmail-smtp-in.l.google.com", "alt1.gmail-smtp-in.l.google.com"],
+    "googlemail.com": ["gmail-smtp-in.l.google.com"],
+    "yahoo.com": ["mta5.am0.yahoodns.net", "mta6.am0.yahoodns.net"],
+    "ymail.com": ["mta5.am0.yahoodns.net"],
+    "outlook.com": ["outlook-com.olc.protection.outlook.com"],
+    "hotmail.com": ["hotmail-com.olc.protection.outlook.com"],
+    "live.com": ["outlook-com.olc.protection.outlook.com"],
+    "msn.com": ["msn-com.olc.protection.outlook.com"],
+    "icloud.com": ["mx1.mail.icloud.com", "mx2.mail.icloud.com"],
+    "me.com": ["mx1.mail.icloud.com"],
+    "mac.com": ["mx1.mail.icloud.com"],
+    "aol.com": ["mx-aol.mail.gm0.yahoodns.net"],
+    "zoho.com": ["mx.zoho.com", "mx2.zoho.com"],
+    "proton.me": ["mail.protonmail.ch"],
+    "protonmail.com": ["mail.protonmail.ch"],
+    "flinzamedia.com": ["mail.spacemail.com"],
+}
+
+
 def resolve_mx_hosts(domain: str) -> List[str]:
     """Resolves DNS MX records for domain, sorted by priority."""
-    try:
-        answers = dns.resolver.resolve(domain, "MX", lifetime=4.0)
-        # Sort by preference/priority
-        sorted_records = sorted(answers, key=lambda r: r.preference)
-        return [str(r.exchange).rstrip(".") for r in sorted_records]
-    except (dns.resolver.NoAnswer, dns.resolver.NXDOMAIN, dns.resolver.Timeout, Exception) as e:
-        logger.debug(f"MX lookup error for {domain}: {e}")
+    clean_domain = (domain or "").strip().lower()
+    if not clean_domain:
         return []
+
+    if clean_domain in KNOWN_MX:
+        return KNOWN_MX[clean_domain]
+
+    # Try custom resolver with public DNS (required on Termux / containers lacking /etc/resolv.conf)
+    try:
+        resolver = dns.resolver.Resolver(configure=False)
+        resolver.nameservers = ["8.8.8.8", "1.1.1.1", "8.8.4.4", "1.0.0.1"]
+        resolver.timeout = 2.5
+        resolver.lifetime = 2.5
+        answers = resolver.resolve(clean_domain, "MX")
+        sorted_records = sorted(answers, key=lambda r: r.preference)
+        hosts = [str(r.exchange).rstrip(".") for r in sorted_records]
+        if hosts:
+            return hosts
+    except Exception as e:
+        logger.debug(f"Custom DNS resolver error for {clean_domain}: {e}")
+
+    # Fallback to system resolver if available
+    try:
+        answers = dns.resolver.resolve(clean_domain, "MX", lifetime=2.5)
+        sorted_records = sorted(answers, key=lambda r: r.preference)
+        hosts = [str(r.exchange).rstrip(".") for r in sorted_records]
+        if hosts:
+            return hosts
+    except Exception as e:
+        logger.debug(f"Default DNS resolver error for {clean_domain}: {e}")
+
+    # Fallback for known free webmail
+    if clean_domain in FREE_WEBMAIL_DOMAINS:
+        return [f"mail.{clean_domain}"]
+
+    return []
 
 
 def ping_smtp_mailbox(mx_host: str, target_email: str, sender_email: str = "verify@flinza.io", timeout: int = 5) -> Dict[str, Any]:

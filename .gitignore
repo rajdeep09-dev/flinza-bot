@@ -47,6 +47,7 @@ scratch/
 mailflare_ref/
 .system_generated/
 *.log
+cookies.txt
 
 # OS Artifacts
 .DS_Store

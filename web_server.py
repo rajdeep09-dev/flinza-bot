@@ -1046,10 +1046,26 @@ async def test_account_creds(request: Request):
     msg_str = msg.as_string()
     msg_id = msg["Message-ID"]
     msg_subj = msg["Subject"]
+    now_ts = datetime.now().isoformat()
+
+    # Pre-insert into emails_sent immediately so Sent folder reflects it instantly
+    conn2 = db.get_db()
+    conn2.execute(
+        """INSERT INTO emails_sent (from_account, to_email, subject, body, status, message_id, sent_at, provider)
+           VALUES (?, ?, ?, ?, 'sent', ?, ?, 'spacemail')""",
+        (email_addr, to_email, msg_subj, body_text, msg_id, now_ts)
+    )
+    conn2.execute(
+        "UPDATE gmail_accounts SET last_used=?, sent_today=COALESCE(sent_today,0)+1 WHERE email=?",
+        (now_ts, email_addr)
+    )
+    conn2.commit()
+    conn2.close()
 
     def _send_sync():
         if smtp_port == 465:
             with smtplib.SMTP_SSL(smtp_host, smtp_port, timeout=6) as server:
+                server.ehlo()
                 server.login(email_addr, password)
                 server.sendmail(email_addr, [to_email], msg_str)
         else:
@@ -1060,22 +1076,16 @@ async def test_account_creds(request: Request):
                 server.login(email_addr, password)
                 server.sendmail(email_addr, [to_email], msg_str)
 
-        conn2 = db.get_db()
-        conn2.execute(
-            "UPDATE gmail_accounts SET last_used=?, sent_today=COALESCE(sent_today,0)+1 WHERE email=?",
-            (datetime.now().isoformat(), email_addr)
-        )
-        conn2.execute(
-            """INSERT INTO emails_sent (from_account, to_email, subject, body, status, message_id, sent_at, provider)
-               VALUES (?, ?, ?, ?, 'sent', ?, ?, 'spacemail')""",
-            (email_addr, to_email, msg_subj, body_text, msg_id, datetime.now().isoformat())
-        )
-        conn2.commit()
-        conn2.close()
         try:
             db.log_activity("test_send", f"To: {to_email} | From: {email_addr}")
         except Exception:
             pass
+        email_sender.notify_telegram_outbound(
+            to_email=to_email,
+            from_addr=email_addr,
+            subject=msg_subj,
+            msg_type="Test Email"
+        )
         return True
 
     start_t = time.time()
@@ -1889,6 +1899,27 @@ async def compose_and_send_email(request: Request):
         from_addr = account.get("from_email") or account.get("smtp_user") or "outreach"
         caller_ip = _get_caller_ip(request)
 
+        # 1. Pre-generate Message-ID & timestamp
+        domain = from_addr.split("@")[-1] if "@" in from_addr else "flinzamedia.com"
+        msg_id = make_msgid(domain=domain)
+        now_ts = datetime.now().isoformat()
+
+        # 2. Immediately log into emails_sent with status='sent' and sent_at=now
+        # This guarantees the Sent folder and counter NEVER show 0 even before background SMTP finishes!
+        eid = db.log_email(
+            lead_id=lead_id,
+            from_account=from_addr,
+            to_email=to_email,
+            subject=subject or "Hello",
+            body=body,
+            message_type="manual_webmail",
+            status="sent"
+        )
+        conn = db.get_db()
+        conn.execute("UPDATE emails_sent SET sent_at=?, message_id=? WHERE id=?", (now_ts, msg_id, eid))
+        conn.commit()
+        conn.close()
+
         def _do_send():
             res = email_sender.send_email_now(
                 to_email=to_email,
@@ -1897,20 +1928,19 @@ async def compose_and_send_email(request: Request):
                 account=account,
                 extra_headers=extra_headers if extra_headers else None,
             )
-            msg_id = res.get("message_id") or f"manual-{int(datetime.utcnow().timestamp())}"
-            eid = db.log_email(
-                lead_id=lead_id,
-                from_account=from_addr,
-                to_email=to_email,
-                subject=subject or "Hello",
-                body=body,
-                message_type="manual_webmail",
-                status="sent" if res.get("success") else "failed"
-            )
             if res.get("success"):
-                db.mark_email_sent(email_id=eid, message_id=msg_id, from_account=from_addr)
+                actual_msg_id = res.get("message_id") or msg_id
+                db.mark_email_sent(email_id=eid, message_id=actual_msg_id, from_account=from_addr, provider=res.get("provider"))
+                email_sender.notify_telegram_outbound(
+                    to_email=to_email,
+                    from_addr=from_addr,
+                    subject=subject,
+                    lead_name=lead["name"] if lead else to_email,
+                    company=lead["company"] if lead else "",
+                    msg_type="Webmail"
+                )
             else:
-                db.mark_email_failed(email_id=eid, error=res.get("error", "Send failed"))
+                db.mark_email_failed(email_id=eid, error_msg=res.get("error", "Send failed"))
 
             try:
                 db.record_ip_node_send(caller_ip)

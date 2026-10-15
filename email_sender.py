@@ -546,6 +546,12 @@ def send_test_email(to_email: str, from_account_email: str = None, target_accoun
     if result.get("success"):
         db.mark_email_sent(email_id, result.get("message_id"), account["from_email"], provider=result.get("provider"))
         db.log_activity("test_email_sent", f"To: {to_email} | From: {account['from_email']} | Provider: {result.get('provider')}")
+        notify_telegram_outbound(
+            to_email=to_email,
+            from_addr=account["from_email"],
+            subject=subject,
+            msg_type="Test Email"
+        )
     else:
         db.mark_email_failed(email_id, result.get("error", "Test send error"))
     return result
@@ -620,6 +626,17 @@ def send_with_logging(lead_id: int, to_email: str, subject: str, body: str,
         db.mark_email_sent(email_id, result.get("message_id"), account["from_email"], provider=result.get("provider"))
         db.add_conversation_message(lead_id, "us", f"[{message_type.upper()}] Subject: {subject}\n\n{body}")
         db.log_activity("email_sent", f"To: {to_email} | Type: {message_type} | From: {account['from_email']} | Provider: {result.get('provider')}")
+        lead = db.get_lead(lead_id) if lead_id else None
+        lead_name = lead.get("name") if lead else ""
+        company = lead.get("company") if lead else ""
+        notify_telegram_outbound(
+            to_email=to_email,
+            from_addr=account["from_email"],
+            subject=subject,
+            lead_name=lead_name,
+            company=company,
+            msg_type="Followup" if "followup" in message_type else "Campaign"
+        )
         return {
             "success": True,
             "email_id": email_id,
@@ -634,6 +651,56 @@ def send_with_logging(lead_id: int, to_email: str, subject: str, body: str,
             "email_id": email_id,
             "error": result.get("error"),
         }
+
+
+def notify_telegram_outbound(to_email: str, from_addr: str, subject: str, lead_name: str = "", company: str = "", msg_type: str = "Campaign"):
+    """
+    Sends a compact Telegram notification to admin after an email is dispatched to a lead.
+    Runs asynchronously in a background daemon thread so it never delays email queues or HTTP handlers.
+    """
+    def _send():
+        try:
+            token = getattr(config, "TELEGRAM_BOT_TOKEN", "") or "8898091469:AAHc5IT_09A2oXgvzzTM6Ehxv9-kF2V03Jg"
+            uid = getattr(config, "ALLOWED_USER_ID", "") or 6642913680
+            if not token or not uid:
+                return
+
+            clean_sub = (subject or "").strip()
+            if len(clean_sub) > 60:
+                clean_sub = clean_sub[:57] + "..."
+
+            is_campaign = "campaign" in msg_type.lower() or msg_type in ("opener", "followup")
+            icon = "🚀" if is_campaign else "✉️"
+            type_label = "Campaign Email" if is_campaign else msg_type.title()
+
+            lead_str = ""
+            if lead_name and lead_name != to_email:
+                lead_str = f"👤 <b>Lead:</b> {lead_name}" + (f" ({company})" if company else "") + "\n"
+            elif company:
+                lead_str = f"🏢 <b>Company:</b> {company}\n"
+
+            msg = (
+                f"{icon} <b>{type_label} Dispatched!</b>\n"
+                f"{lead_str}"
+                f"📧 <b>To:</b> <code>{to_email}</code>\n"
+                f"📬 <b>From:</b> <code>{from_addr}</code>\n"
+                f"📌 <b>Subject:</b> {clean_sub}"
+            )
+
+            import requests
+            requests.post(
+                f"https://api.telegram.org/bot{token}/sendMessage",
+                json={
+                    "chat_id": int(uid),
+                    "text": msg,
+                    "parse_mode": "HTML"
+                },
+                timeout=5
+            )
+        except Exception as e:
+            logger.debug(f"Telegram notification ignored: {e}")
+
+    threading.Thread(target=_send, daemon=True, name="TelegramOutboundAlert").start()
 
 
 # ═══════════════════════════════════════════════════════════════

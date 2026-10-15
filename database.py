@@ -1325,11 +1325,12 @@ def delete_lead(lead_id: int):
 def log_email(lead_id, from_account, to_email, subject, body,
               message_type="opener", status="queued", scheduled_for=None, campaign_id=None):
     conn = get_db()
+    sent_at = datetime.now().isoformat() if status == "sent" else None
     cur = conn.execute(
         """INSERT INTO emails_sent
-           (lead_id, from_account, to_email, subject, body, message_type, status, scheduled_for, campaign_id)
-           VALUES (?,?,?,?,?,?,?,?,?)""",
-        (lead_id, from_account, to_email, subject, body, message_type, status, scheduled_for, campaign_id)
+           (lead_id, from_account, to_email, subject, body, message_type, status, scheduled_for, campaign_id, sent_at)
+           VALUES (?,?,?,?,?,?,?,?,?,?)""",
+        (lead_id, from_account, to_email, subject, body, message_type, status, scheduled_for, campaign_id, sent_at)
     )
     conn.commit()
     eid = cur.lastrowid
@@ -1356,7 +1357,7 @@ def mark_email_sent(email_id: int, message_id: str = None, from_account: str = N
     conn = get_db()
     conn.execute(
         """UPDATE emails_sent
-           SET status='sent', sent_at=?, message_id=?,
+           SET status='sent', sent_at=COALESCE(sent_at, ?), message_id=?,
                from_account=COALESCE(?, from_account),
                provider=COALESCE(?, provider)
            WHERE id=?""",
