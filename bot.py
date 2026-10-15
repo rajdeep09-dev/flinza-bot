@@ -960,26 +960,28 @@ async def cmd_accounts(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await reply(update, "No accounts yet. Use /addaccount")
         return
 
-    lines = ["<b>📧 Gmail Accounts</b>\n"]
+    lines = ["<b>📮 Sending Fleet (Spacemail Mailboxes)</b>\n"]
     for a in accs:
-        status = "🟢" if a["active"] else "🔴"
-        sent   = a["sent_today"] or 0
-        limit  = a["daily_limit"]
-        proxy  = " 🌐" if a["proxy_url"] else ""
-        last   = fmt_dt(a["last_used"])
+        ad     = dict(a)
+        status = "🟢" if ad.get("active", 1) else "🔴"
+        sent   = ad.get("sent_today") or 0
+        limit  = ad.get("daily_limit") or 50
+        proxy  = " 🌐" if ad.get("proxy_url") else ""
+        last   = fmt_dt(ad.get("last_used"))
         lines.append(
-            f"{status} <code>{a['email']}</code>{proxy}\n"
+            f"{status} <code>{ad.get('email', '')}</code>{proxy}\n"
             f"   {sent}/{limit} sent today | last used: {last}"
         )
 
     if aliases:
         lines.append("\n<b>📮 SMTP Aliases</b>\n")
         for al in aliases:
-            status = "🟢" if al["is_active"] else "🔴"
-            src    = f" [{al['source']}]" if al["source"] != "manual" else ""
+            ald    = dict(al)
+            status = "🟢" if ald.get("is_active", 1) else "🔴"
+            src    = f" [{ald.get('source')}]" if ald.get("source") != "manual" else ""
             lines.append(
-                f"{status} <code>{al['alias']}</code>{src}\n"
-                f"   {al['daily_sent']}/{al['daily_limit']} today | master: {al['smtp_user']}"
+                f"{status} <code>{ald.get('alias', '')}</code>{src}\n"
+                f"   {ald.get('daily_sent', 0)}/{ald.get('daily_limit', 20)} today | master: {ald.get('smtp_user', '')}"
             )
 
     remaining = db.total_remaining_today()

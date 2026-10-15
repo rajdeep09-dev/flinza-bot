@@ -412,6 +412,7 @@ def init_db():
         ("icp_fit", "TEXT"),
         ("instagram_handle", "TEXT"),
         ("instagram_followers", "INTEGER DEFAULT 0"),
+        ("follower_band", "TEXT"),
         ("email_confidence", "INTEGER DEFAULT 100"),
         ("email_type", "TEXT"),
         ("contact_title", "TEXT"),
@@ -575,10 +576,17 @@ def seed_database(force: bool = False) -> dict:
             rows = seed.get(tbl, [])
             if not rows:
                 continue
+            existing_cols = {row[1] for row in conn.execute(f"PRAGMA table_info({tbl})").fetchall()}
             inserted = 0
             for r in rows:
                 row_dict = dict(r)
-                for col_name, val in row_dict.items():
+                for col_name, val in list(row_dict.items()):
+                    if col_name not in existing_cols:
+                        try:
+                            conn.execute(f'ALTER TABLE {tbl} ADD COLUMN "{col_name}" TEXT')
+                            existing_cols.add(col_name)
+                        except Exception:
+                            row_dict.pop(col_name, None)
                     if isinstance(val, str) and val.startswith("ENV:"):
                         env_key = val[4:]
                         resolved = os.environ.get(env_key) or os.environ.get(env_key.lower()) or ""
@@ -588,7 +596,9 @@ def seed_database(force: bool = False) -> dict:
                             resolved = os.environ.get("AWS_SECRET_ACCESS_KEY", "")
                         row_dict[col_name] = resolved
 
-                cols = list(row_dict.keys())
+                cols = [c for c in row_dict.keys() if c in existing_cols]
+                if not cols:
+                    continue
                 placeholders = ", ".join(["?"] * len(cols))
                 col_names = ", ".join([f'"{c}"' for c in cols])
                 sql = f"INSERT OR IGNORE INTO {tbl} ({col_names}) VALUES ({placeholders})"
@@ -1184,9 +1194,12 @@ def update_lead_deliverability(lead_id: int, status: str, score: int, details_js
     conn.close()
 
 
-def add_or_update_lead(name: str, email: str, company: str = None, niche: str = None, website: str = None, linkedin: str = None, custom_hook: str = None, stage: str = "new"):
+def add_or_update_lead(name: str = None, email: str = None, company: str = None, niche: str = None, website: str = None, linkedin: str = None, custom_hook: str = None, stage: str = "new", crm_priority: int = 1, source: str = "manual", **kwargs):
     conn = get_db()
-    email = email.strip().lower()
+    email = str(email or "").strip().lower()
+    if not email:
+        conn.close()
+        return None
     existing = conn.execute("SELECT id FROM leads WHERE email=?", (email,)).fetchone()
     if existing:
         conn.execute(
@@ -1196,16 +1209,18 @@ def add_or_update_lead(name: str, email: str, company: str = None, niche: str = 
                    niche=COALESCE(?, niche),
                    website=COALESCE(?, website),
                    linkedin=COALESCE(?, linkedin),
-                   custom_hook=COALESCE(?, custom_hook)
+                   custom_hook=COALESCE(?, custom_hook),
+                   crm_priority=COALESCE(?, crm_priority),
+                   source=COALESCE(?, source)
                WHERE id=?""",
-            (name, company, niche, website, linkedin, custom_hook, existing["id"])
+            (name, company, niche, website, linkedin, custom_hook, crm_priority, source, existing["id"])
         )
         lead_id = existing["id"]
     else:
         cur = conn.execute(
-            """INSERT INTO leads (name, email, company, niche, website, linkedin, custom_hook, stage)
-               VALUES (?,?,?,?,?,?,?,?)""",
-            (name, email, company, niche, website, linkedin, custom_hook, stage or "new")
+            """INSERT INTO leads (name, email, company, niche, website, linkedin, custom_hook, stage, crm_priority, source)
+               VALUES (?,?,?,?,?,?,?,?,?,?)""",
+            (name, email, company, niche, website, linkedin, custom_hook, stage or "new", crm_priority or 1, source or "manual")
         )
         lead_id = cur.lastrowid
     conn.commit()
