@@ -166,6 +166,17 @@ def _process_loop(status_callback=None):
                 _notify(status_callback, "No accounts available — pausing")
                 break
 
+            # Guarantee required fields are present and valid
+            from_addr = account.get("from_email") or account.get("email")
+            account["from_email"] = from_addr
+            account["email"] = from_addr
+            account["id"] = account.get("id") or from_addr
+            account["smtp_user"] = account.get("smtp_user") or from_addr
+            account["smtp_pass"] = account.get("smtp_pass") or account.get("app_password")
+            account["smtp_host"] = account.get("smtp_host") or "mail.spacemail.com"
+            account["smtp_port"] = account.get("smtp_port") or 465
+            account["provider"] = account.get("provider") or "spacemail"
+
             # Current active rotating IP node info
             node_tag = ""
             try:
@@ -176,12 +187,12 @@ def _process_loop(status_callback=None):
             except Exception:
                 pass
 
-            _notify(status_callback, f"📤 Sending to {to_email} via {account['from_email']}{node_tag}…")
+            _notify(status_callback, f"📤 Sending to {to_email} via {from_addr}{node_tag}…")
 
             result = email_sender.send_email_now(to_email, subject, body, account)
 
             if result["success"]:
-                db.mark_email_sent(email_id, result.get("message_id"), account["from_email"])
+                db.mark_email_sent(email_id, result.get("message_id"), from_addr)
                 if lead_id:
                     db.add_conversation_message(lead_id, "us", f"[{msg_type.upper()}] Subject: {subject}\n\n{body}")
                     # Update lead stage if still 'new'

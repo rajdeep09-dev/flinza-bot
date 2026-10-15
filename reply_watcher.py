@@ -105,21 +105,32 @@ def _check_all_accounts(notify_callback):
         return
 
     try:
-        accounts = db.get_all_accounts()
-        for account in accounts:
-            if not account["active"]:
-                continue
-            try:
-                _check_account(account, notify_callback, max_messages=5)
-            except Exception as e:
-                logger.warning(f"Failed to check {account['email']}: {e}")
+        accounts = [dict(a) for a in db.get_all_accounts() if a.get("active")]
+        if not accounts:
+            return
+
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        with ThreadPoolExecutor(max_workers=8) as executor:
+            futures = {
+                executor.submit(_check_account, acc, notify_callback, 10): acc["email"]
+                for acc in accounts
+            }
+            for fut in as_completed(futures):
+                em = futures[fut]
+                try:
+                    fut.result()
+                except Exception as e:
+                    logger.warning(f"Failed to check {em}: {e}")
     finally:
         _check_lock.release()
 
 
-def _check_account(account, notify_callback, max_messages=5):
+def _check_account(account, notify_callback, max_messages=10):
     email_addr = account["email"]
-    password   = account["app_password"]
+    password   = account.get("app_password") or account.get("smtp_pass")
+    if not password:
+        logger.warning(f"No password found for {email_addr}, skipping IMAP check")
+        return
 
     conn = db.get_db()
     existing_msg_ids = set(r[0] for r in conn.execute("SELECT message_id FROM replies WHERE message_id IS NOT NULL").fetchall())
@@ -129,7 +140,7 @@ def _check_account(account, notify_callback, max_messages=5):
     try:
         # Spacemail mailboxes live on mail.spacemail.com; Gmail stays the default.
         imap_host, imap_port = spacemail_accounts.imap_settings(account)
-        mail = imaplib.IMAP4_SSL(imap_host, imap_port, timeout=12)
+        mail = imaplib.IMAP4_SSL(imap_host, imap_port, timeout=18)
         mail.login(email_addr, password)
         status, select_data = mail.select("inbox")
         total_msgs = 0

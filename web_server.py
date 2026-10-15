@@ -1050,8 +1050,17 @@ async def test_account_creds(request: Request):
                 "UPDATE gmail_accounts SET last_used=?, sent_today=COALESCE(sent_today,0)+1 WHERE email=?",
                 (datetime.now().isoformat(), email_addr)
             )
+            conn2.execute(
+                """INSERT INTO emails_sent (from_account, to_email, subject, body, status, message_id, sent_at, provider)
+                   VALUES (?, ?, ?, ?, 'sent', ?, ?, 'spacemail')""",
+                (email_addr, to_email, msg["Subject"], body_text, msg["Message-ID"], datetime.now().isoformat())
+            )
             conn2.commit()
             conn2.close()
+            try:
+                db.log_activity("test_send", f"To: {to_email} | From: {email_addr}")
+            except Exception:
+                pass
 
             return {
                 "success": True,
@@ -1280,20 +1289,25 @@ _last_unibox_check = 0.0
 
 @app.post("/api/unibox/check", dependencies=[_auth])
 async def poll_inboxes():
-    """Fires IMAP inbox check in background thread with cooldown protection."""
+    """Fires IMAP inbox check across mailboxes and waits for completion so UI instantly updates."""
     global _last_unibox_check
     now = time.time()
-    if now - _last_unibox_check < 4.0:
-        return {"success": True, "message": "Inbox sync already in progress or recently completed."}
+    if now - _last_unibox_check < 3.0:
+        return {"success": True, "message": "Inbox sync already recently completed."}
     _last_unibox_check = now
 
-    def _do_poll():
-        try:
-            reply_watcher.check_now()
-        except Exception as e:
-            logger.error(f"Background inbox check error: {e}")
-    threading.Thread(target=_do_poll, daemon=True).start()
-    return {"success": True, "message": "Inbox sync started. Refresh in a few seconds to see new replies."}
+    try:
+        new_replies = await asyncio.wait_for(asyncio.to_thread(reply_watcher.check_now), timeout=12.0)
+        return {
+            "success": True,
+            "message": f"Inbox sync complete ({len(new_replies)} new message{'s' if len(new_replies) != 1 else ''} fetched).",
+            "new_count": len(new_replies)
+        }
+    except asyncio.TimeoutError:
+        return {"success": True, "message": "Inbox sync running in background…"}
+    except Exception as e:
+        logger.error(f"Inbox check error: {e}")
+        return {"success": False, "error": str(e)}
 
 
 def _query_webmail_threads(conn, folder: str, search: Optional[str], filter: str, page: int, limit: int):
@@ -1318,12 +1332,12 @@ def _query_webmail_threads(conn, folder: str, search: Optional[str], filter: str
         AND LOWER(r.subject) NOT LIKE '%confirm%'
     """
 
-    # Folder Counts: inbox = leads only; all_inboxes = every incoming email
+    # Folder Counts: inbox = leads & direct human inquiries; all_inboxes = every incoming email
     leads_inbox_cnt = conn.execute(f"""
         SELECT COUNT(*) as c FROM replies r 
-        JOIN leads l ON r.lead_id = l.id 
+        LEFT JOIN leads l ON r.lead_id = l.id 
         WHERE r.handled = 0 
-          AND (l.company IS NULL OR l.company != 'Direct Inbound')
+          AND (r.lead_id IS NOT NULL OR (COALESCE(r.sentiment, '') != 'bounced' AND COALESCE(r.intent, '') != 'bounced'))
           {system_filter_sql}
     """).fetchone()["c"]
     all_inbox_cnt = conn.execute("SELECT COUNT(*) as c FROM replies").fetchone()["c"]
@@ -1339,11 +1353,9 @@ def _query_webmail_threads(conn, folder: str, search: Optional[str], filter: str
         base_where = []
         params = []
         if folder == "inbox":
-            # Primary Inbox: ONLY show replies from LEADS (CRM prospects)
+            # Primary Inbox: show lead replies and real human inbound messages
             base_where.append("r.handled = 0")
-            base_where.append("r.lead_id IS NOT NULL")
-            base_where.append("l.id IS NOT NULL")
-            base_where.append("(l.company IS NULL OR l.company != 'Direct Inbound')")
+            base_where.append("(r.lead_id IS NOT NULL OR (COALESCE(r.sentiment, '') != 'bounced' AND COALESCE(r.intent, '') != 'bounced'))")
             base_where.append("r.from_email NOT LIKE '%no-reply%'")
             base_where.append("r.from_email NOT LIKE '%noreply%'")
             base_where.append("r.from_email NOT LIKE '%google.com%'")

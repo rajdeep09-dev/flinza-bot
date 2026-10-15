@@ -373,11 +373,16 @@ def init_db():
 
     # Multi-provider column migrations for existing databases
     for col, col_type in [
-        ("provider", "TEXT DEFAULT 'smtp'"),
-        ("smtp_host", "TEXT"),
-        ("smtp_port", "INTEGER"),
+        ("provider", "TEXT DEFAULT 'spacemail'"),
+        ("smtp_host", "TEXT DEFAULT 'mail.spacemail.com'"),
+        ("smtp_port", "INTEGER DEFAULT 465"),
         ("smtp_user", "TEXT"),
         ("smtp_pass", "TEXT"),
+        ("proxy_url", "TEXT"),
+        ("warmup_mode", "INTEGER DEFAULT 0"),
+        ("warmup_day", "INTEGER DEFAULT 1"),
+        ("label", "TEXT"),
+        ("last_used", "TIMESTAMP"),
     ]:
         try:
             conn.execute(f"ALTER TABLE gmail_accounts ADD COLUMN {col} {col_type}")
@@ -433,12 +438,19 @@ def init_db():
             pass
 
     for tbl, col, col_type in [
+        ("replies", "sentiment", "TEXT"),
+        ("replies", "intent", "TEXT"),
+        ("replies", "ai_draft_subject", "TEXT"),
+        ("replies", "ai_draft_body", "TEXT"),
+        ("replies", "action_taken", "TEXT"),
         ("replies", "is_read", "INTEGER DEFAULT 0"),
         ("replies", "is_starred", "INTEGER DEFAULT 0"),
         ("replies", "to_email", "TEXT"),
         ("replies", "message_id", "TEXT"),
+        ("emails_sent", "campaign_id", "INTEGER"),
+        ("emails_sent", "scheduled_for", "TIMESTAMP"),
         ("emails_sent", "is_starred", "INTEGER DEFAULT 0"),
-        ("emails_sent", "provider", "TEXT DEFAULT 'amazon_ses'"),
+        ("emails_sent", "provider", "TEXT DEFAULT 'spacemail'"),
         ("ip_nodes", "provider", "TEXT DEFAULT 'Cellular / 5G'"),
         ("ip_nodes", "daily_limit", "INTEGER DEFAULT 150"),
         ("ip_nodes", "sent_today", "INTEGER DEFAULT 0"),
@@ -788,12 +800,14 @@ def get_next_available_account():
 
     # Accounts with remaining capacity
     acc_rows = conn.execute("""
-        SELECT email as id, COALESCE(provider, 'gmail') as type, email as from_email,
+        SELECT email as id, email, COALESCE(provider, 'spacemail') as type, email as from_email,
                COALESCE(smtp_user, email) as smtp_user,
                COALESCE(smtp_pass, app_password) as smtp_pass,
-               provider, smtp_host, smtp_port,
+               COALESCE(provider, 'spacemail') as provider,
+               COALESCE(smtp_host, 'mail.spacemail.com') as smtp_host,
+               COALESCE(smtp_port, 465) as smtp_port,
                proxy_url, sent_today, daily_limit, last_used,
-               NULL as display_name
+               COALESCE(label, '') as display_name
         FROM gmail_accounts
         WHERE active=1 AND sent_today < daily_limit
     """).fetchall()
@@ -801,7 +815,7 @@ def get_next_available_account():
 
     # Aliases with flexible routing modes (Gmail Send-As vs Cloudflare API vs Amazon SES)
     alias_rows = conn.execute("""
-        SELECT a.alias as id, 'alias' as type, a.alias as from_email,
+        SELECT a.alias as id, a.alias as email, 'alias' as type, a.alias as from_email,
                COALESCE(a.custom_smtp_user, a.smtp_user) as smtp_user,
                COALESCE(a.custom_smtp_pass, a.smtp_pass, g.app_password) as smtp_pass,
                COALESCE(a.routing_mode, g.provider, 'gmail_send_as') as routing_mode,
@@ -843,8 +857,8 @@ def increment_account_sent(account_id: str, is_alias: bool = False):
             )
     else:
         conn.execute(
-            "UPDATE gmail_accounts SET sent_today=sent_today+1, last_used=? WHERE email=?",
-            (now, account_id)
+            "UPDATE gmail_accounts SET sent_today=sent_today+1, last_used=? WHERE email=? OR id=?",
+            (now, str(account_id), int(account_id) if str(account_id).isdigit() else -1)
         )
     conn.commit()
     conn.close()

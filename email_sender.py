@@ -153,13 +153,15 @@ def send_email_now(to_email: str, subject: str, body: str, account: dict, tracki
       3. SMTP2GO & Mailjet REST APIs
       4. Brevo, Amazon SES, Gmail, Namecheap, Zoho, Outlook SMTP relays
     """
-    from_email   = account["from_email"]
-    provider     = account.get("provider") or ("gmail" if account.get("type") == "gmail" else "smtp")
-    smtp_user    = account.get("smtp_user", from_email)
-    smtp_pass    = account.get("smtp_pass")
+    from_email   = account.get("from_email") or account.get("email")
+    if not from_email:
+        raise ValueError("Account dictionary must have 'from_email' or 'email'")
+    provider     = account.get("provider") or ("spacemail" if (account.get("smtp_host") == "mail.spacemail.com" or "@flinzamedia.com" in str(from_email)) else ("gmail" if account.get("type") == "gmail" else "spacemail"))
+    smtp_user    = account.get("smtp_user") or from_email
+    smtp_pass    = account.get("smtp_pass") or account.get("app_password")
     proxy_url    = account.get("proxy_url")
     display_name = account.get("display_name") or _make_display_name(from_email)
-    acct_type    = account.get("type", "gmail")
+    acct_type    = account.get("type", "spacemail")
 
     # 1. Resolve Spintax in subject and body for unique fingerprinting
     subject = email_toolkit.resolve_spintax(subject)
@@ -293,7 +295,7 @@ def send_email_now(to_email: str, subject: str, body: str, account: dict, tracki
         smtp_pass = relay_info.get("smtp_pass") or smtp_pass
         logger.info(f"Resolved relay for {from_email}: {provider} via {target_host}:{target_port} ({relay_info.get('reason')})")
     else:
-        target_host = account.get("smtp_host") or default_hosts.get(provider, "smtp.gmail.com")
+        target_host = account.get("smtp_host") or default_hosts.get(provider, "mail.spacemail.com")
         target_port = int(account.get("smtp_port") or (465 if provider in ("namecheap", "zoho_in", "spacemail") else 587))
 
     try:
@@ -448,12 +450,16 @@ def send_test_email(to_email: str, from_account_email: str = None, target_accoun
             if a["email"].lower() == target:
                 account = {
                     "id": a["email"],
-                    "type": "gmail",
+                    "type": a.get("provider") or "spacemail",
                     "from_email": a["email"],
-                    "smtp_user": a["email"],
-                    "smtp_pass": a["app_password"],
-                    "proxy_url": a["proxy_url"],
-                    "display_name": a["label"] or _make_display_name(a["email"])
+                    "email": a["email"],
+                    "smtp_user": a.get("smtp_user") or a["email"],
+                    "smtp_pass": a.get("smtp_pass") or a.get("app_password"),
+                    "provider": a.get("provider") or "spacemail",
+                    "smtp_host": a.get("smtp_host") or "mail.spacemail.com",
+                    "smtp_port": int(a.get("smtp_port") or 465),
+                    "proxy_url": a.get("proxy_url"),
+                    "display_name": a.get("label") or _make_display_name(a["email"])
                 }
                 break
 
@@ -467,6 +473,7 @@ def send_test_email(to_email: str, from_account_email: str = None, target_accoun
                         "id": al_d["alias"],
                         "type": "alias",
                         "from_email": al_d["alias"],
+                        "email": al_d["alias"],
                         "smtp_user": al_d.get("custom_smtp_user") or al_d.get("smtp_user"),
                         "smtp_pass": al_d.get("custom_smtp_pass") or al_d.get("smtp_pass"),
                         "provider": al_d.get("routing_mode", "gmail_send_as"),
@@ -482,7 +489,16 @@ def send_test_email(to_email: str, from_account_email: str = None, target_accoun
         account = db.get_next_available_account()
 
     if not account:
-        return {"success": False, "error": "No active Gmail accounts or aliases available in database."}
+        return {"success": False, "error": "No active mailboxes available in database."}
+
+    if "from_email" not in account and "email" in account:
+        account["from_email"] = account["email"]
+    if "email" not in account and "from_email" in account:
+        account["email"] = account["from_email"]
+    if not account.get("smtp_host"):
+        account["smtp_host"] = "mail.spacemail.com"
+    if not account.get("smtp_port"):
+        account["smtp_port"] = 465
 
     # Ultra-natural subject and body — mimics a real 1:1 human email
     # Ultra-natural subject and body — mimics a genuine 1:1 direct email
