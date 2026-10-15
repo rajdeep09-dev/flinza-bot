@@ -2076,6 +2076,90 @@ async def cmd_activity(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await reply(update, "\n".join(lines))
 
 
+@auth_required
+async def cmd_daily_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Generates an executive daily outreach report with key CRM and engine KPIs."""
+    s = db.get_stats()
+    today_str = datetime.now().strftime("%A, %d %B %Y")
+
+    conn = db.get_db()
+    try:
+        p1 = conn.execute("SELECT COUNT(*) as c FROM leads WHERE crm_priority=1").fetchone()["c"]
+        p2 = conn.execute("SELECT COUNT(*) as c FROM leads WHERE crm_priority=2").fetchone()["c"]
+        p3 = conn.execute("SELECT COUNT(*) as c FROM leads WHERE crm_priority=3").fetchone()["c"]
+        verified = conn.execute("SELECT COUNT(*) as c FROM leads WHERE deliverability_status='verified'").fetchone()["c"]
+    except Exception:
+        p1, p2, p3, verified = 0, 0, 0, 0
+    finally:
+        conn.close()
+
+    sent_today = s.get("sent_today", 0)
+    remaining  = s.get("remaining_today", 0)
+    total_cap  = sent_today + remaining
+
+    q_status  = "🟢 Running" if email_queue.is_running() else "⏸ Stopped"
+    fu_status = "🟢 Active" if followup_scheduler.is_running() else "⏸ Inactive"
+    rw_status = "🟢 Monitoring" if reply_watcher.is_running() else "⏸ Off"
+
+    report = (
+        f"📊 <b>FLINZA EXECUTIVE DAILY REPORT</b>\n"
+        f"📅 <i>{today_str}</i>\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"<b>🎯 Leads & CRM Pipeline</b>\n"
+        f"• Total Leads: <b>{s['total_leads']}</b> (✓ {verified} verified MX)\n"
+        f"• 🔥 Tier 1 (High ICP): <b>{p1}</b>\n"
+        f"• ⚡ Tier 2 (Good ICP): <b>{p2}</b>\n"
+        f"• 🎯 Tier 3 (Backup): <b>{p3}</b>\n\n"
+        f"<b>🚀 Outbound & Sending Fleet</b>\n"
+        f"• Sent Today: <b>{sent_today}</b> / {total_cap} emails\n"
+        f"• In Outbound Queue: <b>{s['queued']}</b>\n"
+        f"• Failed / Bounced: <b>{s['failed']}</b>\n"
+        f"• Active Sending Fleet: <b>{s['accounts']}</b> mailboxes\n"
+        f"• Daily Capacity Remaining: <b>{remaining}</b>\n\n"
+        f"<b>📬 Inbound & Replies</b>\n"
+        f"• Total Replies: <b>{s['total_replies']}</b>\n"
+        f"• Unhandled / Pending: <b>{s['unhandled_replies']}</b>\n"
+        f"• Leads in 'Replied' Stage: <b>{s['replied_leads']}</b>\n\n"
+        f"<b>⚙️ Autonomous Engines</b>\n"
+        f"• Campaign Queue: <b>{q_status}</b>\n"
+        f"• Follow-up Scheduler: <b>{fu_status}</b>\n"
+        f"• IMAP Reply Watcher: <b>{rw_status}</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"💡 <i>Tip: Launch or resume queue with /start_campaign, or test send with /test_send</i>"
+    )
+    await reply(update, report)
+
+
+@auth_required
+async def cmd_add_lead_quick(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Direct 1-line lead add: /add_lead email@domain.com [Name] [Company]"""
+    if not context.args:
+        await reply(update, "Usage:\n<code>/add_lead &lt;email&gt; [Full Name] [Company Name]</code>\n\nExample:\n<code>/add_lead founder@brand.com Jane Doe BrandCo</code>")
+        return
+    email = context.args[0].strip().lower()
+    if "@" not in email or "." not in email:
+        await reply(update, "❌ Invalid email address.")
+        return
+
+    name = context.args[1].strip() if len(context.args) > 1 else ""
+    company = " ".join(context.args[2:]).strip() if len(context.args) > 2 else ""
+
+    existing = db.get_lead_by_email(email)
+    if existing:
+        await reply(update, f"⚠️ Lead with email <code>{email}</code> already exists in CRM (#ID {existing['id']}).")
+        return
+
+    lid = db.add_or_update_lead(
+        email=email,
+        name=name or None,
+        company=company or None,
+        stage="new",
+        source="telegram_bot",
+        crm_priority=1 if company else 2
+    )
+    await reply(update, f"✅ Lead added successfully!\n• ID: #{lid}\n• Email: <code>{email}</code>\n• Name: {name or 'N/A'}\n• Company: {company or 'N/A'}\n• Stage: <b>new</b>")
+
+
 # ═══════════════════════════════════════════════════════════════
 #             ENTERPRISE OUTREACH COMMANDS
 # ═══════════════════════════════════════════════════════════════
@@ -2609,8 +2693,15 @@ def build_app() -> Application:
     app.add_handler(CommandHandler("smarthours",     cmd_smarthours))
     app.add_handler(CommandHandler("autoreply",      cmd_autoreply))
     app.add_handler(CommandHandler("stats",          cmd_stats))
+    app.add_handler(CommandHandler("daily_report",   cmd_daily_report))
+    app.add_handler(CommandHandler("report",         cmd_daily_report))
+    app.add_handler(CommandHandler("start_campaign", cmd_startqueue))
+    app.add_handler(CommandHandler("stop_campaign",  cmd_stopqueue))
+    app.add_handler(CommandHandler("launch",         cmd_campaign))
+    app.add_handler(CommandHandler("add_lead",       cmd_add_lead_quick))
     app.add_handler(CommandHandler("activity",       cmd_activity))
     app.add_handler(CommandHandler("testsend",       cmd_testsend))
+    app.add_handler(CommandHandler("test_send",      cmd_testsend))
     app.add_handler(CommandHandler("spamcheck",      cmd_spamcheck))
     app.add_handler(CommandHandler("checkemail",     cmd_checkemail))
     app.add_handler(CommandHandler("exportleads",    cmd_exportleads))

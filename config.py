@@ -46,13 +46,15 @@ REQUIRE_AUTH = os.environ.get("REQUIRE_AUTH", "true").strip().lower() not in ("f
 # An empty password disables password login entirely (see web_server.auth_login).
 DASHBOARD_LOGIN_EMAIL = os.environ.get("DASHBOARD_LOGIN_EMAIL", "").strip()
 DASHBOARD_LOGIN_PASSWORD = os.environ.get("DASHBOARD_LOGIN_PASSWORD", "").strip()
-DASHBOARD_PUBLIC_URL = os.environ.get("DASHBOARD_PUBLIC_URL", "https://dashboard.flinzaworks.online").strip()
+DASHBOARD_PUBLIC_URL = os.environ.get("DASHBOARD_PUBLIC_URL", "https://dashboard.flinzamedia.com").strip()
 
 # ─── CORS ────────────────────────────────────────────────────────
 # Comma-separated list of allowed origins.
 _default_origins = [
     "http://localhost:7880", "http://localhost:8000", "http://localhost:10000",
     "http://127.0.0.1:7880", "http://127.0.0.1:8000", "http://127.0.0.1:10000",
+    "https://dashboard.flinzamedia.com", "http://dashboard.flinzamedia.com",
+    "https://flinzamedia.com", "http://flinzamedia.com",
     "https://dashboard.flinzaworks.online", "http://dashboard.flinzaworks.online",
     "https://flinza-bot.onrender.com", DASHBOARD_PUBLIC_URL
 ]

@@ -547,12 +547,12 @@ def seed_database(force: bool = False) -> dict:
 
     conn = get_db()
     try:
-        alias_count = conn.execute("SELECT count(*) FROM smtp_aliases").fetchone()[0]
-        acc_count = conn.execute("SELECT count(*) FROM gmail_accounts").fetchone()[0]
-
-        if not force and (alias_count > 0 or acc_count > 0):
+        alias_count = conn.execute("SELECT count(*) FROM smtp_aliases").fetchone()[0] if conn.execute("SELECT count(*) FROM sqlite_master WHERE type='table' AND name='smtp_aliases'").fetchone()[0] else 0
+        acc_count = conn.execute("SELECT count(*) FROM gmail_accounts").fetchone()[0] if conn.execute("SELECT count(*) FROM sqlite_master WHERE type='table' AND name='gmail_accounts'").fetchone()[0] else 0
+        leads_count = conn.execute("SELECT count(*) FROM leads").fetchone()[0] if conn.execute("SELECT count(*) FROM sqlite_master WHERE type='table' AND name='leads'").fetchone()[0] else 0
+        if not force and (alias_count > 0 or acc_count > 0) and (leads_count > 0):
             conn.close()
-            return {"success": True, "seeded": False, "message": "Database already contains aliases/accounts."}
+            return {"success": True, "seeded": False, "message": "Database already contains aliases/accounts/leads."}
 
         with open(seed_file, "r", encoding="utf-8") as f:
             seed = json.load(f)
@@ -1486,25 +1486,44 @@ def get_lead_by_unsub_token(token: str):
 def get_stats():
     conn = get_db()
     today = date.today().isoformat()
-    stats = {}
+    stats = {
+        "total_leads": 0,
+        "new_leads": 0,
+        "total_sent": 0,
+        "sent_today": 0,
+        "queued": 0,
+        "failed": 0,
+        "total_replies": 0,
+        "unhandled_replies": 0,
+        "replied_leads": 0,
+        "accounts": 0,
+        "aliases": 0,
+        "blacklisted": 0,
+        "unsubscribed": 0,
+        "remaining_today": 0,
+    }
+
+    def _safe_count(query, params=()):
+        try:
+            row = conn.execute(query, params).fetchone()
+            return row["c"] if row else 0
+        except Exception:
+            return 0
+
     try:
-        stats["total_leads"]       = conn.execute("SELECT COUNT(*) as c FROM leads").fetchone()["c"]
-        stats["new_leads"]         = conn.execute("SELECT COUNT(*) as c FROM leads WHERE stage='new'").fetchone()["c"]
-        stats["total_sent"]        = conn.execute("SELECT COUNT(*) as c FROM emails_sent WHERE status='sent'").fetchone()["c"]
-        stats["sent_today"]        = conn.execute(
-            "SELECT COUNT(*) as c FROM emails_sent WHERE status='sent' AND DATE(sent_at)=?", (today,)
-        ).fetchone()["c"]
-        stats["queued"]            = conn.execute("SELECT COUNT(*) as c FROM emails_sent WHERE status='queued'").fetchone()["c"]
-        stats["failed"]            = conn.execute("SELECT COUNT(*) as c FROM emails_sent WHERE status='failed'").fetchone()["c"]
-        stats["total_replies"]     = conn.execute("SELECT COUNT(*) as c FROM replies").fetchone()["c"]
-        stats["unhandled_replies"] = conn.execute("SELECT COUNT(*) as c FROM replies WHERE handled=0").fetchone()["c"]
-        stats["replied_leads"]     = conn.execute("SELECT COUNT(*) as c FROM leads WHERE stage='replied'").fetchone()["c"]
-        stats["accounts"]          = conn.execute("SELECT COUNT(*) as c FROM gmail_accounts WHERE active=1").fetchone()["c"]
-        stats["aliases"]           = conn.execute("SELECT COUNT(*) as c FROM smtp_aliases WHERE is_active=1").fetchone()["c"]
-        stats["blacklisted"]       = conn.execute("SELECT COUNT(*) as c FROM leads WHERE blacklisted=1").fetchone()["c"]
-        stats["unsubscribed"]      = conn.execute("SELECT COUNT(*) as c FROM leads WHERE unsubscribed=1").fetchone()["c"]
-    except Exception:
-        pass
+        stats["total_leads"]       = _safe_count("SELECT COUNT(*) as c FROM leads")
+        stats["new_leads"]         = _safe_count("SELECT COUNT(*) as c FROM leads WHERE stage='new'")
+        stats["total_sent"]        = _safe_count("SELECT COUNT(*) as c FROM emails_sent WHERE status='sent'")
+        stats["sent_today"]        = _safe_count("SELECT COUNT(*) as c FROM emails_sent WHERE status='sent' AND DATE(sent_at)=?", (today,))
+        stats["queued"]            = _safe_count("SELECT COUNT(*) as c FROM emails_sent WHERE status='queued'")
+        stats["failed"]            = _safe_count("SELECT COUNT(*) as c FROM emails_sent WHERE status='failed'")
+        stats["total_replies"]     = _safe_count("SELECT COUNT(*) as c FROM replies")
+        stats["unhandled_replies"] = _safe_count("SELECT COUNT(*) as c FROM replies WHERE handled=0")
+        stats["replied_leads"]     = _safe_count("SELECT COUNT(*) as c FROM leads WHERE stage='replied'")
+        stats["accounts"]          = _safe_count("SELECT COUNT(*) as c FROM gmail_accounts WHERE active=1")
+        stats["aliases"]           = _safe_count("SELECT COUNT(*) as c FROM smtp_aliases WHERE is_active=1")
+        stats["blacklisted"]       = _safe_count("SELECT COUNT(*) as c FROM leads WHERE blacklisted=1 OR stage='blacklisted'")
+        stats["unsubscribed"]      = _safe_count("SELECT COUNT(*) as c FROM leads WHERE unsubscribed=1 OR stage='unsubscribed'")
     finally:
         conn.close()
 
