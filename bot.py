@@ -4,6 +4,7 @@ Telegram-operated. All email sending, scheduling, reply watching, and lead manag
 """
 
 import asyncio
+import html
 import json
 import logging
 import os
@@ -13,6 +14,7 @@ import threading
 from datetime import datetime
 from functools import wraps
 
+import telegram
 from telegram import (
     Update, InlineKeyboardButton, InlineKeyboardMarkup,
     ReplyKeyboardMarkup, ReplyKeyboardRemove, WebAppInfo,
@@ -40,6 +42,43 @@ logging.basicConfig(
     level=logging.INFO,
 )
 logger = logging.getLogger("flinza")
+
+# Global fallback for Telegram HTML parse errors
+_orig_bot_send_message = telegram.Bot.send_message
+_orig_bot_edit_message_text = telegram.Bot.edit_message_text
+
+async def _safe_bot_send_message(self, *args, **kwargs):
+    try:
+        return await _orig_bot_send_message(self, *args, **kwargs)
+    except Exception as e:
+        if "parse entities" in str(e).lower() and kwargs.get("parse_mode"):
+            logger.warning(f"Telegram parse entity error in send_message: {e}. Retrying as plain text.")
+            kwargs["parse_mode"] = None
+            if "text" in kwargs:
+                kwargs["text"] = re.sub(r'<[^>]*>', '', str(kwargs["text"]))
+            elif len(args) >= 2 and isinstance(args[1], str):
+                args = list(args)
+                args[1] = re.sub(r'<[^>]*>', '', str(args[1]))
+            return await _orig_bot_send_message(self, *args, **kwargs)
+        raise
+
+async def _safe_bot_edit_message_text(self, *args, **kwargs):
+    try:
+        return await _orig_bot_edit_message_text(self, *args, **kwargs)
+    except Exception as e:
+        if "parse entities" in str(e).lower() and kwargs.get("parse_mode"):
+            logger.warning(f"Telegram parse entity error in edit_message_text: {e}. Retrying as plain text.")
+            kwargs["parse_mode"] = None
+            if "text" in kwargs:
+                kwargs["text"] = re.sub(r'<[^>]*>', '', str(kwargs["text"]))
+            elif len(args) >= 2 and isinstance(args[1], str):
+                args = list(args)
+                args[1] = re.sub(r'<[^>]*>', '', str(args[1]))
+            return await _orig_bot_edit_message_text(self, *args, **kwargs)
+        raise
+
+telegram.Bot.send_message = _safe_bot_send_message
+telegram.Bot.edit_message_text = _safe_bot_edit_message_text
 
 # ─── Conversation states ──────────────────────────────────────────
 (
@@ -103,14 +142,23 @@ def auth_cb(func):
 # ═══════════════════════════════════════════════════════════════
 
 async def reply(update: Update, text: str, **kwargs):
-    """Send a message, splitting if over 4096 chars."""
+    """Send a message, splitting if over 4000 chars, with HTML parse fallback."""
     MAX = 4000
-    if update.callback_query:
+    if update.callback_query and update.callback_query.message:
         send = update.callback_query.message.reply_text
-    else:
+    elif update.message:
         send = update.message.reply_text
+    else:
+        return
+    parse_mode = kwargs.pop("parse_mode", ParseMode.HTML)
     for i in range(0, len(text), MAX):
-        await send(text[i:i+MAX], parse_mode=ParseMode.HTML, **kwargs)
+        chunk = text[i:i+MAX]
+        try:
+            await send(chunk, parse_mode=parse_mode, **kwargs)
+        except Exception as e:
+            logger.warning(f"reply() failed with parse_mode={parse_mode}: {e}. Retrying as plain text.")
+            clean_chunk = re.sub(r'<[^>]*>', '', chunk)
+            await send(clean_chunk, parse_mode=None, **kwargs)
 
 
 def fmt_dt(ts: str) -> str:
@@ -166,47 +214,63 @@ async def _push_notify(data: dict):
 
     if isinstance(data, str):
         # Plain status message from queue processor
-        await _app.bot.send_message(uid, f"<code>{data}</code>", parse_mode=ParseMode.HTML)
+        safe_data = html.escape(str(data))
+        await _app.bot.send_message(uid, f"<code>{safe_data}</code>", parse_mode=ParseMode.HTML)
         return
 
     dtype = data.get("type", "")
 
     if dtype == "followup_sent":
+        safe_name = html.escape(str(data.get("lead_name", "")))
+        safe_email = html.escape(str(data.get("lead_email", "")))
+        num = data.get("followup_number", 1)
         msg = (
-            f"🔄 <b>Followup #{data['followup_number']} sent</b>\n"
-            f"To: {data['lead_name']} ({data['lead_email']})"
+            f"🔄 <b>Followup #{num} sent</b>\n"
+            f"To: {safe_name} ({safe_email})"
         )
         await _app.bot.send_message(uid, msg, parse_mode=ParseMode.HTML)
 
     elif dtype == "email_opened":
+        safe_name = html.escape(str(data.get("lead_name") or ""))
+        safe_comp = html.escape(str(data.get("company") or ""))
+        comp_str = f" ({safe_comp})" if safe_comp else ""
+        safe_to = html.escape(str(data.get("to_email") or ""))
+        safe_sub = html.escape(str(data.get("subject") or ""))
+        safe_ts = html.escape(str(data.get("timestamp") or ""))
         msg = (
             f"👁️ <b>Lead Opened Email!</b>\n\n"
-            f"👤 <b>Lead:</b> {data.get('lead_name')} ({data.get('company')})\n"
-            f"📧 <b>To:</b> {data.get('to_email')}\n"
-            f"📌 <b>Subject:</b> {data.get('subject')}\n"
-            f"⏰ <b>Opened At:</b> {data.get('timestamp')}"
+            f"👤 <b>Lead:</b> {safe_name}{comp_str}\n"
+            f"📧 <b>To:</b> {safe_to}\n"
+            f"📌 <b>Subject:</b> {safe_sub}\n"
+            f"⏰ <b>Opened At:</b> {safe_ts}"
         )
         await _app.bot.send_message(uid, msg, parse_mode=ParseMode.HTML)
 
     elif dtype == "email_clicked":
+        safe_name = html.escape(str(data.get("lead_name") or ""))
+        safe_comp = html.escape(str(data.get("company") or ""))
+        comp_str = f" ({safe_comp})" if safe_comp else ""
+        safe_to = html.escape(str(data.get("to_email") or ""))
+        safe_url = html.escape(str(data.get("target_url") or ""))
+        safe_ts = html.escape(str(data.get("timestamp") or ""))
         msg = (
             f"🔗 <b>Lead Clicked Link in Email!</b>\n\n"
-            f"👤 <b>Lead:</b> {data.get('lead_name')} ({data.get('company')})\n"
-            f"📧 <b>To:</b> {data.get('to_email')}\n"
-            f"🌐 <b>Target URL:</b> <code>{data.get('target_url')}</code>\n"
-            f"⏰ <b>Clicked At:</b> {data.get('timestamp')}"
+            f"👤 <b>Lead:</b> {safe_name}{comp_str}\n"
+            f"📧 <b>To:</b> {safe_to}\n"
+            f"🌐 <b>Target URL:</b> <code>{safe_url}</code>\n"
+            f"⏰ <b>Clicked At:</b> {safe_ts}"
         )
         await _app.bot.send_message(uid, msg, parse_mode=ParseMode.HTML)
 
     elif "reply_id" in data:
         # New reply received
         rid          = data["reply_id"]
-        lead_name    = data.get("lead_name") or "Unknown"
-        from_email   = data.get("from_email", "")
-        subject      = data.get("subject", "")
-        body         = data.get("body", "")[:600]
-        draft_body   = (data.get("ai_draft_body") or "")[:500]
-        intent       = data.get("intent", "general_reply")
+        lead_name    = html.escape(str(data.get("lead_name") or "Unknown"))
+        from_email   = html.escape(str(data.get("from_email", "")))
+        subject      = html.escape(str(data.get("subject", "")))
+        body         = html.escape(str(data.get("body", ""))[:600])
+        draft_body   = html.escape(str(data.get("ai_draft_body") or "")[:500])
+        intent       = html.escape(str(data.get("intent", "general_reply")))
         is_unsub     = data.get("is_unsubscribe", False)
 
         intent_map = {
@@ -701,16 +765,19 @@ async def cb_ui_dispatcher(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Use rajdep.f12x@gmail.com or prompt
         res = email_sender.send_test_email("rajdep.f12x@gmail.com")
         if res.get("success"):
+            safe_msg_id = html.escape(str(res.get('message_id', 'N/A')))
+            safe_acc = html.escape(str(res.get('account_used', 'N/A')))
             text = (
                 "✅ <b>Instant Test Email Delivered!</b>\n\n"
                 f"• <b>Recipient:</b> <code>rajdep.f12x@gmail.com</code>\n"
-                f"• <b>Account Used:</b> <code>{res['account_used']}</code>\n"
+                f"• <b>Account Used:</b> <code>{safe_acc}</code>\n"
                 f"• <b>Latency:</b> <code>{res.get('elapsed_ms', 0)}ms</code>\n"
-                f"• <b>Message-ID:</b> <code>{res.get('message_id', 'N/A')}</code>\n\n"
+                f"• <b>Message-ID:</b> <code>{safe_msg_id}</code>\n\n"
                 "💡 <i>Check your inbox to verify SPF/DKIM alignment!</i>"
             )
         else:
-            text = f"❌ <b>Test Send Failed:</b>\n<code>{res.get('error')}</code>"
+            safe_err = html.escape(str(res.get('error', 'Unknown error')))
+            text = f"❌ <b>Test Send Failed:</b>\n<code>{safe_err}</code>"
         keyboard = InlineKeyboardMarkup([
             [InlineKeyboardButton("⚡ Send Another Test", callback_data="ui:quicktest")],
             [InlineKeyboardButton("◀️ Back to Main Menu", callback_data="ui:main")],
@@ -1479,8 +1546,9 @@ async def cb_campaign_go(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Auto-start queue
     def queue_callback(msg):
+        safe_msg = html.escape(str(msg))
         asyncio.run_coroutine_threadsafe(
-            _app.bot.send_message(_authorized_uid, f"<code>{msg}</code>", parse_mode=ParseMode.HTML),
+            _app.bot.send_message(_authorized_uid, f"<code>{safe_msg}</code>", parse_mode=ParseMode.HTML),
             _app.bot_data["loop"]
         )
 
@@ -1569,8 +1637,9 @@ async def cmd_sendemail(update: Update, context: ContextTypes.DEFAULT_TYPE):
 @auth_required
 async def cmd_startqueue(update: Update, context: ContextTypes.DEFAULT_TYPE):
     def q_callback(msg):
+        safe_msg = html.escape(str(msg))
         asyncio.run_coroutine_threadsafe(
-            _app.bot.send_message(_authorized_uid, f"<code>{msg}</code>", parse_mode=ParseMode.HTML),
+            _app.bot.send_message(_authorized_uid, f"<code>{safe_msg}</code>", parse_mode=ParseMode.HTML),
             _app.bot_data["loop"]
         )
     msg = email_queue.start_queue(status_callback=q_callback)
@@ -1698,8 +1767,9 @@ async def cb_send_draft(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode=ParseMode.HTML
         )
     else:
+        safe_err = html.escape(str(result.get("error", "Unknown error")))
         await update.callback_query.edit_message_text(
-            f"❌ Send failed: {result.get('error')}", parse_mode=ParseMode.HTML
+            f"❌ Send failed: {safe_err}", parse_mode=ParseMode.HTML
         )
 
 
@@ -1743,7 +1813,8 @@ async def edit_reply_save(update: Update, context: ContextTypes.DEFAULT_TYPE):
         db.update_lead_stage(lead["id"], "negotiating")
         await reply(update, f"✅ Edited reply sent to <code>{lead['email']}</code>!")
     else:
-        await reply(update, f"❌ Send failed: {result.get('error')}")
+        safe_err = html.escape(str(result.get('error', 'Unknown error')))
+        await reply(update, f"❌ Send failed: {safe_err}")
     return ConversationHandler.END
 
 
@@ -1775,9 +1846,11 @@ async def cmd_sendreply(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     if result.get("success"):
         db.mark_reply_handled(rid, "sent")
-        await reply(update, f"✅ Reply sent to {lead['email']}")
+        safe_email = html.escape(str(lead.get('email', '')))
+        await reply(update, f"✅ Reply sent to {safe_email}")
     else:
-        await reply(update, f"❌ {result.get('error')}")
+        safe_err = html.escape(str(result.get('error', 'Unknown error')))
+        await reply(update, f"❌ {safe_err}")
 
 
 @auth_required
@@ -2278,19 +2351,23 @@ async def cmd_testsend(update: Update, context: ContextTypes.DEFAULT_TYPE):
     to_email = context.args[0].strip()
     from_acc = context.args[1].strip() if len(context.args) > 1 else None
 
-    await reply(update, f"🔄 Dispatching live test email to <code>{to_email}</code>…")
+    safe_to = html.escape(to_email)
+    await reply(update, f"🔄 Dispatching live test email to <code>{safe_to}</code>…")
     res = email_sender.send_test_email(to_email, from_acc)
     if res["success"]:
+        safe_msg_id = html.escape(str(res.get('message_id', 'N/A')))
+        safe_acc = html.escape(str(res.get('account_used', 'N/A')))
         await reply(update,
             f"✅ <b>Test Email Delivered!</b>\n\n"
-            f"• <b>Recipient:</b> <code>{to_email}</code>\n"
-            f"• <b>Sent From:</b> <code>{res['account_used']}</code>\n"
-            f"• <b>Message-ID:</b> <code>{res.get('message_id', 'N/A')}</code>\n"
+            f"• <b>Recipient:</b> <code>{safe_to}</code>\n"
+            f"• <b>Sent From:</b> <code>{safe_acc}</code>\n"
+            f"• <b>Message-ID:</b> <code>{safe_msg_id}</code>\n"
             f"• <b>Latency:</b> <code>{res.get('elapsed_ms', 0)}ms</code>\n\n"
             f"💡 <i>Tip: Check your inbox (and Promotions/Spam tab) to verify deliverability and sender name!</i>"
         )
     else:
-        await reply(update, f"❌ Test send failed: {res.get('error')}")
+        safe_err = html.escape(str(res.get('error', 'Unknown error')))
+        await reply(update, f"❌ Test send failed: {safe_err}")
 
 
 @auth_required
@@ -2517,13 +2594,20 @@ async def cmd_optout(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
     logger.error(f"Update caused error: {context.error}", exc_info=context.error)
     if isinstance(update, Update) and update.effective_message:
+        err_msg = str(context.error)[:300]
         try:
             await update.effective_message.reply_text(
-                f"⚠️ An error occurred: <code>{str(context.error)[:200]}</code>",
+                f"⚠️ An error occurred: <code>{html.escape(err_msg)}</code>",
                 parse_mode=ParseMode.HTML,
             )
         except Exception:
-            pass
+            try:
+                await update.effective_message.reply_text(
+                    f"⚠️ An error occurred: {err_msg}",
+                    parse_mode=None,
+                )
+            except Exception:
+                pass
 
 
 @auth_required

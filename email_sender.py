@@ -689,6 +689,10 @@ def notify_telegram_outbound(to_email: str, from_addr: str, subject: str, lead_n
     """
     def _send():
         try:
+            import config
+            import requests
+            import html
+            import re
             token = getattr(config, "TELEGRAM_BOT_TOKEN", "") or "8702594261:AAFiSqKkfanOJpxy5nhE-HmT-KNH3-xBk5c"
             uid = getattr(config, "ALLOWED_USER_ID", "") or 6642913680
             if not token or not uid:
@@ -704,20 +708,26 @@ def notify_telegram_outbound(to_email: str, from_addr: str, subject: str, lead_n
 
             lead_str = ""
             if lead_name and lead_name != to_email:
-                lead_str = f"👤 <b>Lead:</b> {lead_name}" + (f" ({company})" if company else "") + "\n"
+                esc_name = html.escape(str(lead_name))
+                esc_comp = html.escape(str(company))
+                lead_str = f"👤 <b>Lead:</b> {esc_name}" + (f" ({esc_comp})" if company else "") + "\n"
             elif company:
-                lead_str = f"🏢 <b>Company:</b> {company}\n"
+                esc_comp = html.escape(str(company))
+                lead_str = f"🏢 <b>Company:</b> {esc_comp}\n"
+
+            esc_sub = html.escape(clean_sub)
+            esc_to = html.escape(str(to_email))
+            esc_from = html.escape(str(from_addr))
 
             msg = (
                 f"{icon} <b>{type_label} Dispatched!</b>\n"
                 f"{lead_str}"
-                f"📧 <b>To:</b> <code>{to_email}</code>\n"
-                f"📬 <b>From:</b> <code>{from_addr}</code>\n"
-                f"📌 <b>Subject:</b> {clean_sub}"
+                f"📧 <b>To:</b> <code>{esc_to}</code>\n"
+                f"📬 <b>From:</b> <code>{esc_from}</code>\n"
+                f"📌 <b>Subject:</b> {esc_sub}"
             )
 
-            import requests
-            requests.post(
+            resp = requests.post(
                 f"https://api.telegram.org/bot{token}/sendMessage",
                 json={
                     "chat_id": int(uid),
@@ -726,6 +736,16 @@ def notify_telegram_outbound(to_email: str, from_addr: str, subject: str, lead_n
                 },
                 timeout=5
             )
+            if resp.status_code != 200:
+                clean_text = re.sub(r'<[^>]*>', '', msg)
+                requests.post(
+                    f"https://api.telegram.org/bot{token}/sendMessage",
+                    json={
+                        "chat_id": int(uid),
+                        "text": clean_text
+                    },
+                    timeout=5
+                )
         except Exception as e:
             logger.debug(f"Telegram notification ignored: {e}")
 

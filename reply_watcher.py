@@ -85,26 +85,29 @@ def notify_telegram_reply(reply_data: dict):
         try:
             import config
             import requests
+            import html
+            import re
             token = getattr(config, "TELEGRAM_BOT_TOKEN", "") or "8702594261:AAFiSqKkfanOJpxy5nhE-HmT-KNH3-xBk5c"
             uid = getattr(config, "ALLOWED_USER_ID", "") or 6642913680
             if not token or not uid:
                 return
 
-            lead_name = reply_data.get("lead_name") or reply_data.get("from_email") or "Prospect"
-            company = reply_data.get("company") or ""
-            from_email = reply_data.get("from_email") or ""
-            to_email = reply_data.get("to_email") or ""
-            subject = reply_data.get("subject") or "No Subject"
+            lead_name = html.escape(str(reply_data.get("lead_name") or reply_data.get("from_email") or "Prospect"))
+            company = html.escape(str(reply_data.get("company") or ""))
+            from_email = html.escape(str(reply_data.get("from_email") or ""))
+            to_email = html.escape(str(reply_data.get("to_email") or ""))
+            subject = html.escape(str(reply_data.get("subject") or "No Subject"))
             body = (reply_data.get("body") or "").strip()
-            intent = reply_data.get("intent", "general_inbound")
-            sentiment = reply_data.get("sentiment", "neutral")
+            intent = html.escape(str(reply_data.get("intent", "general_inbound")))
+            sentiment = html.escape(str(reply_data.get("sentiment", "neutral")))
             is_lead = reply_data.get("is_lead", True)
 
             sentiment_icon = "🔥" if sentiment == "positive" else ("⚠️" if sentiment == "negative" else "💬")
             intent_icon = "🎯" if intent in ("interested", "meeting_request", "call_booked") else ("📬" if is_lead else "✉️")
             header_text = "LEAD REPLIED!" if is_lead else "NEW INCOMING EMAIL"
 
-            snippet = body[:450] + ("..." if len(body) > 450 else "")
+            raw_snippet = body[:450] + ("..." if len(body) > 450 else "")
+            snippet = html.escape(raw_snippet)
 
             comp_str = f" ({company})" if company else ""
             msg = (
@@ -122,10 +125,11 @@ def notify_telegram_reply(reply_data: dict):
 
             ai_draft = reply_data.get("ai_draft_body")
             if ai_draft and is_lead:
-                draft_snippet = ai_draft[:300] + ("..." if len(ai_draft) > 300 else "")
+                raw_draft = ai_draft[:300] + ("..." if len(ai_draft) > 300 else "")
+                draft_snippet = html.escape(raw_draft)
                 msg += f"\n🤖 <b>AI Suggested Reply:</b>\n<i>\"{draft_snippet}\"</i>\n"
 
-            requests.post(
+            resp = requests.post(
                 f"https://api.telegram.org/bot{token}/sendMessage",
                 json={
                     "chat_id": int(uid),
@@ -134,6 +138,16 @@ def notify_telegram_reply(reply_data: dict):
                 },
                 timeout=5
             )
+            if resp.status_code != 200:
+                clean_text = re.sub(r'<[^>]*>', '', msg)
+                requests.post(
+                    f"https://api.telegram.org/bot{token}/sendMessage",
+                    json={
+                        "chat_id": int(uid),
+                        "text": clean_text
+                    },
+                    timeout=5
+                )
         except Exception as e:
             logger.debug(f"Telegram reply alert notice: {e}")
 
