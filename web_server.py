@@ -478,7 +478,8 @@ async def update_lead_endpoint(lead_id: int, request: Request):
     body = await request.json()
     allowed = ["name", "email", "company", "niche", "website", "linkedin", "stage",
                "tier", "notes", "custom_hook", "crm_priority", "country", "revenue",
-               "company_size", "icp_fit", "sub_niche", "contact_title"]
+               "company_size", "icp_fit", "sub_niche", "contact_title",
+               "ai_subject", "ai_draft", "personalized_icebreaker"]
     sets = []
     vals = []
     for k in allowed:
@@ -648,11 +649,28 @@ async def upload_leads_csv(request: Request, file: Optional[UploadFile] = File(N
 
 
 @app.post("/api/leads/{lead_id}/ai-draft", dependencies=[_auth])
-async def generate_lead_ai_draft(lead_id: int):
-    """Generates a 100% unique AI hyper-personalized cold outreach subject & body for this specific lead."""
+async def generate_lead_ai_draft(lead_id: int, request: Request = None):
+    """Generates or saves custom AI hyper-personalized cold outreach subject & body for this specific lead."""
     lead = db.get_lead_by_id(lead_id)
     if not lead:
         raise HTTPException(status_code=404, detail="Lead not found")
+
+    sub, body = None, None
+    if request:
+        try:
+            payload = await request.json()
+            if isinstance(payload, dict):
+                sub = payload.get("ai_subject") or payload.get("subject")
+                body = payload.get("ai_draft") or payload.get("body")
+        except Exception:
+            pass
+
+    if sub and body:
+        # Sanitize em dashes/en dashes
+        sub = str(sub).replace("—", " - ").replace("–", " - ").strip()
+        body = str(body).replace(" — ", ", ").replace("—", ", ").replace(" – ", " - ").replace("–", " - ").strip()
+        db.update_lead_ai_draft(lead_id, sub, body)
+        return {"success": True, "lead_id": lead_id, "ai_subject": sub, "ai_draft": body, "saved_manual": True}
 
     opener = ai_router.generate_opener(lead)
     sub = opener.get("subject", f"Quick idea for {lead.get('company', 'your team')}")
@@ -674,6 +692,94 @@ async def generate_ai_drafts_batch():
             db.update_lead_ai_draft(lead["id"], opener.get("subject"), opener.get("body"))
             generated += 1
     return {"success": True, "generated_count": generated, "total_leads": len(leads)}
+
+
+@app.get("/api/templates", dependencies=[_auth])
+async def get_templates_endpoint():
+    """Returns all master outreach email templates."""
+    conn = db.get_db()
+    rows = conn.execute("SELECT id, name, type, subject, body FROM templates ORDER BY id ASC").fetchall()
+    conn.close()
+    result = []
+    for r in rows:
+        result.append({
+            "id": r["id"],
+            "name": r["name"],
+            "type": r["type"],
+            "subject": r["subject"],
+            "body": r["body"]
+        })
+    return {"success": True, "templates": result}
+
+
+@app.put("/api/templates/{template_id}", dependencies=[_auth])
+@app.post("/api/templates/{template_id}", dependencies=[_auth])
+async def update_template_endpoint(template_id: int, request: Request):
+    """Updates a master outreach email template."""
+    data = await request.json()
+    subject = (data.get("subject") or "").strip()
+    body = (data.get("body") or "").strip()
+    name = (data.get("name") or "").strip()
+    if not subject or not body:
+        raise HTTPException(status_code=400, detail="Subject and body are required")
+
+    # Sanitize any em/en dashes
+    subject = subject.replace("—", " - ").replace("–", " - ")
+    body = body.replace(" — ", ", ").replace("—", ", ").replace(" – ", " - ").replace("–", " - ")
+
+    conn = db.get_db()
+    if name:
+        conn.execute("UPDATE templates SET name=?, subject=?, body=? WHERE id=?", (name, subject, body, template_id))
+    else:
+        conn.execute("UPDATE templates SET subject=?, body=? WHERE id=?", (subject, body, template_id))
+    conn.commit()
+    conn.close()
+    return {"success": True, "id": template_id, "subject": subject, "body": body}
+
+
+@app.post("/api/templates/apply-bulk", dependencies=[_auth])
+async def apply_template_bulk(request: Request):
+    """Applies a chosen template to all leads in stage 'new' (or specified lead IDs)."""
+    data = await request.json()
+    template_id = data.get("template_id")
+    lead_ids = data.get("lead_ids")
+
+    conn = db.get_db()
+    tmpl = conn.execute("SELECT * FROM templates WHERE id=?", (template_id,)).fetchone()
+    if not tmpl:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Template not found")
+
+    query = "SELECT * FROM leads WHERE stage='new'"
+    params = []
+    if lead_ids and isinstance(lead_ids, list) and len(lead_ids) > 0:
+        placeholders = ','.join('?' for _ in lead_ids)
+        query = f"SELECT * FROM leads WHERE id IN ({placeholders})"
+        params = lead_ids
+
+    leads = conn.execute(query, params).fetchall()
+    updated_count = 0
+    import populate_real_leads_and_templates as pop
+
+    for l in leads:
+        lead_dict = dict(l)
+        first_name = (lead_dict.get("name") or "there").split()[0]
+        company = lead_dict.get("company") or "your brand"
+        niche = lead_dict.get("niche") or "DTC Brand"
+        followers = lead_dict.get("instagram_followers") or 0
+        order_lift, rev_lift = pop.get_lifts_by_niche_and_revenue(niche, followers)
+        icebreaker = lead_dict.get("personalized_icebreaker") or lead_dict.get("custom_hook") or f"Loved what {company} is doing, your creative direction and product positioning really stand out."
+
+        rendered_subj, rendered_body = pop.render_email_template(
+            {"subject": tmpl["subject"], "body": tmpl["body"]},
+            first_name, company, icebreaker, order_lift, rev_lift
+        )
+        conn.execute("UPDATE leads SET ai_subject=?, ai_draft=? WHERE id=?", (rendered_subj, rendered_body, lead_dict["id"]))
+        updated_count += 1
+
+    conn.commit()
+    conn.close()
+    return {"success": True, "updated_count": updated_count}
 
 
 @app.post("/api/leads/generate-and-queue", dependencies=[_auth])

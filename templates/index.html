@@ -570,6 +570,9 @@
               </div>
             </div>
             <div style="display:flex;gap:8px;align-items:center;">
+              <button class="btn-ghost-sm" id="btn-open-master-templates" style="border:1px solid rgba(99,102,241,0.4);color:#a5b4fc;font-weight:600;display:inline-flex;align-items:center;gap:6px;padding:6px 12px;border-radius:6px;background:rgba(99,102,241,0.1);cursor:pointer;">
+                📑 Master Templates
+              </button>
               <button class="btn-primary-sm" id="btn-leads-launch-campaign" style="background:linear-gradient(135deg,#00e082,#00a86b);font-weight:700;display:inline-flex;align-items:center;gap:6px;box-shadow:0 2px 10px rgba(0,224,130,0.3);">
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="5 3 19 12 5 21 5 3"/></svg>
                 Launch Campaign
@@ -2061,7 +2064,52 @@
         <button type="button" class="btn-ghost-sm" id="btn-send-preview-test-email">📧 Send Test to f12x.studio@gmail.com</button>
         <div style="display:flex; gap:8px;">
           <button type="button" class="btn-ghost-sm" id="btn-copy-preview-email">📋 Copy Text</button>
-          <button type="button" class="btn-primary-sm" id="btn-close-preview-done">Done</button>
+          <button type="button" class="btn-primary-sm" id="btn-save-preview-lead-email" style="background:#6366f1;">💾 Save to Lead</button>
+          <button type="button" class="btn-ghost-sm" id="btn-close-preview-done">Done</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- MASTER CAMPAIGN TEMPLATES MODAL -->
+  <div class="modal-overlay" id="backdrop-master-templates">
+    <div class="modal-box" style="max-width: 720px;">
+      <div class="modal-header">
+        <div>
+          <h3>Master Outreach Templates</h3>
+          <span style="font-size: 11.5px; color: var(--text-muted);">Bulk edit outreach templates and apply across all leads</span>
+        </div>
+        <button class="modal-close" id="btn-close-master-templates">✕</button>
+      </div>
+
+      <div style="display:flex; gap:8px; border-bottom:1px solid rgba(255,255,255,0.08); padding-bottom:10px; margin-bottom:14px;" id="master-template-tabs">
+        <!-- Dynamically filled with template tabs -->
+      </div>
+
+      <div class="form-field">
+        <label>Template Name</label>
+        <input type="text" id="tpl-master-name" style="font-weight:600;" />
+      </div>
+
+      <div class="form-field">
+        <label>Subject Line Template (Supports {{firstName}}, {{companyName}})</label>
+        <input type="text" id="tpl-master-subject" style="font-weight:600;" />
+      </div>
+
+      <div class="form-field">
+        <label>Email Body Template (Supports {{firstName}}, {{Email Copy}}, {{orderLift}}, {{revenueLift}}, {{accountSignature}})</label>
+        <textarea id="tpl-master-body" rows="10" style="font-family:inherit; font-size:13px; line-height:1.5;"></textarea>
+      </div>
+
+      <div class="modal-footer" style="justify-content: space-between;">
+        <button type="button" class="btn-primary-sm" id="btn-apply-template-bulk" style="background:linear-gradient(135deg,#00e082,#00a86b);font-weight:700;">
+          ⚡ Apply Template to All Leads
+        </button>
+        <div style="display:flex; gap:8px;">
+          <button type="button" class="btn-primary-sm" id="btn-save-master-template" style="background:#6366f1;">
+            💾 Save Template
+          </button>
+          <button type="button" class="btn-ghost-sm" id="btn-cancel-master-template">Close</button>
         </div>
       </div>
     </div>

@@ -944,9 +944,9 @@ document.addEventListener("DOMContentLoaded", () => {
       let aiDraftCell = "";
       if (l.ai_draft && l.ai_subject) {
         aiDraftCell = `
-          <div>
-            <span class="badge-verified" style="font-size:10px; cursor:pointer;" title="${esc(l.ai_subject)}">🤖 AI Ready</span>
-            <div style="font-size:11.5px; color:#cbd5e1; margin-top:3px; max-width:240px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="${esc(l.ai_subject)}">
+          <div class="btn-open-lead-ai" data-id="${l.id}" style="cursor:pointer;" title="Click to view & edit full email draft">
+            <span class="badge-verified" style="font-size:10px;">🤖 AI Ready</span>
+            <div style="font-size:11.5px; color:#cbd5e1; margin-top:3px; max-width:240px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
               <strong>${esc(l.ai_subject)}</strong>
             </div>
             <div style="font-size:11px; color:var(--text-dim); max-width:240px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
@@ -972,13 +972,13 @@ document.addEventListener("DOMContentLoaded", () => {
             </button>
           </td>
           <td>
-            <div style="display:flex; align-items:center; gap:10px;">
+            <div class="btn-open-lead-ai" data-id="${l.id}" style="display:flex; align-items:center; gap:10px; cursor:pointer;" title="Click to view & edit email draft">
               <div style="width:30px; height:30px; border-radius:8px; background:linear-gradient(135deg, rgba(126,206,206,0.3) 0%, rgba(33,84,232,0.4) 100%); display:flex; align-items:center; justify-content:center; font-weight:700; font-size:13px; color:#fff;">
                 ${initial}
               </div>
               <div>
-                <div style="font-weight:600; color:#fff;">${esc(l.name || "Prospect")}</div>
-                <div style="font-size:11.5px; color:var(--text-dim);"><code>${esc(l.email)}</code></div>
+                <div style="font-weight:600; color:#fff; text-decoration:underline dotted rgba(99,102,241,0.5);">${esc(l.name || "Prospect")}</div>
+                <div style="font-size:11.5px; color:#38bdf8;"><code>${esc(l.email)}</code></div>
               </div>
             </div>
           </td>
@@ -1270,7 +1270,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const l = previewEmailLead;
     const firstName = ((l.name || "there").split(" ")[0] || "there");
     const company   = l.company || "your brand";
-    const icebreaker = l.personalized_icebreaker || l.custom_hook || `Loved what ${company} is building — really stands out.`;
+    const icebreaker = l.personalized_icebreaker || l.custom_hook || `Loved what ${company} is building, really stands out.`;
     const followers = parseInt(l.instagram_followers) || 0;
     let orderLift = "15-25 more orders a day";
     let revLift   = "$30k-$50k in monthly revenue";
@@ -1280,13 +1280,13 @@ document.addEventListener("DOMContentLoaded", () => {
     const bodyEl = g("em-preview-body");
     if (!subEl || !bodyEl) return;
     if (tab === "a") {
-      subEl.value  = `${firstName} — quick one on ${company}'s ad spend`;
+      subEl.value  = `${firstName} - quick one on ${company}'s ad spend`;
       bodyEl.value = `Hey ${firstName},\n\n${icebreaker}\n\nI checked out your ad account and found a gap you're leaving on the table. We think we can get you ${orderLift} and ${revLift}.\n\nWant me to show you what I found?\n\n${sig}\n\nPS: got a skincare brand 15 more orders a day in 5 weeks.`;
     } else if (tab === "b") {
-      subEl.value  = `${firstName} — quick question on ${company}'s creative`;
+      subEl.value  = `${firstName} - quick question on ${company}'s creative`;
       bodyEl.value = `Hi ${firstName},\n\n${icebreaker}\n\nWe'll get you ${orderLift} and ${revLift} in 60 days. We run the creative end to end, you stay on delivery. No result, no invoice.\n\nWant to hear how?\n\n${sig}`;
     } else if (tab === "f1") {
-      subEl.value  = `Re: ${firstName} — quick one on ${company}'s ad spend`;
+      subEl.value  = `Re: ${firstName} - quick one on ${company}'s ad spend`;
       bodyEl.value = `Hi ${firstName},\n\nJust circling up in case it got lost. Still happy to show you what we found for ${company} if useful.\n\nWorth a quick look?\n\n${sig}`;
     }
   }
@@ -1295,6 +1295,23 @@ document.addEventListener("DOMContentLoaded", () => {
 
   on("btn-close-email-preview", "click", () => g("backdrop-email-preview")?.classList.remove("active"));
   on("btn-close-preview-done",  "click", () => g("backdrop-email-preview")?.classList.remove("active"));
+
+  on("btn-save-preview-lead-email", "click", async () => {
+    if (!previewEmailLead) return;
+    const sub  = g("em-preview-subject")?.value || "";
+    const body = g("em-preview-body")?.value    || "";
+    try {
+      await apiFetch(`/api/leads/${previewEmailLead.id}/ai-draft`, "POST", { ai_subject: sub, ai_draft: body });
+      previewEmailLead.ai_subject = sub;
+      previewEmailLead.ai_draft = body;
+      showToast("Saved customized email to lead!", "success");
+      showAlert(`✓ Saved customized email for ${previewEmailLead.name}! Ready to send.`, "success", 4000);
+      g("backdrop-email-preview")?.classList.remove("active");
+      loadLeads();
+    } catch (err) {
+      showToast(`Save error: ${err}`, "error");
+    }
+  });
 
   on("btn-copy-preview-email", "click", () => {
     const sub  = g("em-preview-subject")?.value || "";
@@ -1318,6 +1335,100 @@ document.addEventListener("DOMContentLoaded", () => {
       showToast(`✅ Sent from ${d.from || ""} (${d.sender_name || nextSenderName})`);
     } else {
       showToast("❌ " + ((d && d.error) || "Send failed"), "error");
+    }
+  });
+
+  // ═══════════════════════════════════════════════════════
+  //  MASTER OUTREACH TEMPLATES MANAGER
+  // ═══════════════════════════════════════════════════════
+  let masterTemplates = [];
+  let activeMasterTemplateId = null;
+
+  async function openMasterTemplatesModal() {
+    try {
+      const res = await apiFetch("/api/templates");
+      if (!res.success || !res.templates || res.templates.length === 0) {
+        showToast("No master templates found in database", "warning");
+        return;
+      }
+      masterTemplates = res.templates;
+      renderMasterTemplateTabs();
+      selectMasterTemplate(masterTemplates[0].id);
+      g("backdrop-master-templates")?.classList.add("active");
+    } catch (e) {
+      showToast("Error loading templates: " + e, "error");
+    }
+  }
+
+  function renderMasterTemplateTabs() {
+    const tabsContainer = g("master-template-tabs");
+    if (!tabsContainer) return;
+    tabsContainer.innerHTML = masterTemplates.map(t => {
+      const isSel = t.id === activeMasterTemplateId;
+      return `<button type="button" class="btn-ghost-sm btn-tpl-tab" data-id="${t.id}" style="${isSel ? 'background:#6366f1;color:#fff;' : ''}">${esc(t.name)}</button>`;
+    }).join("");
+
+    tabsContainer.querySelectorAll(".btn-tpl-tab").forEach(btn => {
+      btn.addEventListener("click", () => selectMasterTemplate(parseInt(btn.dataset.id)));
+    });
+  }
+
+  function selectMasterTemplate(id) {
+    activeMasterTemplateId = id;
+    renderMasterTemplateTabs();
+    const t = masterTemplates.find(x => x.id === id);
+    if (!t) return;
+    setVal("tpl-master-name", t.name || "");
+    setVal("tpl-master-subject", t.subject || "");
+    setVal("tpl-master-body", t.body || "");
+  }
+
+  on("btn-open-master-templates", "click", openMasterTemplatesModal);
+  on("btn-close-master-templates", "click", () => g("backdrop-master-templates")?.classList.remove("active"));
+  on("btn-cancel-master-template", "click", () => g("backdrop-master-templates")?.classList.remove("active"));
+
+  on("btn-save-master-template", "click", async () => {
+    if (!activeMasterTemplateId) return;
+    const name = getVal("tpl-master-name");
+    const subject = getVal("tpl-master-subject");
+    const body = getVal("tpl-master-body");
+    try {
+      const res = await apiFetch(`/api/templates/${activeMasterTemplateId}`, "POST", { name, subject, body });
+      if (res.success) {
+        showToast("Master template saved!", "success");
+        const idx = masterTemplates.findIndex(x => x.id === activeMasterTemplateId);
+        if (idx !== -1) {
+          masterTemplates[idx].name = name;
+          masterTemplates[idx].subject = subject;
+          masterTemplates[idx].body = body;
+        }
+      } else {
+        showToast("Failed to save template", "error");
+      }
+    } catch (e) {
+      showToast("Error saving template: " + e, "error");
+    }
+  });
+
+  on("btn-apply-template-bulk", "click", async () => {
+    if (!activeMasterTemplateId) return;
+    if (!confirm("Apply this template across all leads in stage 'new'? This will regenerate email subjects and bodies with each lead's personal details.")) return;
+    const btn = g("btn-apply-template-bulk");
+    if (btn) { btn.textContent = "Applying across all leads…"; btn.disabled = true; }
+    try {
+      const res = await apiFetch("/api/templates/apply-bulk", "POST", { template_id: activeMasterTemplateId });
+      if (res.success) {
+        showToast(`Template applied to ${res.updated_count} leads!`, "success");
+        showAlert(`🎉 Successfully updated ${res.updated_count} leads with the master template!`, "success", 5000);
+        g("backdrop-master-templates")?.classList.remove("active");
+        loadLeads();
+      } else {
+        showToast("Notice: " + (res.message || "Failed to apply"), "warning");
+      }
+    } catch (e) {
+      showToast("Error applying template: " + e, "error");
+    } finally {
+      if (btn) { btn.textContent = "⚡ Apply Template to All Leads"; btn.disabled = false; }
     }
   });
 
@@ -1504,7 +1615,9 @@ document.addEventListener("DOMContentLoaded", () => {
     const sub = getVal("ai-lead-modal-subject");
     const body = getVal("ai-lead-modal-body");
     try {
-      await apiFetch(`/api/leads/${activeLeadForAiModal.id}/ai-draft`, "POST");
+      await apiFetch(`/api/leads/${activeLeadForAiModal.id}/ai-draft`, "POST", { ai_subject: sub, ai_draft: body });
+      activeLeadForAiModal.ai_subject = sub;
+      activeLeadForAiModal.ai_draft = body;
       showToast("Custom AI pitch saved for lead!", "success");
       showAlert(`✓ Saved custom AI pitch for ${activeLeadForAiModal.name}! Will be dispatched next.`, "success", 4000);
       g("backdrop-lead-ai-draft")?.classList.remove("active");
