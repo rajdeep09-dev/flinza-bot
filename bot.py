@@ -2065,6 +2065,100 @@ async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await reply(update, msg)
 
 
+def _format_mainboard_text() -> str:
+    s = db.get_stats()
+    counts = db.get_pipeline_breakdown()
+    q_run = email_queue.is_running()
+    q_paused = email_queue.is_paused()
+    status_str = "⏸ Paused" if q_paused else ("🟢 Running" if q_run else "🔴 Stopped / Idle")
+
+    now_str = datetime.now().strftime("%H:%M:%S UTC")
+    rep_badge = f"🔥 {s['unhandled_replies']} WAITING" if s['unhandled_replies'] > 0 else "0 (All Clear)"
+
+    return (
+        f"🖥️ <b>FLINZA OUTREACH MAINBOARD</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"⚙️ <b>Engine Status:</b> <code>{status_str}</code>\n"
+        f"🌐 <b>Nexcloud Server:</b> <code>n4.nexcloud.in:2007</code>\n"
+        f"🕒 <b>Updated:</b> <code>{now_str}</code>\n\n"
+        f"📊 <b>Today's Velocity:</b>\n"
+        f"• 📤 Sent Today: <b>{s['sent_today']}</b> emails\n"
+        f"• 📬 Queue Pending: <b>{s['queued']}</b> leads\n"
+        f"• 🔋 Daily Quota Left: <b>{s['remaining_today']}</b> sends\n"
+        f"• 📨 Inbound Replies: <b>{rep_badge}</b>\n\n"
+        f"👥 <b>CRM Pipeline:</b>\n"
+        f"• Total Leads: <b>{s['total_leads']}</b>\n"
+        f"• Fresh / New: <b>{s['new_leads']}</b>\n"
+        f"• Contacted: <b>{counts.get('contacted', 0)}</b>\n"
+        f"• In Discussion: <b>{counts.get('replied', 0)}</b>\n\n"
+        f"📬 <b>Fleet Health:</b>\n"
+        f"• Active Inboxes: <b>{s['accounts']}</b> Spacemail mailboxes\n"
+        f"• IMAP Reply Sync: {'🟢 Online' if reply_watcher.is_running() else '🟡 Standby'}"
+    )
+
+
+def _get_mainboard_keyboard():
+    q_run = email_queue.is_running()
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("⏹ Stop Campaign" if q_run else "🚀 Start Campaign", callback_data="board:stop" if q_run else "board:start"),
+            InlineKeyboardButton("📥 View Replies", callback_data="ui:replies"),
+        ],
+        [
+            InlineKeyboardButton("📊 Pipeline Funnel", callback_data="ui:stats"),
+            InlineKeyboardButton("🔄 Refresh Board", callback_data="board:refresh"),
+        ],
+        [
+            InlineKeyboardButton("🌐 Open Web Studio", url="http://n4.nexcloud.in:2007"),
+        ]
+    ])
+
+
+@auth_required
+async def cmd_mainboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = _format_mainboard_text()
+    keyboard = _get_mainboard_keyboard()
+    await reply(update, text, reply_markup=keyboard)
+
+
+@auth_cb
+async def cb_mainboard_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    action = update.callback_query.data.split(":")[1]
+    if action == "refresh":
+        await update.callback_query.answer("Board Refreshed 🔄")
+        try:
+            await update.callback_query.edit_message_text(
+                _format_mainboard_text(),
+                parse_mode=ParseMode.HTML,
+                reply_markup=_get_mainboard_keyboard()
+            )
+        except Exception:
+            pass
+    elif action == "start":
+        await update.callback_query.answer("Starting Campaign Queue…")
+        email_queue.start_queue()
+        try:
+            await update.callback_query.edit_message_text(
+                _format_mainboard_text(),
+                parse_mode=ParseMode.HTML,
+                reply_markup=_get_mainboard_keyboard()
+            )
+        except Exception:
+            pass
+    elif action == "stop":
+        await update.callback_query.answer("Stopping Campaign…")
+        email_queue.stop_queue()
+        try:
+            await update.callback_query.edit_message_text(
+                _format_mainboard_text(),
+                parse_mode=ParseMode.HTML,
+                reply_markup=_get_mainboard_keyboard()
+            )
+        except Exception:
+            pass
+
+
+
 @auth_required
 async def cmd_activity(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logs  = db.get_recent_activity(20)
@@ -2716,10 +2810,13 @@ def build_app() -> Application:
 
     # ── Interactive UI Menu Handlers ─────────────────────────
     app.add_handler(CommandHandler("menu",           cmd_start))
+    app.add_handler(CommandHandler("mainboard",      cmd_mainboard))
+    app.add_handler(CommandHandler("board",          cmd_mainboard))
     app.add_handler(CommandHandler("studio",         cmd_studio))
     app.add_handler(CommandHandler("seturl",         cmd_seturl))
     app.add_handler(CommandHandler("runcmd",         cmd_runcmd))
     app.add_handler(CallbackQueryHandler(cb_ui_dispatcher,   pattern=r"^ui:"))
+    app.add_handler(CallbackQueryHandler(cb_mainboard_action, pattern=r"^board:"))
 
     # ── Inline button callbacks ───────────────────────────────
     app.add_handler(CallbackQueryHandler(cb_campaign_go,     pattern=r"^campaign_go$"))

@@ -76,10 +76,45 @@ def _notify(callback, msg: str):
             pass
 
 
-def _in_smart_hours() -> bool:
-    """Returns True if current hour is within configured sending window."""
+def _in_smart_hours(lead: dict = None) -> bool:
+    """
+    Returns True if current time is within configured sending window.
+    Supports country-specific timetables (US, UK, UAE, AU, CA, IN, etc.) via ZoneInfo.
+    """
     if db.get_setting("smart_hours_enabled", "0") != "1":
         return True
+
+    # 1. Country-specific business hours check
+    if lead:
+        try:
+            import json
+            from zoneinfo import ZoneInfo
+            from datetime import timezone as _tz
+
+            c_code = (lead.get("country") or "").strip().upper()
+            email_addr = (lead.get("email") or "").lower()
+            if not c_code and "@" in email_addr:
+                tld = email_addr.split("@")[-1].rsplit(".", 1)[-1]
+                tld_map = {"uk": "UK", "in": "IN", "ae": "UAE", "au": "AU", "ca": "CA", "us": "US"}
+                c_code = tld_map.get(tld, "")
+
+            raw_hours = db.get_setting("sending_hours", "")
+            if raw_hours:
+                hours_cfg = json.loads(raw_hours)
+                rule = hours_cfg.get(c_code) or hours_cfg.get("default")
+                if rule and rule.get("enabled", True):
+                    tz = ZoneInfo(rule.get("timezone", "UTC"))
+                    now_local = datetime.now(_tz.utc).astimezone(tz)
+                    cur_str = now_local.strftime("%H:%M")
+                    start_str = rule.get("start", "09:00")
+                    end_str = rule.get("end", "18:00")
+                    if now_local.weekday() >= 5 and db.get_setting("skip_weekends", "0") == "1":
+                        return False
+                    return start_str <= cur_str < end_str
+        except Exception as e_tz:
+            logger.debug(f"Country timezone check fallback: {e_tz}")
+
+    # 2. General server hour window fallback
     now_hour = datetime.now().hour
     try:
         start = int(db.get_setting("smart_hours_start", "9"))
@@ -134,21 +169,22 @@ def _process_loop(status_callback=None):
             if not _queue_running or _queue_paused:
                 break
 
-            if not _in_smart_hours():
-                _notify(status_callback, "⏰ Outside smart-hours — pausing until window opens")
-                break
-
-            remaining = db.total_remaining_today()
-            if remaining <= 0:
-                _notify(status_callback, f"🚫 Daily limit hit. {len(queued)} still in queue.")
-                break
-
             to_email  = email_row["to_email"]
             subject   = email_row["subject"]
             body      = email_row["body"]
             email_id  = email_row["id"]
             lead_id   = email_row["lead_id"]
             msg_type  = email_row["message_type"]
+
+            lead = db.get_lead(lead_id) if lead_id else db.get_lead_by_email(to_email)
+            if not _in_smart_hours(lead):
+                # Outside business hours for this lead's country, skip to next lead
+                continue
+
+            remaining = db.total_remaining_today()
+            if remaining <= 0:
+                _notify(status_callback, f"🚫 Daily limit hit. {len(queued)} still in queue.")
+                break
 
             preferred_from = email_row.get("from_account")
             account = None
@@ -174,7 +210,7 @@ def _process_loop(status_callback=None):
             account["smtp_user"] = account.get("smtp_user") or from_addr
             account["smtp_pass"] = account.get("smtp_pass") or account.get("app_password")
             account["smtp_host"] = account.get("smtp_host") or "mail.spacemail.com"
-            account["smtp_port"] = account.get("smtp_port") or 465
+            account["smtp_port"] = account.get("smtp_port") or 587
             account["provider"] = account.get("provider") or "spacemail"
 
             # Current active rotating IP node info

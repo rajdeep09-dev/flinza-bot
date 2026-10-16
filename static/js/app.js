@@ -3207,6 +3207,15 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }, 5000);
 
+  // Instant device sync: When tab becomes visible or receives focus (e.g. switching back on phone or laptop)
+  window.addEventListener("focus", () => {
+    loadWebmailThreads(currentWebmailFolder, activeSearchQuery, currentWebmailPage, currentWebmailFilter);
+  });
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) {
+      loadWebmailThreads(currentWebmailFolder, activeSearchQuery, currentWebmailPage, currentWebmailFilter);
+    }
+  });
 
 });
 

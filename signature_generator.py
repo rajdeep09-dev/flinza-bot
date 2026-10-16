@@ -61,10 +61,15 @@ def generate_glassmorphic_signature_html(
     """
     cfg = get_signature_settings()
 
-    name    = sender_name or cfg.get("sig_name", "Alex Vance")
+    cfg_name = (cfg.get("sig_name") or "").strip()
+    if not sender_name and sender_email:
+        local_name = sender_email.split("@")[0].replace(".", " ").replace("-", " ").title()
+        if local_name:
+            sender_name = local_name.split()[0]
+    name = sender_name or (cfg_name if cfg_name != "Alex Vance" else "Raifa")
     title   = sender_title or cfg.get("sig_title", "Growth Partner")
     company = sender_company or cfg.get("sig_company", "Flinza Agency")
-    email   = sender_email or "alex@flinza.io"
+    email   = sender_email or (f"{name.lower()}@flinzaworks.in")
     web     = sender_website or cfg.get("sig_website", "https://flinza.io")
     btn_txt = cta_text or cfg.get("sig_cta_text", "Book a 10-Min Growth Audit")
     btn_url = cta_url or cfg.get("sig_cta_url", "https://flinza.io/audit")

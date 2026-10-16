@@ -76,6 +76,71 @@ def check_now(notify_callback=None) -> list:
     return new_replies
 
 
+def notify_telegram_reply(reply_data: dict):
+    """
+    Sends an instant, rich Telegram alert to admin whenever an email/reply arrives.
+    Runs in a detached daemon thread so IMAP operations never block.
+    """
+    def _send():
+        try:
+            import config
+            import requests
+            token = getattr(config, "TELEGRAM_BOT_TOKEN", "") or "8898091469:AAHc5IT_09A2oXgvzzTM6Ehxv9-kF2V03Jg"
+            uid = getattr(config, "ALLOWED_USER_ID", "") or 6642913680
+            if not token or not uid:
+                return
+
+            lead_name = reply_data.get("lead_name") or reply_data.get("from_email") or "Prospect"
+            company = reply_data.get("company") or ""
+            from_email = reply_data.get("from_email") or ""
+            to_email = reply_data.get("to_email") or ""
+            subject = reply_data.get("subject") or "No Subject"
+            body = (reply_data.get("body") or "").strip()
+            intent = reply_data.get("intent", "general_inbound")
+            sentiment = reply_data.get("sentiment", "neutral")
+            is_lead = reply_data.get("is_lead", True)
+
+            sentiment_icon = "🔥" if sentiment == "positive" else ("⚠️" if sentiment == "negative" else "💬")
+            intent_icon = "🎯" if intent in ("interested", "meeting_request", "call_booked") else ("📬" if is_lead else "✉️")
+            header_text = "LEAD REPLIED!" if is_lead else "NEW INCOMING EMAIL"
+
+            snippet = body[:450] + ("..." if len(body) > 450 else "")
+
+            comp_str = f" ({company})" if company else ""
+            msg = (
+                f"{sentiment_icon} <b>{header_text}</b> {intent_icon}\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"👤 <b>From:</b> {lead_name}{comp_str}\n"
+                f"📧 <code>{from_email}</code>\n"
+                f"📬 <b>To Mailbox:</b> <code>{to_email}</code>\n"
+                f"📌 <b>Subject:</b> {subject}\n"
+            )
+            if is_lead:
+                msg += f"🏷 <b>Intent:</b> <code>{intent}</code> | <b>Sentiment:</b> <code>{sentiment}</code>\n"
+
+            msg += f"\n📝 <b>Message:</b>\n<i>\"{snippet}\"</i>\n"
+
+            ai_draft = reply_data.get("ai_draft_body")
+            if ai_draft and is_lead:
+                draft_snippet = ai_draft[:300] + ("..." if len(ai_draft) > 300 else "")
+                msg += f"\n🤖 <b>AI Suggested Reply:</b>\n<i>\"{draft_snippet}\"</i>\n"
+
+            requests.post(
+                f"https://api.telegram.org/bot{token}/sendMessage",
+                json={
+                    "chat_id": int(uid),
+                    "text": msg,
+                    "parse_mode": "HTML"
+                },
+                timeout=5
+            )
+        except Exception as e:
+            logger.debug(f"Telegram reply alert notice: {e}")
+
+    threading.Thread(target=_send, daemon=True, name="TelegramReplyNotifier").start()
+
+
+
 # ═══════════════════════════════════════════════════════════════
 #                     WATCH LOOP
 # ═══════════════════════════════════════════════════════════════
@@ -308,23 +373,29 @@ def _process_message(mail, msg_id, our_email, notify_callback):
         db.cancel_followups(lead["id"])
         db.log_activity("reply_received", f"From: {sender_email} [{intent_label}] | Subj: {subject[:50]}")
 
+        reply_dict = {
+            "reply_id":       reply_id,
+            "lead_id":        lead["id"],
+            "lead_name":      lead["name"],
+            "lead_handle":    lead["handle"],
+            "company":        lead.get("company", ""),
+            "from_email":     sender_email,
+            "to_email":       to_email,
+            "subject":        subject,
+            "body":           body[:1200],
+            "intent":         intent_label,
+            "sentiment":      sentiment,
+            "is_unsubscribe": is_unsub,
+            "is_lead":        True,
+            "ai_draft_subject": ai_draft_subject,
+            "ai_draft_body":    ai_draft_body[:1200] if ai_draft_body else None,
+        }
+        # Instant Telegram Alert
+        notify_telegram_reply(reply_dict)
+
         if notify_callback:
             try:
-                notify_callback({
-                    "reply_id":       reply_id,
-                    "lead_id":        lead["id"],
-                    "lead_name":      lead["name"],
-                    "lead_handle":    lead["handle"],
-                    "from_email":     sender_email,
-                    "to_email":       to_email,
-                    "subject":        subject,
-                    "body":           body[:1200],
-                    "intent":         intent_label,
-                    "sentiment":      sentiment,
-                    "is_unsubscribe": is_unsub,
-                    "ai_draft_subject": ai_draft_subject,
-                    "ai_draft_body":    ai_draft_body[:1200] if ai_draft_body else None,
-                })
+                notify_callback(reply_dict)
             except Exception as e:
                 logger.warning(f"Failed to fire reply callback: {e}")
     else:
@@ -348,6 +419,24 @@ def _process_message(mail, msg_id, our_email, notify_callback):
         conn.commit()
         conn.close()
         db.log_activity("inbox_email_received", f"Master {our_email} got email from: {sender_email} | Subj: {subject[:50]}")
+
+        # Alert Telegram for general incoming mailbox messages as well
+        notify_telegram_reply({
+            "reply_id":       reply_id,
+            "lead_id":        None,
+            "lead_name":      _extract_name(from_header) or sender_email.split('@')[0].capitalize(),
+            "company":        "",
+            "from_email":     sender_email,
+            "to_email":       to_email,
+            "subject":        subject,
+            "body":           body[:1200],
+            "intent":         "general_inbound",
+            "sentiment":      "neutral",
+            "is_unsubscribe": False,
+            "is_lead":        False,
+            "ai_draft_subject": None,
+            "ai_draft_body":    None,
+        })
 
 
 # ═══════════════════════════════════════════════════════════════

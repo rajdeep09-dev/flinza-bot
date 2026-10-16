@@ -182,7 +182,19 @@ def send_email_now(to_email: str, subject: str, body: str, account: dict, tracki
 
     # Append plain-text signature
     if sig_cfg.get("sig_enabled", "1") == "1":
-        sig_name    = sig_cfg.get("sig_name", display_name)
+        # Dynamic sender persona:
+        # Each mailbox persona signs off with its OWN name (e.g. Raifa for raifa@flinzaworks.in, Zoya for zoya@...)
+        sender_first = _make_display_name(from_email)
+        if " from " in sender_first:
+            sender_first = sender_first.split(" from ")[0].strip()
+
+        cfg_name = (sig_cfg.get("sig_name") or "").strip()
+        # If cfg_name is the generic default "Alex Vance", dynamically use the actual mailbox sender (e.g. Raifa)
+        if cfg_name and cfg_name != "Alex Vance":
+            sig_name = cfg_name
+        else:
+            sig_name = sender_first or cfg_name or "Raifa"
+
         sig_title   = sig_cfg.get("sig_title", "")
         sig_company = sig_cfg.get("sig_company", "")
         sig_phone   = sig_cfg.get("sig_phone", "")
