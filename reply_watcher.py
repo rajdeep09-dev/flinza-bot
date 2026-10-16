@@ -30,6 +30,7 @@ logger = logging.getLogger(__name__)
 _watcher_running  = False
 _watcher_thread   = None
 _last_check_times = {}   # email_addr → datetime of last IMAP check
+_account_cooldowns = {}  # email_addr → timestamp when cooldown expires
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -163,7 +164,7 @@ def _watch_loop(notify_callback):
     global _watcher_running
     while _watcher_running:
         try:
-            check_seconds = int(db.get_setting("reply_check_seconds", "8"))
+            check_seconds = int(db.get_setting("reply_check_seconds", "60"))
             _check_all_accounts(notify_callback)
             db.record_reply_check()
         except Exception as e:
@@ -189,7 +190,7 @@ def _check_all_accounts(notify_callback):
             return
 
         from concurrent.futures import ThreadPoolExecutor, as_completed
-        with ThreadPoolExecutor(max_workers=8) as executor:
+        with ThreadPoolExecutor(max_workers=3) as executor:
             futures = {
                 executor.submit(_check_account, acc, notify_callback, 10): acc["email"]
                 for acc in accounts
@@ -209,6 +210,11 @@ def _check_account(account, notify_callback, max_messages=10):
     password   = account.get("app_password") or account.get("smtp_pass")
     if not password:
         logger.warning(f"No password found for {email_addr}, skipping IMAP check")
+        return
+
+    now_ts = time.time()
+    if now_ts < _account_cooldowns.get(email_addr, 0):
+        # In cooldown to allow server-side session lock to clear naturally
         return
 
     conn = db.get_db()
@@ -277,7 +283,12 @@ def _check_account(account, notify_callback, max_messages=10):
         _last_check_times[email_addr] = datetime.now()
 
     except imaplib.IMAP4.error as e:
-        logger.warning(f"IMAP error for {email_addr}: {e}")
+        err_msg = str(e).lower()
+        if "unavailable" in err_msg or "temp" in err_msg:
+            _account_cooldowns[email_addr] = time.time() + 180
+            logger.warning(f"IMAP temporary lock for {email_addr} ({e}). Cooldown set for 3 minutes.")
+        else:
+            logger.warning(f"IMAP error for {email_addr}: {e}")
     except Exception as e:
         logger.warning(f"Error checking {email_addr}: {e}")
     finally:
