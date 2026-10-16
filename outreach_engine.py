@@ -615,7 +615,7 @@ def pick_best_account(lead_email: str = "", exclude: Optional[List[str]] = None)
             "smtp_user":    d.get("smtp_user") or d["email"],
             "smtp_pass":    d.get("smtp_pass") or d.get("app_password"),
             "smtp_host":    d.get("smtp_host") or ("mail.spacemail.com" if is_space else "smtp.gmail.com"),
-            "smtp_port":    int(d.get("smtp_port") or (465 if is_space else 587)),
+            "smtp_port":    int(d.get("smtp_port") or (587 if is_space else 587)),
             "proxy_url":    d.get("proxy_url"),
             "display_name": d.get("label") or d["email"].split("@")[0].replace(".", " ").title(),
             "routing_mode": "spacemail" if is_space else "gmail",

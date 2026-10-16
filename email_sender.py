@@ -306,10 +306,11 @@ def send_email_now(to_email: str, subject: str, body: str, account: dict, tracki
         if is_spacemail:
             provider = "spacemail"
             target_host = account.get("smtp_host") or "mail.spacemail.com"
-            target_port = int(account.get("smtp_port") or 465)
+            # Render free tier blocks port 465 (SSL) — use 587 (STARTTLS) instead
+            target_port = int(account.get("smtp_port") or 587)
         else:
             target_host = account.get("smtp_host") or default_hosts.get(provider, "mail.spacemail.com")
-            target_port = int(account.get("smtp_port") or (465 if provider in ("namecheap", "zoho_in", "spacemail") else 587))
+            target_port = int(account.get("smtp_port") or (587 if provider in ("namecheap", "zoho_in", "spacemail") else 587))
 
     try:
         # Proper MIME formatting: use pure text/plain if no HTML, multipart/alternative only if HTML is present
@@ -470,7 +471,7 @@ def send_test_email(to_email: str, from_account_email: str = None, target_accoun
                     "smtp_pass": a.get("smtp_pass") or a.get("app_password"),
                     "provider": a.get("provider") or "spacemail",
                     "smtp_host": a.get("smtp_host") or "mail.spacemail.com",
-                    "smtp_port": int(a.get("smtp_port") or 465),
+                    "smtp_port": int(a.get("smtp_port") or 587),
                     "proxy_url": a.get("proxy_url"),
                     "display_name": a.get("label") or _make_display_name(a["email"])
                 }
@@ -511,7 +512,7 @@ def send_test_email(to_email: str, from_account_email: str = None, target_accoun
     if not account.get("smtp_host"):
         account["smtp_host"] = "mail.spacemail.com"
     if not account.get("smtp_port"):
-        account["smtp_port"] = 465
+        account["smtp_port"] = 587
 
     # Ultra-natural subject and body — mimics a real 1:1 human email
     # Ultra-natural subject and body — mimics a genuine 1:1 direct email
@@ -708,7 +709,7 @@ def notify_telegram_outbound(to_email: str, from_addr: str, subject: str, lead_n
 #                    PROXY SOCKET SUPPORT
 # ═══════════════════════════════════════════════════════════════
 
-def _make_smtp_connection(proxy_url: str | None, target_host: str = "mail.spacemail.com", target_port: int = 465, timeout: int = 6) -> smtplib.SMTP:
+def _make_smtp_connection(proxy_url: str | None, target_host: str = "mail.spacemail.com", target_port: int = 587, timeout: int = 6) -> smtplib.SMTP:
     """Create SMTP connection, optionally routed through a proxy, supporting both SSL (465) and STARTTLS (587)."""
     if not proxy_url:
         if target_port == 465:

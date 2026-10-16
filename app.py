@@ -117,6 +117,15 @@ def check_and_migrate_db():
             except Exception:
                 pass
         conn.commit()
+        # Migrate Spacemail accounts from port 465 → 587 (Render free tier blocks 465)
+        try:
+            conn.execute(
+                "UPDATE gmail_accounts SET smtp_port=587 WHERE smtp_port=465 AND (smtp_host LIKE '%spacemail%' OR provider='spacemail' OR smtp_host IS NULL OR smtp_host='')"
+            )
+            conn.commit()
+            logger.info("✅ Spacemail accounts migrated to port 587 (STARTTLS).")
+        except Exception as mig_e:
+            logger.warning(f"Port migration notice: {mig_e}")
         conn.close()
         logger.info("✅ Database migrations verified successfully.")
     except Exception as e:

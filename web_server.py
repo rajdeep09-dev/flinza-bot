@@ -994,9 +994,9 @@ async def test_account_creds(request: Request):
                 if not host:
                     host = acc_row.get("smtp_host") or "mail.spacemail.com"
                 if not port:
-                    port = acc_row.get("smtp_port") or 465
+                    port = acc_row.get("smtp_port") or 587
         host = host or "mail.spacemail.com"
-        port = int(port or 465)
+        port = int(port or 587)
         res = await asyncio.to_thread(email_sender.test_account_connection, account_email, pwd, smtp_host=host, smtp_port=port)
         return res
 
@@ -1024,7 +1024,7 @@ async def test_account_creds(request: Request):
     email_addr = acc["email"]
     password = acc.get("smtp_pass") or acc.get("app_password")
     smtp_host = acc.get("smtp_host") or "mail.spacemail.com"
-    smtp_port = int(acc.get("smtp_port") or 465)
+    smtp_port = int(acc.get("smtp_port") or 587)
 
     sender_first = _sender_first_name(email_addr)
     display_name = f"{sender_first} from Flinza"
@@ -1818,7 +1818,7 @@ async def compose_and_send_email(request: Request):
                     "display_name": a.get("label") or a.get("display_name") or "",
                     "provider": a.get("provider") or ("spacemail" if is_space else "gmail"),
                     "smtp_host": a.get("smtp_host") or ("mail.spacemail.com" if is_space else "smtp.gmail.com"),
-                    "smtp_port": int(a.get("smtp_port") or (465 if is_space else 587)),
+                    "smtp_port": int(a.get("smtp_port") or (587 if is_space else 587)),
                 }
                 break
 
