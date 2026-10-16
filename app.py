@@ -319,7 +319,9 @@ def main():
         # because Render internal health check expects port 10000
         port = 10000 if str(raw_port).strip() == "7880" else int(raw_port)
     else:
-        port = int(os.environ.get("PORT", 7880))
+        # Pterodactyl / Nexcloud assigns port via SERVER_PORT (e.g. 2007)
+        raw_port = os.environ.get("SERVER_PORT") or os.environ.get("PORT") or 2007
+        port = int(raw_port)
 
     host = os.environ.get("HOST", "0.0.0.0")
 
