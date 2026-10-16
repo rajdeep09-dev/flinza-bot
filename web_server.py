@@ -1027,7 +1027,7 @@ async def test_account_creds(request: Request):
     smtp_port = int(acc.get("smtp_port") or 587)
 
     sender_first = _sender_first_name(email_addr)
-    display_name = f"{sender_first} from Flinza"
+    display_name = sender_first
     custom_subject = body.get("subject")
     custom_body = body.get("body")
 

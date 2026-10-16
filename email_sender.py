@@ -161,7 +161,14 @@ def send_email_now(to_email: str, subject: str, body: str, account: dict, tracki
     smtp_user    = account.get("smtp_user") or from_email
     smtp_pass    = account.get("smtp_pass") or account.get("app_password")
     proxy_url    = account.get("proxy_url")
-    display_name = account.get("display_name") or _make_display_name(from_email)
+    # Ensure display_name uses the mailbox owner's first name (e.g. Hannah for hannah@..., Raifa for raifa@...)
+    # Never allow generic "Flinza Fleet", "Spacemail", or system labels to appear as the sender's name
+    sender_first = _make_display_name(from_email)
+    raw_name = (account.get("display_name") or account.get("label") or "").strip()
+    if not raw_name or any(g in raw_name.lower() for g in ("flinza fleet", "spacemail", "gmail", "fleet")):
+        display_name = sender_first
+    else:
+        display_name = raw_name
     acct_type    = account.get("type", "spacemail")
 
     # 1. Resolve Spintax in subject and body for unique fingerprinting
@@ -831,11 +838,11 @@ def _http_proxy_connect(proxy_host, proxy_port, target_host, target_port,
 # ═══════════════════════════════════════════════════════════════
 
 def _make_display_name(email: str) -> str:
-    """Derive a display name from email address."""
+    """Derive clean human first name from email address (e.g. hannah@... -> Hannah, raifa@... -> Raifa)."""
     local = email.split("@")[0]
-    # Clean up common patterns
-    name = re.sub(r"[._\-+]", " ", local).title()
-    return name.strip() or "Flinza"
+    name = re.sub(r"[._\-+]", " ", local).title().strip()
+    first = name.split()[0] if name else "Flinza"
+    return first
 
 
 def test_account_connection(email: str, app_password: str, smtp_host: str = "mail.spacemail.com", smtp_port: int = 465) -> dict:

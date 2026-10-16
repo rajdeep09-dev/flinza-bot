@@ -167,13 +167,14 @@ def sync_to_db(daily_limit: int = 80, label: str = "Spacemail") -> dict:
                 )
                 updated += 1
             else:
+                first_name = email.split("@")[0].split(".")[0].split("_")[0].capitalize()
                 conn.execute(
                     """INSERT INTO gmail_accounts
                            (email, app_password, daily_limit, last_reset_date, provider,
                             smtp_host, smtp_port, smtp_user, smtp_pass, label)
                        VALUES (?,?,?,?,?,?,?,?,?,?)""",
                     (email, acc["password"], daily_limit, date.today().isoformat(),
-                     PROVIDER, SMTP_HOST, SMTP_PORT, email, acc["password"], label),
+                     PROVIDER, SMTP_HOST, SMTP_PORT, email, acc["password"], first_name),
                 )
                 created += 1
         conn.commit()

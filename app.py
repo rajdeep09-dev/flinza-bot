@@ -126,6 +126,20 @@ def check_and_migrate_db():
             logger.info("✅ Spacemail accounts migrated to port 587 (STARTTLS).")
         except Exception as mig_e:
             logger.warning(f"Port migration notice: {mig_e}")
+
+        # Migrate any generic 'Flinza Fleet' or 'Spacemail' labels to clean first names (e.g. Hannah, Raifa)
+        try:
+            acc_rows = conn.execute("SELECT email, label FROM gmail_accounts").fetchall()
+            for ar in acc_rows:
+                em = ar[0]
+                lbl = (ar[1] or "").strip()
+                if not lbl or any(g in lbl.lower() for g in ("flinza fleet", "spacemail", "gmail", "fleet")):
+                    first_n = em.split("@")[0].split(".")[0].split("_")[0].capitalize()
+                    conn.execute("UPDATE gmail_accounts SET label=? WHERE email=?", (first_n, em))
+            conn.commit()
+            logger.info("✅ Sender persona labels migrated to human first names.")
+        except Exception as lbl_e:
+            logger.warning(f"Label migration notice: {lbl_e}")
         conn.close()
         logger.info("✅ Database migrations verified successfully.")
     except Exception as e:

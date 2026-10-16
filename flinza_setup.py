@@ -238,12 +238,13 @@ def load_spacemail_accounts():
             """, (password, smtp_host, smtp_port, email, password, email))
             updated += 1
         else:
+            first_name = email.split("@")[0].split(".")[0].split("_")[0].capitalize()
             conn.execute("""
                 INSERT INTO gmail_accounts
                     (email, app_password, daily_limit, last_reset_date, provider,
                      smtp_host, smtp_port, smtp_user, smtp_pass, label)
                 VALUES (?,?,50,?,?,?,?,?,?,?)
-            """, (email, password, today, "spacemail", smtp_host, smtp_port, email, password, "Flinza Fleet"))
+            """, (email, password, today, "spacemail", smtp_host, smtp_port, email, password, first_name))
             created += 1
 
     conn.commit()
