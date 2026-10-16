@@ -1402,7 +1402,7 @@ async def get_unibox_replies():
 
 @app.post("/api/unibox/reply", dependencies=[_auth])
 async def send_unibox_reply(request: Request):
-    """Dispatches reply draft to lead."""
+    """Dispatches reply draft to lead, strictly maintaining starting sender account affinity."""
     body = await request.json()
     raw_reply_id = body.get("reply_id")
     if not raw_reply_id:
@@ -1425,6 +1425,11 @@ async def send_unibox_reply(request: Request):
     orig_subj = rep["subject"] or "Inquiry"
     subj = f"Re: {orig_subj}" if not orig_subj.lower().startswith("re:") else orig_subj
 
+    # Maintain strict thread affinity: send from the exact account where the lead sent their message
+    target_from = (rep["to_email"] or "").strip().lower() if rep["to_email"] else None
+    if not target_from and rep["lead_id"]:
+        target_from = db.get_lead_starting_account(rep["lead_id"])
+
     def _do_reply():
         return email_sender.send_with_logging(
             lead_id=rep["lead_id"],
@@ -1432,24 +1437,36 @@ async def send_unibox_reply(request: Request):
             subject=subj,
             body=text_to_send,
             message_type="negotiation_reply",
+            from_account=target_from,
         )
 
     start = time.time()
     try:
-        res = await asyncio.wait_for(asyncio.to_thread(_do_reply), timeout=2.2)
+        res = await asyncio.wait_for(asyncio.to_thread(_do_reply), timeout=10.0)
         if res.get("success"):
             db.mark_reply_handled(reply_id)
             res["elapsed_ms"] = round((time.time() - start) * 1000)
-            return {"success": True, "result": res}
+            return {"success": True, "result": res, "account_used": res.get("account_used") or target_from}
         return {"success": False, "error": res.get("error")}
     except asyncio.TimeoutError:
         db.mark_reply_handled(reply_id)
         return {
             "success": True,
             "status": "dispatched",
-            "message": "🚀 Reply dispatched via Spacemail SSL!",
+            "message": f"🚀 Reply dispatched via {target_from or 'Spacemail SSL'}!",
+            "account_used": target_from,
             "elapsed_ms": round((time.time() - start) * 1000)
         }
+
+
+@app.get("/api/webmail/threads/{thread_id}/conversation", dependencies=[_auth])
+async def get_thread_conversation(thread_id: int):
+    """
+    Returns the complete, chronological back-and-forth conversation thread
+    for the selected email (all outbound emails and inbound replies).
+    """
+    thread_data = db.get_conversation_thread(reply_id=thread_id)
+    return {"success": True, **thread_data}
 
 
 _last_unibox_check = 0.0
@@ -1513,8 +1530,7 @@ def _query_webmail_threads(conn, folder: str, search: Optional[str], filter: str
     leads_inbox_cnt = conn.execute(f"""
         SELECT COUNT(*) as c FROM replies r 
         LEFT JOIN leads l ON r.lead_id = l.id 
-        WHERE r.handled = 0 
-          AND (r.lead_id IS NOT NULL OR (COALESCE(r.sentiment, '') != 'bounced' AND COALESCE(r.intent, '') != 'bounced'))
+        WHERE (r.lead_id IS NOT NULL OR (COALESCE(r.sentiment, '') != 'bounced' AND COALESCE(r.intent, '') != 'bounced'))
           {system_filter_sql}
     """).fetchone()["c"]
     starred_cnt = conn.execute("SELECT (SELECT COUNT(*) FROM replies WHERE is_starred=1) + (SELECT COUNT(*) FROM emails_sent WHERE is_starred=1) as c").fetchone()["c"]
@@ -1530,7 +1546,11 @@ def _query_webmail_threads(conn, folder: str, search: Optional[str], filter: str
         params = []
         if folder == "inbox":
             # Primary Inbox: show lead replies and real human inbound messages
-            base_where.append("r.handled = 0")
+            if filter == "needs_reply":
+                base_where.append("r.handled = 0")
+            elif filter == "replied":
+                base_where.append("(r.handled = 1 OR l.stage = 'replied' OR r.action_taken LIKE '%sent%')")
+
             base_where.append("(r.lead_id IS NOT NULL OR (COALESCE(r.sentiment, '') != 'bounced' AND COALESCE(r.intent, '') != 'bounced'))")
             base_where.append("r.from_email NOT LIKE '%no-reply%'")
             base_where.append("r.from_email NOT LIKE '%noreply%'")
@@ -1550,8 +1570,10 @@ def _query_webmail_threads(conn, folder: str, search: Optional[str], filter: str
 
         if filter == "interested":
             base_where.append("(r.sentiment = 'positive' OR r.intent IN ('interested', 'rate_inquiry'))")
-        elif filter == "replied":
-            base_where.append("(r.sentiment != 'bounced' AND r.intent != 'bounced' AND (r.intent != 'unsubscribe' OR r.intent IS NULL))")
+        elif filter == "replied" and folder != "inbox":
+            base_where.append("(r.handled = 1 OR l.stage = 'replied' OR r.sentiment != 'bounced')")
+        elif filter == "needs_reply" and folder != "inbox":
+            base_where.append("r.handled = 0")
         elif filter == "bounced":
             base_where.append("(r.sentiment = 'bounced' OR r.intent = 'bounced')")
         elif filter == "unread":
@@ -1585,14 +1607,16 @@ def _query_webmail_threads(conn, folder: str, search: Optional[str], filter: str
 
             tag = "Inbound"
             if is_lead:
-                if intent in ("interested", "rate_inquiry"):
+                if r["handled"] == 1:
+                    tag = "Replied"
+                elif intent in ("interested", "rate_inquiry"):
                     tag = "Interested"
                 elif intent == "unsubscribe":
                     tag = "Opt-Out"
                 elif intent == "bounced":
                     tag = "Bounced"
                 else:
-                    tag = "Lead Reply"
+                    tag = "Needs Reply"
             elif is_verification:
                 tag = "Verification"
             else:
@@ -1611,9 +1635,11 @@ def _query_webmail_threads(conn, folder: str, search: Optional[str], filter: str
 
             threads.append({
                 "id": r["id"],
+                "lead_id": r["lead_id"],
                 "type": "inbound",
                 "sender": r["sender"],
                 "recipient": recip,
+                "starting_account": recip,
                 "subject": r["subject"] or "(No Subject)",
                 "snippet": (r["body"] or "").replace("\n", " ")[:140],
                 "body": r["body"] or "",
@@ -1621,6 +1647,7 @@ def _query_webmail_threads(conn, folder: str, search: Optional[str], filter: str
                 "ai_draft_body": draft_body,
                 "timestamp": r["timestamp"],
                 "tag": tag,
+                "handled": bool(r["handled"] == 1),
                 "unread": bool(r["is_read"] == 0),
                 "is_starred": bool(r["is_starred"] == 1),
                 "lead_name": r["lead_name"],

@@ -1572,6 +1572,7 @@ def is_duplicate_reply(from_email: str, subject: str, body: str = None, message_
     """
     Prevents duplicate email logging when aliases forward emails to master mailboxes
     or when webhooks receive retransmissions.
+    Never drops legitimate thread replies that have new message_ids or distinct content.
     """
     clean_from = (from_email or "").strip().lower()
     clean_subj = (subject or "").strip().lower()
@@ -1579,32 +1580,21 @@ def is_duplicate_reply(from_email: str, subject: str, body: str = None, message_
     
     # 1. Exact message_id match
     if message_id:
-        row = conn.execute("SELECT id FROM replies WHERE message_id = ?", (message_id,)).fetchone()
-        if row:
-            conn.close()
-            return True
-            
-    # 2. Match from_email + subject within last 15 minutes window
-    if clean_from and clean_subj:
-        row = conn.execute(
-            """SELECT id FROM replies 
-               WHERE LOWER(from_email) = ? 
-                 AND LOWER(subject) = ? 
-                 AND received_at > datetime('now', '-15 minutes')""",
-            (clean_from, clean_subj)
-        ).fetchone()
-        if row:
-            conn.close()
-            return True
+        row = conn.execute("SELECT id FROM replies WHERE message_id = ?", (message_id.strip(),)).fetchone()
+        conn.close()
+        return bool(row)
 
-    # 3. Match body fingerprint if body provided
-    if body and len(body.strip()) > 20:
-        h = hashlib.md5(f"{clean_subj}|{body[:300]}".encode("utf-8", errors="replace")).hexdigest()
+    # 2. If no message_id provided, match sender + subject + body hash within last 5 minutes
+    if clean_from and body and len(body.strip()) > 10:
+        h = hashlib.md5(f"{clean_subj}|{body.strip()[:300]}".encode("utf-8", errors="replace")).hexdigest()
         recent = conn.execute(
-            "SELECT subject, body FROM replies WHERE received_at > datetime('now', '-15 minutes')"
+            """SELECT subject, body FROM replies 
+               WHERE LOWER(from_email) = ? 
+                 AND received_at > datetime('now', '-5 minutes')""",
+            (clean_from,)
         ).fetchall()
         for r in recent:
-            rh = hashlib.md5(f"{(r['subject'] or '').strip().lower()}|{(r['body'] or '')[:300]}".encode("utf-8", errors="replace")).hexdigest()
+            rh = hashlib.md5(f"{(r['subject'] or '').strip().lower()}|{(r['body'] or '').strip()[:300]}".encode("utf-8", errors="replace")).hexdigest()
             if rh == h:
                 conn.close()
                 return True
@@ -1621,6 +1611,10 @@ def log_reply(lead_id, from_email, subject, body, ai_draft_subject=None, ai_draf
         return row["id"] if row else None
 
     conn = get_db()
+    # Mark previous replies from this lead as superseded/handled so the new reply is fresh at the top of queue
+    if lead_id:
+        conn.execute("UPDATE replies SET handled=1 WHERE lead_id=? AND handled=0", (lead_id,))
+
     if received_at:
         cur = conn.execute(
             """INSERT INTO replies (lead_id, from_email, to_email, subject, body, ai_draft_subject, ai_draft_body, message_id, received_at)
@@ -1637,6 +1631,164 @@ def log_reply(lead_id, from_email, subject, body, ai_draft_subject=None, ai_draf
     reply_id = cur.lastrowid
     conn.close()
     return reply_id
+
+
+def get_lead_starting_account(lead_id: int) -> Optional[str]:
+    """
+    Returns the starting mailbox/account used for this lead, ensuring
+    strict thread affinity (followups and replies always originate from the same account).
+    """
+    if not lead_id:
+        return None
+    conn = get_db()
+    # 1. First check the mailbox the lead sent replies to
+    rep = conn.execute(
+        "SELECT to_email FROM replies WHERE lead_id=? AND to_email IS NOT NULL AND to_email != '' ORDER BY id DESC LIMIT 1",
+        (lead_id,)
+    ).fetchone()
+    if rep and rep["to_email"]:
+        conn.close()
+        return rep["to_email"]
+
+    # 2. Check the account that sent the initial email or most recent email to this lead
+    sent = conn.execute(
+        "SELECT from_account FROM emails_sent WHERE lead_id=? AND status='sent' AND from_account IS NOT NULL AND from_account != '' ORDER BY id DESC LIMIT 1",
+        (lead_id,)
+    ).fetchone()
+    if sent and sent["from_account"]:
+        conn.close()
+        return sent["from_account"]
+
+    conn.close()
+    return None
+
+
+def get_conversation_thread(lead_id: int = None, reply_id: int = None) -> dict:
+    """
+    Builds the complete, chronological back-and-forth conversation thread for a lead
+    or an inbound reply message. Combines emails_sent (outbound) and replies (inbound).
+    """
+    conn = get_db()
+    lead = None
+    rep = None
+
+    if reply_id:
+        rep = conn.execute("SELECT * FROM replies WHERE id=?", (reply_id,)).fetchone()
+        if rep and rep["lead_id"]:
+            lead_id = rep["lead_id"]
+
+    if lead_id:
+        lead = conn.execute("SELECT * FROM leads WHERE id=?", (lead_id,)).fetchone()
+
+    messages = []
+    starting_account = None
+
+    if lead_id:
+        starting_account = get_lead_starting_account(lead_id)
+
+        # 1. Outbound messages from emails_sent
+        sents = conn.execute(
+            """SELECT id, from_account, to_email, subject, body, sent_at as timestamp, status 
+               FROM emails_sent 
+               WHERE lead_id=? AND status='sent' 
+               ORDER BY id ASC""",
+            (lead_id,)
+        ).fetchall()
+        for s in sents:
+            messages.append({
+                "id": f"out_{s['id']}",
+                "role": "us",
+                "sender": "You",
+                "sender_email": s["from_account"] or starting_account or "outreach",
+                "recipient_email": s["to_email"],
+                "subject": s["subject"] or "",
+                "body": s["body"] or "",
+                "timestamp": s["timestamp"] or "",
+                "type": "outbound"
+            })
+
+        # 2. Inbound messages from replies
+        reps = conn.execute(
+            """SELECT id, from_email, to_email, subject, body, received_at as timestamp, 
+                      ai_draft_subject, ai_draft_body, handled, intent, sentiment 
+               FROM replies 
+               WHERE lead_id=? 
+               ORDER BY id ASC""",
+            (lead_id,)
+        ).fetchall()
+        for r in reps:
+            messages.append({
+                "id": f"in_{r['id']}",
+                "reply_id": r["id"],
+                "role": "them",
+                "sender": (lead["name"] if lead and lead["name"] else r["from_email"].split("@")[0].title()),
+                "sender_email": r["from_email"],
+                "recipient_email": r["to_email"] or starting_account or "",
+                "subject": r["subject"] or "",
+                "body": r["body"] or "",
+                "timestamp": r["timestamp"] or "",
+                "type": "inbound",
+                "ai_draft_subject": r["ai_draft_subject"],
+                "ai_draft_body": r["ai_draft_body"],
+                "handled": bool(r["handled"] == 1),
+                "intent": r["intent"] or "reply"
+            })
+
+    elif rep:
+        # Standalone inbound without lead_id (e.g. general mailbox inquiry)
+        starting_account = rep["to_email"]
+        messages.append({
+            "id": f"in_{rep['id']}",
+            "reply_id": rep["id"],
+            "role": "them",
+            "sender": rep["from_email"].split("@")[0].title(),
+            "sender_email": rep["from_email"],
+            "recipient_email": rep["to_email"] or "",
+            "subject": rep["subject"] or "",
+            "body": rep["body"] or "",
+            "timestamp": rep["received_at"] or "",
+            "type": "inbound",
+            "ai_draft_subject": rep["ai_draft_subject"],
+            "ai_draft_body": rep["ai_draft_body"],
+            "handled": bool(rep["handled"] == 1),
+            "intent": rep["intent"] or "inbound"
+        })
+
+    conn.close()
+
+    # Sort all messages chronologically
+    def _parse_ts(m):
+        ts = m.get("timestamp") or ""
+        try:
+            return datetime.fromisoformat(ts).timestamp()
+        except Exception:
+            return 0
+    messages.sort(key=_parse_ts)
+
+    # Mark the latest message
+    if messages:
+        messages[-1]["is_latest"] = True
+
+    latest_draft_subj = rep["ai_draft_subject"] if rep and rep["ai_draft_subject"] else None
+    latest_draft_body = rep["ai_draft_body"] if rep and rep["ai_draft_body"] else None
+    if not latest_draft_body and messages:
+        for m in reversed(messages):
+            if m.get("role") == "them" and m.get("ai_draft_body"):
+                latest_draft_body = m["ai_draft_body"]
+                latest_draft_subj = m.get("ai_draft_subject")
+                break
+
+    return {
+        "lead_id": lead_id,
+        "lead_name": lead["name"] if lead else (rep["from_email"].split("@")[0].title() if rep else ""),
+        "lead_email": lead["email"] if lead else (rep["from_email"] if rep else ""),
+        "company": lead["company"] if lead else "",
+        "subject": (rep["subject"] if rep else (messages[-1]["subject"] if messages else "")),
+        "starting_account": starting_account,
+        "messages": messages,
+        "ai_draft_subject": latest_draft_subj,
+        "ai_draft_body": latest_draft_body,
+    }
 
 
 def get_unhandled_replies():

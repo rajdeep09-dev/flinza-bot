@@ -157,13 +157,15 @@ def _send_followup(row, notify_callback):
         # Dynamic AI Generation
         email_data = ai_router.generate_followup(dict(lead), previous_emails, followup_num)
 
-    # Send
+    # Send (preserving starting sender account affinity)
+    starting_acc = db.get_lead_starting_account(lead_id)
     result = email_sender.send_with_logging(
         lead_id=lead_id,
         to_email=lead["email"],
         subject=email_data["subject"],
         body=email_data["body"],
         message_type=f"followup_{followup_num}",
+        from_account=starting_acc,
     )
 
     if result.get("success"):

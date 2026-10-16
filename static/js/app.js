@@ -332,6 +332,9 @@ document.addEventListener("DOMContentLoaded", () => {
       bodyEl.innerHTML = `<div style="white-space: pre-wrap; font-family: inherit; line-height: 1.6;">${formatted || "No message content."}</div>`;
     }
 
+    // Load full chronological conversation timeline
+    renderConversationTimeline(id, thread);
+
     // Update Prev / Next buttons
     const curIdx = currentLoadedThreads.findIndex(t => t.id === id);
     const btnPrev = g("btn-read-prev-thread");
@@ -341,13 +344,105 @@ document.addEventListener("DOMContentLoaded", () => {
 
     const aiComposer = g("read-ai-composer");
     const aiDraft = g("read-ai-draft-text");
-    const isLeadReply = !!(thread.lead_id || (thread.tag && thread.tag !== "Mailbox" && thread.folder === "inbox") || thread.ai_draft_body);
-    if (isLeadReply && (thread.ai_draft_body || thread.lead_name)) {
-      if (aiComposer) aiComposer.style.display = "flex";
-      if (aiDraft) aiDraft.value = thread.ai_draft_body ||
-        `Hi ${thread.lead_name || "there"},\n\nThank you for getting back to us! We'd love to walk you through how we help businesses like yours scale with short-form content.\n\nWould you have 15 minutes this week for a quick call?\n\nBest,\nFlinza Team`;
-    } else {
-      if (aiComposer) aiComposer.style.display = "none";
+    const senderAccEl = g("read-reply-sender-account");
+    if (senderAccEl) {
+      senderAccEl.textContent = thread.starting_account || thread.recipient || "Primary Account";
+    }
+    if (aiComposer) {
+      aiComposer.style.display = "flex";
+      if (aiDraft) {
+        aiDraft.value = thread.ai_draft_body || "";
+      }
+    }
+  }
+
+  async function renderConversationTimeline(threadId, fallbackThread = null) {
+    const timelineEl = g("read-thread-timeline");
+    if (!timelineEl) return;
+    timelineEl.innerHTML = `<div style="text-align:center;padding:18px;color:var(--text-muted);font-size:12px;">⏳ Loading conversation thread…</div>`;
+
+    try {
+      const data = await apiFetch(`/api/webmail/threads/${threadId}/conversation`);
+      if (!data || !data.success) {
+        timelineEl.innerHTML = "";
+        return;
+      }
+
+      const senderAccEl = g("read-reply-sender-account");
+      if (senderAccEl && data.starting_account) {
+        senderAccEl.textContent = data.starting_account;
+      }
+
+      const messages = data.messages || [];
+      if (messages.length === 0) {
+        if (fallbackThread && fallbackThread.body) {
+          timelineEl.innerHTML = `
+            <div class="convo-message-card" style="background:var(--bg-card);border:1px solid var(--border-subtle);border-radius:10px;padding:16px;box-shadow:0 2px 10px rgba(0,0,0,0.2);">
+              <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
+                <span style="font-weight:700;color:#d8b4fe;font-size:13px;">${esc(fallbackThread.sender)}</span>
+                <span style="font-size:11px;color:var(--text-dim);">${fallbackThread.timestamp || ''}</span>
+              </div>
+              <div style="white-space:pre-wrap;line-height:1.6;font-size:13px;">${esc(fallbackThread.body)}</div>
+            </div>`;
+        } else {
+          timelineEl.innerHTML = "";
+        }
+        return;
+      }
+
+      let html = "";
+      messages.forEach((m) => {
+        const isUs = m.role === "us";
+        const roleIcon = isUs ? "🚀" : "👤";
+        const roleLabel = isUs ? "You" : esc(m.sender || "Lead");
+        const senderEmail = esc(m.sender_email || "");
+        const cardBg = isUs ? "rgba(56, 189, 248, 0.05)" : "var(--bg-card)";
+        const cardBorder = isUs ? "rgba(56, 189, 248, 0.35)" : "var(--border-subtle)";
+        const roleColor = isUs ? "#38bdf8" : "#d8b4fe";
+        const pillText = isUs ? "Outbound" : "Inbound";
+        const pillBg = isUs ? "rgba(56, 189, 248, 0.15)" : "rgba(168, 85, 247, 0.15)";
+        const pillColor = isUs ? "#38bdf8" : "#c084fc";
+
+        let bodyFormatted = esc(m.body || "");
+        bodyFormatted = bodyFormatted.replace(
+          /(https?:\/\/[^\s<>"')]+)/g,
+          '<a href="$1" target="_blank" rel="noopener noreferrer" style="color:#38bdf8; text-decoration:underline; font-weight:600; word-break:break-all;">$1</a>'
+        );
+
+        const timeStr = m.timestamp ? new Date(m.timestamp).toLocaleString([], { month:"short", day:"numeric", hour:"2-digit", minute:"2-digit" }) : "";
+
+        html += `
+          <div class="convo-message-card" style="background:${cardBg};border:1px solid ${cardBorder};border-radius:10px;padding:15px 18px;box-shadow:0 2px 10px rgba(0,0,0,0.2);">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;flex-wrap:wrap;gap:8px;">
+              <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                <span style="font-size:15px;">${roleIcon}</span>
+                <span style="font-weight:700;color:${roleColor};font-size:13px;">${roleLabel}</span>
+                <span style="font-size:11.5px;color:var(--text-muted);font-family:monospace;">&lt;${senderEmail}&gt;</span>
+                <span style="font-size:10px;font-weight:700;background:${pillBg};color:${pillColor};padding:2px 7px;border-radius:4px;">${pillText}</span>
+              </div>
+              <span style="font-size:11px;color:var(--text-dim);font-weight:500;">${timeStr}</span>
+            </div>
+            ${m.subject ? `<div style="font-size:12px;font-weight:600;color:var(--text-main);margin-bottom:8px;opacity:0.9;">Subject: ${esc(m.subject)}</div>` : ''}
+            <div style="white-space:pre-wrap;font-family:inherit;line-height:1.6;font-size:13px;color:var(--text-main);">${bodyFormatted || '<i>(No message body)</i>'}</div>
+          </div>
+        `;
+      });
+
+      timelineEl.innerHTML = html;
+
+      // Update AI draft composer if available
+      const aiDraft = g("read-ai-draft-text");
+      if (aiDraft && data.ai_draft_body && !aiDraft.value) {
+        aiDraft.value = data.ai_draft_body;
+      }
+      const titleEl = g("read-composer-title");
+      if (titleEl) {
+        titleEl.textContent = data.ai_draft_body ? "✦ AI Reply Draft Ready" : "Reply to Conversation";
+      }
+
+    } catch (e) {
+      console.warn("Failed to load conversation timeline:", e);
+      timelineEl.innerHTML = "";
     }
   }
 
@@ -393,29 +488,38 @@ document.addEventListener("DOMContentLoaded", () => {
   on("btn-send-read-draft", "click", async (e) => {
     if (!selectedThreadId) return;
     const customText = g("read-ai-draft-text")?.value.trim();
+    if (!customText) {
+      showToast("Please enter a reply message before sending.", "info");
+      return;
+    }
     const btn = e.currentTarget;
     btn.disabled = true;
     btn.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg> Sending…`;
     try {
       const d = await apiFetch("/api/unibox/reply", "POST", { reply_id: selectedThreadId, body: customText });
       if (d.success) {
-        showToast("✓ Reply dispatched successfully!", "success");
-        g("webmail-reading-pane").style.display = "none";
+        const senderAcc = d.account_used || "starting account";
+        showToast(`✓ Reply dispatched via ${senderAcc}!`, "success");
+        if (g("read-ai-draft-text")) g("read-ai-draft-text").value = "";
+        
+        // Refresh conversation timeline so the new reply immediately appears on screen!
+        await renderConversationTimeline(selectedThreadId);
+        
+        // Refresh thread list in background
         loadWebmailThreads(currentWebmailFolder, activeSearchQuery, currentWebmailPage, currentWebmailFilter);
       } else {
         showToast(`Failed: ${d.error || "Unknown error"}`, "error");
       }
     } catch (err) {
-      showToast(`Network error: ${err}`, "error");
+      showToast(`Network error: ${err.message || err}`, "error");
     } finally {
       btn.disabled = false;
       btn.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg> Send Reply`;
     }
   });
 
-  on("btn-discard-draft", "click", () => {
-    const c = g("read-ai-composer");
-    if (c) c.style.display = "none";
+  on("btn-discard-draft", () => {
+    if (g("read-ai-draft-text")) g("read-ai-draft-text").value = "";
   });
 
   on("btn-refresh-webmail", "click", async (e) => {

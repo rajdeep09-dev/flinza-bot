@@ -587,10 +587,11 @@ def send_test_email(to_email: str, from_account_email: str = None, target_accoun
 
 
 def send_with_logging(lead_id: int, to_email: str, subject: str, body: str,
-                      message_type: str = "opener", email_id: int = None) -> dict:
+                      message_type: str = "opener", email_id: int = None,
+                      from_account: str = None) -> dict:
     """
     Pick account → send → log result.
-    If email_id is given, updates existing queued record. Otherwise logs new.
+    If from_account is given or lead has starting account affinity, preserves the same sender account.
     Returns: {success, email_id, account_used, message_id, queued, error}
     """
     # 0. Zero-Bounce Pre-Send Verification Shield
@@ -609,8 +610,24 @@ def send_with_logging(lead_id: int, to_email: str, subject: str, body: str,
     except Exception as e:
         logger.debug(f"Pre-check bypassed on exception: {e}")
 
-    # 1. Mailbox Selection via MailboxPoolRouter
-    account = outreach_engine.mailbox_pool.select_next_mailbox()
+    # 1. Mailbox Selection with Thread Sender Affinity
+    target_sender = (from_account or "").strip().lower()
+    if not target_sender and lead_id and message_type != "opener":
+        target_sender = (db.get_lead_starting_account(lead_id) or "").strip().lower()
+
+    account = None
+    if target_sender:
+        account = outreach_engine.mailbox_pool.select_next_mailbox(preferred_email=target_sender)
+        if not account:
+            for a in db.get_all_accounts():
+                if a["email"].lower() == target_sender:
+                    account = dict(a)
+                    break
+        if account:
+            logger.info(f"Preserving sender thread affinity: {account.get('email')} for lead #{lead_id}")
+
+    if not account:
+        account = outreach_engine.mailbox_pool.select_next_mailbox()
     if not account:
         account = db.get_next_available_account()
 

@@ -328,8 +328,9 @@
               <!-- Webmail Quick Filter Pills -->
               <div class="webmail-filter-bar" id="webmail-filter-tabs" style="display:flex;gap:6px;padding:8px 14px;border-bottom:1px solid var(--border-subtle);background:rgba(0,0,0,0.18);overflow-x:auto;">
                 <button class="filter-pill active" data-filter="all">All</button>
-                <button class="filter-pill" data-filter="interested">🔥 Interested</button>
+                <button class="filter-pill" data-filter="needs_reply">⏳ Needs Reply</button>
                 <button class="filter-pill" data-filter="replied">💬 Replied</button>
+                <button class="filter-pill" data-filter="interested">🔥 Interested</button>
                 <button class="filter-pill" data-filter="bounced">⚠️ Bounced</button>
                 <button class="filter-pill" data-filter="unread">Unread</button>
               </div>
@@ -385,21 +386,31 @@
               </div>
               <div class="reading-body-area">
                 <div id="read-action-banner" style="display:none;margin-bottom:12px;"></div>
-                <div class="email-body-card" id="read-body"></div>
-                <!-- AI Reply Composer -->
+                
+                <!-- Full Conversation Thread Timeline -->
+                <div id="read-thread-timeline" style="display:flex;flex-direction:column;gap:14px;margin-bottom:16px;"></div>
+                
+                <div class="email-body-card" id="read-body" style="display:none;"></div>
+                
+                <!-- Reply Composer -->
                 <div class="ai-reply-composer" id="read-ai-composer">
-                  <div class="ai-composer-label">
-                    <span class="ai-badge">✦ AI</span>
-                    <strong>Negotiation Draft Ready</strong>
-                    <span class="dispatch-ready-chip">1-Click Dispatch</span>
+                  <div class="ai-composer-label" style="display:flex;align-items:center;justify-content:space-between;width:100%;flex-wrap:wrap;gap:8px;">
+                    <div style="display:flex;align-items:center;gap:8px;">
+                      <span class="ai-badge">✦ AI</span>
+                      <strong id="read-composer-title">Negotiation Draft Ready</strong>
+                    </div>
+                    <div style="font-size:11.5px;color:var(--text-muted);display:flex;align-items:center;gap:5px;">
+                      <span>Dispatched from:</span>
+                      <span id="read-reply-sender-account" style="color:#38bdf8;font-weight:600;font-family:monospace;">starting account</span>
+                    </div>
                   </div>
-                  <textarea id="read-ai-draft-text" rows="6" placeholder="AI-crafted reply will appear here…"></textarea>
+                  <textarea id="read-ai-draft-text" rows="6" placeholder="Write or edit reply here…"></textarea>
                   <div class="ai-actions-row">
                     <button class="btn-send-reply" id="btn-send-read-draft">
                       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
                       Send Reply
                     </button>
-                    <button class="btn-ghost" id="btn-discard-draft">Discard</button>
+                    <button class="btn-ghost" id="btn-discard-draft">Clear</button>
                   </div>
                 </div>
               </div>

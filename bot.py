@@ -1752,12 +1752,14 @@ async def cb_send_draft(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.callback_query.edit_message_text("❌ No AI draft available. Use /editreply to write one.")
         return
 
+    target_from = (r.get("to_email") or "").strip().lower() if r.get("to_email") else None
     result = email_sender.send_with_logging(
         lead_id=lead["id"],
         to_email=lead["email"],
         subject=subject,
         body=body,
         message_type="reply",
+        from_account=target_from,
     )
     if result.get("success"):
         db.mark_reply_handled(rid, "ai_draft_sent")
@@ -1801,12 +1803,14 @@ async def edit_reply_save(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return ConversationHandler.END
     lead = db.get_lead(r["lead_id"])
     db.update_reply_draft(rid, r["ai_draft_subject"] or "Re: (reply)", body)
+    target_from = (r.get("to_email") or "").strip().lower() if r.get("to_email") else None
     result = email_sender.send_with_logging(
         lead_id=lead["id"],
         to_email=lead["email"],
         subject=r["ai_draft_subject"] or "Re: (reply)",
         body=body,
         message_type="reply",
+        from_account=target_from,
     )
     if result.get("success"):
         db.mark_reply_handled(rid, "edited_and_sent")
@@ -1837,12 +1841,14 @@ async def cmd_sendreply(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await reply(update, "❌ Reply not found or no draft available.")
         return
     lead = db.get_lead(r["lead_id"])
+    target_from = (r.get("to_email") or "").strip().lower() if r.get("to_email") else None
     result = email_sender.send_with_logging(
         lead_id=lead["id"],
         to_email=lead["email"],
         subject=r["ai_draft_subject"] or "Re: (reply)",
         body=r["ai_draft_body"],
         message_type="reply",
+        from_account=target_from,
     )
     if result.get("success"):
         db.mark_reply_handled(rid, "sent")
