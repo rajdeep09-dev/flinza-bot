@@ -2872,8 +2872,12 @@ def main():
     asyncio.set_event_loop(loop)
     app.bot_data["loop"] = loop
 
-    logger.info(f"Bot started! Authorized user ID: {config.ALLOWED_USER_ID}")
-    app.run_polling(drop_pending_updates=True)
+    is_main_thread = (threading.current_thread() is threading.main_thread())
+    logger.info(f"Bot started! Authorized user ID: {config.ALLOWED_USER_ID} (main_thread={is_main_thread})")
+    if is_main_thread:
+        app.run_polling(drop_pending_updates=True)
+    else:
+        app.run_polling(drop_pending_updates=True, stop_signals=None)
 
 
 if __name__ == "__main__":
