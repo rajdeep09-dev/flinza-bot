@@ -329,7 +329,8 @@ document.addEventListener("DOMContentLoaded", () => {
         /(https?:\/\/[^\s<>"')]+)/g,
         '<a href="$1" target="_blank" rel="noopener noreferrer" style="color:#38bdf8; text-decoration:underline; font-weight:600; word-break:break-all;">$1</a>'
       );
-      bodyEl.innerHTML = `<div style="white-space: pre-wrap; font-family: inherit; line-height: 1.6;">${formatted || "No message content."}</div>`;
+      bodyEl.innerHTML = `<div style="white-space: pre-wrap; font-family: inherit; line-height: 1.65;">${formatted || "No message content."}</div>`;
+      bodyEl.style.display = "block";
     }
 
     // Load full chronological conversation timeline
@@ -358,13 +359,15 @@ document.addEventListener("DOMContentLoaded", () => {
 
   async function renderConversationTimeline(threadId, fallbackThread = null) {
     const timelineEl = g("read-thread-timeline");
+    const bodyEl = g("read-body");
     if (!timelineEl) return;
-    timelineEl.innerHTML = `<div style="text-align:center;padding:18px;color:var(--text-muted);font-size:12px;">⏳ Loading conversation thread…</div>`;
+    timelineEl.innerHTML = "";
 
     try {
       const data = await apiFetch(`/api/webmail/threads/${threadId}/conversation`);
-      if (!data || !data.success) {
+      if (!data || !data.success || !data.messages || data.messages.length === 0) {
         timelineEl.innerHTML = "";
+        if (bodyEl) bodyEl.style.display = "block";
         return;
       }
 
@@ -374,61 +377,51 @@ document.addEventListener("DOMContentLoaded", () => {
       }
 
       const messages = data.messages || [];
-      if (messages.length === 0) {
-        if (fallbackThread && fallbackThread.body) {
-          timelineEl.innerHTML = `
-            <div class="convo-message-card" style="background:var(--bg-card);border:1px solid var(--border-subtle);border-radius:10px;padding:16px;box-shadow:0 2px 10px rgba(0,0,0,0.2);">
-              <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
-                <span style="font-weight:700;color:#d8b4fe;font-size:13px;">${esc(fallbackThread.sender)}</span>
-                <span style="font-size:11px;color:var(--text-dim);">${fallbackThread.timestamp || ''}</span>
+      if (messages.length > 1) {
+        let html = "";
+        messages.forEach((m) => {
+          const isUs = m.role === "us";
+          const roleIcon = isUs ? "🚀" : "👤";
+          const roleLabel = isUs ? "You" : esc(m.sender || "Lead");
+          const senderEmail = esc(m.sender_email || "");
+          const cardBg = isUs ? "rgba(56, 189, 248, 0.05)" : "var(--bg-card)";
+          const cardBorder = isUs ? "rgba(56, 189, 248, 0.35)" : "var(--border-subtle)";
+          const roleColor = isUs ? "#38bdf8" : "#d8b4fe";
+          const pillText = isUs ? "Outbound" : "Inbound";
+          const pillBg = isUs ? "rgba(56, 189, 248, 0.15)" : "rgba(168, 85, 247, 0.15)";
+          const pillColor = isUs ? "#38bdf8" : "#c084fc";
+
+          let bodyFormatted = esc(m.body || "");
+          bodyFormatted = bodyFormatted.replace(
+            /(https?:\/\/[^\s<>"')]+)/g,
+            '<a href="$1" target="_blank" rel="noopener noreferrer" style="color:#38bdf8; text-decoration:underline; font-weight:600; word-break:break-all;">$1</a>'
+          );
+
+          const timeStr = m.timestamp ? new Date(m.timestamp).toLocaleString([], { month:"short", day:"numeric", hour:"2-digit", minute:"2-digit" }) : "";
+
+          html += `
+            <div class="convo-message-card" style="background:${cardBg};border:1px solid ${cardBorder};border-radius:10px;padding:15px 18px;box-shadow:0 2px 10px rgba(0,0,0,0.2);">
+              <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;flex-wrap:wrap;gap:8px;">
+                <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                  <span style="font-size:15px;">${roleIcon}</span>
+                  <span style="font-weight:700;color:${roleColor};font-size:13px;">${roleLabel}</span>
+                  <span style="font-size:11.5px;color:var(--text-muted);font-family:monospace;">&lt;${senderEmail}&gt;</span>
+                  <span style="font-size:10px;font-weight:700;background:${pillBg};color:${pillColor};padding:2px 7px;border-radius:4px;">${pillText}</span>
+                </div>
+                <span style="font-size:11px;color:var(--text-dim);font-weight:500;">${timeStr}</span>
               </div>
-              <div style="white-space:pre-wrap;line-height:1.6;font-size:13px;">${esc(fallbackThread.body)}</div>
-            </div>`;
-        } else {
-          timelineEl.innerHTML = "";
-        }
-        return;
-      }
-
-      let html = "";
-      messages.forEach((m) => {
-        const isUs = m.role === "us";
-        const roleIcon = isUs ? "🚀" : "👤";
-        const roleLabel = isUs ? "You" : esc(m.sender || "Lead");
-        const senderEmail = esc(m.sender_email || "");
-        const cardBg = isUs ? "rgba(56, 189, 248, 0.05)" : "var(--bg-card)";
-        const cardBorder = isUs ? "rgba(56, 189, 248, 0.35)" : "var(--border-subtle)";
-        const roleColor = isUs ? "#38bdf8" : "#d8b4fe";
-        const pillText = isUs ? "Outbound" : "Inbound";
-        const pillBg = isUs ? "rgba(56, 189, 248, 0.15)" : "rgba(168, 85, 247, 0.15)";
-        const pillColor = isUs ? "#38bdf8" : "#c084fc";
-
-        let bodyFormatted = esc(m.body || "");
-        bodyFormatted = bodyFormatted.replace(
-          /(https?:\/\/[^\s<>"')]+)/g,
-          '<a href="$1" target="_blank" rel="noopener noreferrer" style="color:#38bdf8; text-decoration:underline; font-weight:600; word-break:break-all;">$1</a>'
-        );
-
-        const timeStr = m.timestamp ? new Date(m.timestamp).toLocaleString([], { month:"short", day:"numeric", hour:"2-digit", minute:"2-digit" }) : "";
-
-        html += `
-          <div class="convo-message-card" style="background:${cardBg};border:1px solid ${cardBorder};border-radius:10px;padding:15px 18px;box-shadow:0 2px 10px rgba(0,0,0,0.2);">
-            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;flex-wrap:wrap;gap:8px;">
-              <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-                <span style="font-size:15px;">${roleIcon}</span>
-                <span style="font-weight:700;color:${roleColor};font-size:13px;">${roleLabel}</span>
-                <span style="font-size:11.5px;color:var(--text-muted);font-family:monospace;">&lt;${senderEmail}&gt;</span>
-                <span style="font-size:10px;font-weight:700;background:${pillBg};color:${pillColor};padding:2px 7px;border-radius:4px;">${pillText}</span>
-              </div>
-              <span style="font-size:11px;color:var(--text-dim);font-weight:500;">${timeStr}</span>
+              ${m.subject ? `<div style="font-size:12px;font-weight:600;color:var(--text-main);margin-bottom:8px;opacity:0.9;">Subject: ${esc(m.subject)}</div>` : ''}
+              <div style="white-space:pre-wrap;font-family:inherit;line-height:1.6;font-size:13px;color:var(--text-main);">${bodyFormatted || '<i>(No message body)</i>'}</div>
             </div>
-            ${m.subject ? `<div style="font-size:12px;font-weight:600;color:var(--text-main);margin-bottom:8px;opacity:0.9;">Subject: ${esc(m.subject)}</div>` : ''}
-            <div style="white-space:pre-wrap;font-family:inherit;line-height:1.6;font-size:13px;color:var(--text-main);">${bodyFormatted || '<i>(No message body)</i>'}</div>
-          </div>
-        `;
-      });
+          `;
+        });
 
-      timelineEl.innerHTML = html;
+        timelineEl.innerHTML = html;
+        if (bodyEl) bodyEl.style.display = "none";
+      } else {
+        timelineEl.innerHTML = "";
+        if (bodyEl) bodyEl.style.display = "block";
+      }
 
       // Update AI draft composer if available
       const aiDraft = g("read-ai-draft-text");
@@ -443,6 +436,7 @@ document.addEventListener("DOMContentLoaded", () => {
     } catch (e) {
       console.warn("Failed to load conversation timeline:", e);
       timelineEl.innerHTML = "";
+      if (bodyEl) bodyEl.style.display = "block";
     }
   }
 
