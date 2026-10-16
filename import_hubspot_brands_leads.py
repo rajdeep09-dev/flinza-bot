@@ -60,15 +60,15 @@ def ensure_columns(conn):
 def generate_hook(brand_name: str, niche: str, sub_niche: str, page_title: str) -> str:
     brand = brand_name.strip() if brand_name else "your brand"
     if "beauty" in niche.lower() or "skincare" in niche.lower() or "fragrance" in (sub_niche or "").lower():
-        return f"Loved what {brand} is building in the beauty & skincare space — your product visual aesthetic and packaging really stand out."
+        return f"Loved what {brand} is building in the beauty & skincare space, your product visual aesthetic and packaging really stand out."
     elif "apparel" in niche.lower() or "fashion" in niche.lower():
-        return f"Really impressed by {brand}'s apparel collection and creative direction — the brand identity is super crisp."
+        return f"Really impressed by {brand}'s apparel collection and creative direction, the brand identity is super crisp."
     elif "supplement" in niche.lower() or "health" in niche.lower():
-        return f"Big fan of {brand}'s approach in health & wellness — formulation and customer community are top-tier."
+        return f"Big fan of {brand}'s approach in health & wellness, formulation and customer community are top-tier."
     elif "jewelry" in niche.lower():
         return f"The craftsmanship and product presentation across {brand}'s jewelry catalog is exceptional."
     else:
-        return f"Really compelling brand story at {brand} — the customer experience and curation really stand out."
+        return f"Really compelling brand story at {brand}, the customer experience and curation really stand out."
 
 
 def run_import():

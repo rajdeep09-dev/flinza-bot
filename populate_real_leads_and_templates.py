@@ -40,9 +40,9 @@ BRANDS_CSV = find_csv("leads_final_brands.csv")
 
 
 TEMPLATE_A = {
-    "name": "Template A — Ad Spend Gap (First Contact)",
+    "name": "Template A - Ad Spend Gap (First Contact)",
     "type": "opener",
-    "subject": "{{firstName}} — quick one on {{companyName}}'s ad spend",
+    "subject": "{{firstName}} - quick one on {{companyName}}'s ad spend",
     "body": """Hey {{firstName}},
 
 {{Email Copy}}
@@ -57,9 +57,9 @@ PS: got a skincare brand 15 more orders a day in 5 weeks."""
 }
 
 TEMPLATE_B = {
-    "name": "Template B — Creative Guarantee 60 Days (First Contact)",
+    "name": "Template B - Creative Guarantee 60 Days (First Contact)",
     "type": "opener",
-    "subject": "{{firstName}} — quick question on {{companyName}}'s creative",
+    "subject": "{{firstName}} - quick question on {{companyName}}'s creative",
     "body": """Hi {{firstName}},
 
 {{Email Copy}}
@@ -74,9 +74,9 @@ PS: helped a supplements brand add $35k in revenue in under 2 months."""
 }
 
 TEMPLATE_FOLLOWUP_1 = {
-    "name": "Follow Up 1 — Quick Circle Up",
+    "name": "Follow Up 1 - Quick Circle Up",
     "type": "followup",
-    "subject": "Re: {{firstName}} — quick one on {{companyName}}'s ad spend",
+    "subject": "Re: {{firstName}} - quick one on {{companyName}}'s ad spend",
     "body": """Hi {{firstName}},
 
 Just circling up in case it got lost. Still happy to show you what we found for {{companyname}} if useful.
@@ -209,9 +209,9 @@ def main():
         """, (t["name"], t["type"], t["subject"], t["body"]))
     conn.commit()
     print("✅ Outreach Email Templates saved to templates table:")
-    print("   • Template A: {{firstName}} — quick one on {{companyName}}'s ad spend")
-    print("   • Template B: {{firstName}} — quick question on {{companyName}}'s creative")
-    print("   • Follow Up 1: Re: {{firstName}} — quick one on {{companyName}}'s ad spend")
+    print("   • Template A: {{firstName}} - quick one on {{companyName}}'s ad spend")
+    print("   • Template B: {{firstName}} - quick question on {{companyName}}'s creative")
+    print("   • Follow Up 1: Re: {{firstName}} - quick one on {{companyName}}'s ad spend")
 
     # 3. Clear old leads to populate with 100% accurate data
     conn.execute("DELETE FROM leads")
@@ -269,7 +269,7 @@ def main():
 
             order_lift, rev_lift = get_lifts_by_niche_and_revenue(niche)
 
-            icebreaker = f"I took a look at what you're building at {company} — love the creative direction and product positioning."
+            icebreaker = f"I took a look at what you're building at {company}, love the creative direction and product positioning."
             rendered_subj, rendered_body = render_email_template(
                 TEMPLATE_A, first_name, company, icebreaker, order_lift, rev_lift
             )
@@ -377,7 +377,7 @@ def main():
                 t3_count += 1
 
             order_lift, rev_lift = get_lifts_by_niche_and_revenue(niche, followers)
-            icebreaker = f"Really impressed by what {brand_name} is doing in {niche} — the product quality and aesthetic are standout."
+            icebreaker = f"Really impressed by what {brand_name} is doing in {niche}, the product quality and aesthetic are standout."
             rendered_subj, rendered_body = render_email_template(
                 TEMPLATE_A, first_name, brand_name, icebreaker, order_lift, rev_lift
             )

@@ -63,12 +63,14 @@ UNSUBSCRIBE_THRESHOLD   = 0.05   # 5% unsub rate → pause
 
 def clean_text_punctuation(text: str) -> str:
     """
-    Fixes cold outreach grammar flaws (dangling spaces before punctuation, double spaces).
-    e.g.: 'Hey , was really impressed' -> 'Hey, was really impressed'
-          'Open to a chat ?' -> 'Open to a chat?'
+    Fixes cold outreach grammar flaws, strips AI em dashes / en dashes,
+    and normalizes spacing.
     """
     if not text:
         return ""
+    # Strip AI em dashes (—) and en dashes (–) for genuine human tone
+    text = text.replace(" — ", ", ").replace("—", ", ")
+    text = text.replace(" – ", " - ").replace("–", " - ")
     # Strip spaces before commas, periods, exclamation, question marks, colons, semicolons
     text = re.sub(r'\s+([,\.!\?;:])', r'\1', text)
     # Collapse multiple spaces into one
@@ -251,7 +253,7 @@ def apply_merge_tags(text: str, lead: dict, sender_name: str = "") -> str:
         order_lift = "15-25 more orders a day"
         revenue_lift = "$30k-$50k in monthly revenue"
 
-    email_copy = lead.get("personalized_icebreaker") or lead.get("custom_hook") or f"Loved what you're building at {company} — your creative direction and product positioning really stand out."
+    email_copy = lead.get("personalized_icebreaker") or lead.get("custom_hook") or f"Loved what you're building at {company}, your creative direction and product positioning really stand out."
     
     # Sign off using the first name of the mailbox being used
     if sender_name:

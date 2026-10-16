@@ -175,6 +175,14 @@ def send_email_now(to_email: str, subject: str, body: str, account: dict, tracki
     subject = email_toolkit.resolve_spintax(subject)
     body = email_toolkit.resolve_spintax(body)
 
+    # Strip AI em dashes (—) and en dashes (–) for natural human authenticity
+    if subject:
+        subject = subject.replace("—", " - ").replace("–", " - ")
+        subject = re.sub(r"\s*-\s*", " - ", subject).strip()
+    if body:
+        body = body.replace(" — ", ", ").replace("—", ", ")
+        body = body.replace(" – ", " - ").replace("–", " - ")
+
     # 2. Append opt-out footer if enabled
     if db.get_setting("optout_footer_enabled", "0") == "1":
         optout_text = db.get_setting("optout_text", "")

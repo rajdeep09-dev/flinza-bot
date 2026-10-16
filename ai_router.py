@@ -58,6 +58,7 @@ RULES:
 - Propose an idea (e.g. 3 high-hook short-form video concepts or paid traffic strategy)
 - Low-friction CTA: Ask if you can send over 3 customized ideas or a 2-min breakdown video
 - Do NOT mention pricing in email 1
+- Do NOT use em dashes (—) or en dashes (–). Use standard commas, periods, or simple hyphens (-) instead
 - Sign off as: {sender_name}
 
 Lead Details:
@@ -101,6 +102,7 @@ RULES:
 - Very short: 2-3 sentences max
 - {"Final check-in: close the loop gracefully, leave the door open for whenever they want to scale their socials" if is_final else "Friendly bump: quick nudge asking if they want to see the 3 social growth concepts we mapped out"}
 - No pressure or pushy tone
+- Do NOT use em dashes (—) or en dashes (–). Use standard commas, periods, or simple hyphens (-) instead
 - Sign off as: {sender_name}
 
 Lead: {lead_info.get('name', 'there')} ({company})
@@ -153,6 +155,7 @@ GUIDELINES:
 - If they ask for pricing: mention our monthly agency growth packages are tailored to scope (organic video production, paid ads management, or full-funnel) and offer a quick 10-min chat to share case studies and give an exact number.
 - If they say 'tell me more': give 2-3 concise bullet points of how we produce the content and drive customer acquisition, then offer a link or call.
 - If they say 'we do this in-house': explain we often act as creative partners handling video editing and viral hooks to save their team time.
+- Do NOT use em dashes (—) or en dashes (–). Use standard commas, periods, or simple hyphens (-) instead.
 - Sign off as: {sender_name}
 
 Output (JSON only):
@@ -418,6 +421,15 @@ def _call_mistral(key, system, user, expect_json):
 #                      JSON PARSING
 # ═══════════════════════════════════════════════════════════════
 
+def clean_ai_dashes(text: str) -> str:
+    """Removes em dashes and en dashes for genuine, natural human tone."""
+    if not text:
+        return ""
+    text = text.replace(" — ", ", ").replace("—", ", ")
+    text = text.replace(" – ", " - ").replace("–", " - ")
+    return text
+
+
 def _extract_json(text: str):
     if not text:
         return None
@@ -432,26 +444,34 @@ def _extract_json(text: str):
         return None
     end = text.rfind("}")
 
+    parsed = None
     if end != -1:
         try:
-            return json.loads(text[start:end + 1])
+            parsed = json.loads(text[start:end + 1])
         except json.JSONDecodeError:
             pass
 
-    # Regex fallback for truncated responses
-    candidate = text[start:]
-    subj = re.search(r'"subject"\s*:\s*"((?:[^"\\]|\\.)*)"', candidate, re.DOTALL)
-    body = re.search(r'"body"\s*:\s*"((?:[^"\\]|\\.)*)"', candidate, re.DOTALL)
-    stage = re.search(r'"suggested_stage"\s*:\s*"((?:[^"\\]|\\.)*)"', candidate, re.DOTALL)
+    if not parsed:
+        # Regex fallback for truncated responses
+        candidate = text[start:]
+        subj = re.search(r'"subject"\s*:\s*"((?:[^"\\]|\\.)*)"', candidate, re.DOTALL)
+        body = re.search(r'"body"\s*:\s*"((?:[^"\\]|\\.)*)"', candidate, re.DOTALL)
+        stage = re.search(r'"suggested_stage"\s*:\s*"((?:[^"\\]|\\.)*)"', candidate, re.DOTALL)
 
-    def _unescape(s):
-        return s.replace("\\n", "\n").replace('\\"', '"').replace("\\t", "\t")
+        def _unescape(s):
+            return s.replace("\\n", "\n").replace('\\"', '"').replace("\\t", "\t")
 
-    if subj and body:
-        result = {"subject": _unescape(subj.group(1)), "body": _unescape(body.group(1))}
-        if stage:
-            result["suggested_stage"] = stage.group(1)
-        return result
+        if subj and body:
+            parsed = {"subject": _unescape(subj.group(1)), "body": _unescape(body.group(1))}
+            if stage:
+                parsed["suggested_stage"] = stage.group(1)
+
+    if isinstance(parsed, dict):
+        if "subject" in parsed and isinstance(parsed["subject"], str):
+            parsed["subject"] = clean_ai_dashes(parsed["subject"]).replace(" , ", " - ").strip()
+        if "body" in parsed and isinstance(parsed["body"], str):
+            parsed["body"] = clean_ai_dashes(parsed["body"])
+        return parsed
 
     return None
 
@@ -493,7 +513,7 @@ def _fallback_opener(lead_info: dict, sender_name: str, reason: str) -> dict:
         order_lift = "15-25 more orders a day"
         rev_lift = "$30k-$50k in monthly revenue"
 
-    email_copy = lead_info.get("personalized_icebreaker") or lead_info.get("custom_hook") or f"I took a look at what you're building at {company} — love the creative direction and product positioning."
+    email_copy = lead_info.get("personalized_icebreaker") or lead_info.get("custom_hook") or f"I took a look at what you're building at {company}, love the creative direction and product positioning."
     
     resolved_sender = sender_name
     if not resolved_sender or resolved_sender in ("Rajdeep", "The Team", "Flinza"):
@@ -506,7 +526,7 @@ def _fallback_opener(lead_info: dict, sender_name: str, reason: str) -> dict:
 
     # User's Template A
     return {
-        "subject": f"{first_name} — quick one on {company}'s ad spend",
+        "subject": f"{first_name} - quick one on {company}'s ad spend",
         "body": (
             f"Hey {first_name},\n\n"
             f"{email_copy}\n\n"
@@ -542,7 +562,7 @@ def _fallback_followup(lead_info: dict, num: int, sender_name: str, reason: str)
         f"{sig}"
     )
     return {
-        "subject": f"Re: {first_name} — quick one on {company}'s ad spend",
+        "subject": f"Re: {first_name} - quick one on {company}'s ad spend",
         "body": body,
         "used_fallback": True,
         "fallback_reason": reason,

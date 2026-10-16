@@ -140,6 +140,36 @@ def check_and_migrate_db():
             logger.info("✅ Sender persona labels migrated to human first names.")
         except Exception as lbl_e:
             logger.warning(f"Label migration notice: {lbl_e}")
+
+        # Clean any remaining em dashes (—) or en dashes (–) from leads and templates
+        try:
+            conn.execute("""
+                UPDATE leads
+                SET personalized_icebreaker = REPLACE(REPLACE(REPLACE(personalized_icebreaker, ' — ', ', '), '—', ', '), '–', ' - '),
+                    custom_hook = REPLACE(REPLACE(REPLACE(custom_hook, ' — ', ', '), '—', ', '), '–', ' - '),
+                    ai_subject = REPLACE(REPLACE(REPLACE(ai_subject, ' — ', ' - '), '—', ' - '), '–', ' - '),
+                    ai_draft = REPLACE(REPLACE(REPLACE(ai_draft, ' — ', ', '), '—', ', '), '–', ' - '),
+                    notes = REPLACE(REPLACE(REPLACE(notes, ' — ', ' - '), '—', ' - '), '–', ' - ')
+                WHERE personalized_icebreaker LIKE '%—%' OR personalized_icebreaker LIKE '%–%'
+                   OR custom_hook LIKE '%—%' OR custom_hook LIKE '%–%'
+                   OR ai_subject LIKE '%—%' OR ai_subject LIKE '%–%'
+                   OR ai_draft LIKE '%—%' OR ai_draft LIKE '%–%'
+                   OR notes LIKE '%—%' OR notes LIKE '%–%'
+            """)
+            conn.execute("""
+                UPDATE templates
+                SET name = REPLACE(REPLACE(REPLACE(name, ' — ', ' - '), '—', ' - '), '–', ' - '),
+                    subject = REPLACE(REPLACE(REPLACE(subject, ' — ', ' - '), '—', ' - '), '–', ' - '),
+                    body = REPLACE(REPLACE(REPLACE(body, ' — ', ', '), '—', ', '), '–', ' - ')
+                WHERE name LIKE '%—%' OR name LIKE '%–%'
+                   OR subject LIKE '%—%' OR subject LIKE '%–%'
+                   OR body LIKE '%—%' OR body LIKE '%–%'
+            """)
+            conn.commit()
+            logger.info("✅ Em dashes and en dashes scrubbed from leads and templates.")
+        except Exception as dash_e:
+            logger.warning(f"Dash scrub migration notice: {dash_e}")
+
         conn.close()
         logger.info("✅ Database migrations verified successfully.")
     except Exception as e:

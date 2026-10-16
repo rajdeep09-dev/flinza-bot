@@ -474,7 +474,7 @@ def test_account():
                 f"Sender: {display_name} <{email_addr}>\n"
                 f"SMTP: {smtp_host}:{smtp_port}\n"
                 f"Sent: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
-                f"✅ Sending pipeline is working!\n\n— {sender_first}\nFlinza Media"
+                f"✅ Sending pipeline is working!\n\n- {sender_first}\nFlinza Media"
             )
             msg.attach(MIMEText(body_text, "plain", "utf-8"))
 
@@ -1377,7 +1377,7 @@ function switchTemplateTab(tab) {
   if(!previewLead) return;
   const firstName = (previewLead.name ? previewLead.name.split(' ')[0] : 'there') || 'there';
   const company = previewLead.company || 'your brand';
-  const icebreaker = previewLead.personalized_icebreaker || previewLead.custom_hook || `Loved what ${company} is doing in your space — the creative aesthetic and product line really stand out.`;
+  const icebreaker = previewLead.personalized_icebreaker || previewLead.custom_hook || `Loved what ${company} is doing in your space, the creative aesthetic and product line really stand out.`;
   const followers = previewLead.instagram_followers || 0;
   
   let orderLift = '15-25 more orders a day';
@@ -1394,7 +1394,7 @@ function switchTemplateTab(tab) {
   const sig = `${nextSenderName}\nFlinza Media`;
 
   if(tab === 'A') {
-    document.getElementById('em-subject').value = `${firstName} — quick one on ${company}'s ad spend`;
+    document.getElementById('em-subject').value = `${firstName} - quick one on ${company}'s ad spend`;
     document.getElementById('em-body').value = 
 `Hey ${firstName},
 
@@ -1408,7 +1408,7 @@ ${sig}
 
 PS: got a skincare brand 15 more orders a day in 5 weeks.`;
   } else if(tab === 'B') {
-    document.getElementById('em-subject').value = `${firstName} — quick question on ${company}'s creative`;
+    document.getElementById('em-subject').value = `${firstName} - quick question on ${company}'s creative`;
     document.getElementById('em-body').value = 
 `Hi ${firstName},
 
@@ -1422,7 +1422,7 @@ ${sig}
 
 PS: helped a supplements brand add $35k in revenue in under 2 months.`;
   } else if(tab === 'F1') {
-    document.getElementById('em-subject').value = `Re: ${firstName} — quick one on ${company}'s ad spend`;
+    document.getElementById('em-subject').value = `Re: ${firstName} - quick one on ${company}'s ad spend`;
     document.getElementById('em-body').value = 
 `Hi ${firstName},
 
