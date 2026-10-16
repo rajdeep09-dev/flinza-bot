@@ -85,7 +85,7 @@ def notify_telegram_reply(reply_data: dict):
         try:
             import config
             import requests
-            token = getattr(config, "TELEGRAM_BOT_TOKEN", "") or "8898091469:AAHc5IT_09A2oXgvzzTM6Ehxv9-kF2V03Jg"
+            token = getattr(config, "TELEGRAM_BOT_TOKEN", "") or "8702594261:AAFiSqKkfanOJpxy5nhE-HmT-KNH3-xBk5c"
             uid = getattr(config, "ALLOWED_USER_ID", "") or 6642913680
             if not token or not uid:
                 return

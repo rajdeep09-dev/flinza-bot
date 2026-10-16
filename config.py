@@ -29,7 +29,7 @@ def load_env():
 load_env()
 
 # ─── Telegram ────────────────────────────────────────────────────
-TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip() or "8898091469:AAHc5IT_09A2oXgvzzTM6Ehxv9-kF2V03Jg"
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip() or "8702594261:AAFiSqKkfanOJpxy5nhE-HmT-KNH3-xBk5c"
 ALLOWED_USER_ID = os.environ.get("ALLOWED_USER_ID", "").strip() or "6642913680"
 try:
     ALLOWED_USER_ID = int(ALLOWED_USER_ID) if ALLOWED_USER_ID else 6642913680
