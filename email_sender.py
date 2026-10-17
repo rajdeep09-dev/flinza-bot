@@ -24,6 +24,7 @@ import requests
 import database as db
 import email_verifier
 import outreach_engine
+import spacemail_accounts
 
 logger = logging.getLogger(__name__)
 
@@ -323,12 +324,13 @@ def send_email_now(to_email: str, subject: str, body: str, account: dict, tracki
         smtp_pass = relay_info.get("smtp_pass") or smtp_pass
         logger.info(f"Resolved relay for {from_email}: {provider} via {target_host}:{target_port} ({relay_info.get('reason')})")
     else:
+        spacemail_domains = set(spacemail_accounts.account_domains())
+        from_dom = (from_email.split("@")[-1].lower() if "@" in from_email else "")
         is_spacemail = (
             provider == "spacemail" or
             "spacemail" in str(account.get("smtp_host", "")).lower() or
-            any(from_email.lower().endswith(dom) for dom in (
-                "@flinzamedia.com", "@growflinza.com", "@flinzabiz.com", "@flinzaleads.com", "@flinzascales.com", "@flinzaoutreach.com"
-            ))
+            from_dom in spacemail_domains or
+            from_dom.startswith("flinza")
         )
         if is_spacemail:
             provider = "spacemail"
@@ -617,21 +619,20 @@ def send_with_logging(lead_id: int, to_email: str, subject: str, body: str,
     except Exception as e:
         logger.debug(f"Pre-check bypassed on exception: {e}")
 
-    # 1. Mailbox Selection with Thread Sender Affinity
+    # 1. Mailbox Selection with Strict Thread Sender Affinity
     target_sender = (from_account or "").strip().lower()
     if not target_sender and lead_id and message_type != "opener":
         target_sender = (db.get_lead_starting_account(lead_id) or "").strip().lower()
 
     account = None
     if target_sender:
-        account = outreach_engine.mailbox_pool.select_next_mailbox(preferred_email=target_sender)
+        account = db.get_account_by_email(target_sender)
         if not account:
-            for a in db.get_all_accounts():
-                if a["email"].lower() == target_sender:
-                    account = dict(a)
-                    break
+            account = outreach_engine.mailbox_pool.select_next_mailbox(preferred_email=target_sender)
         if account:
-            logger.info(f"Preserving sender thread affinity: {account.get('email')} for lead #{lead_id}")
+            logger.info(f"Strict sender thread affinity maintained: {account.get('email')} for lead #{lead_id}")
+        else:
+            logger.warning(f"Target sender {target_sender} not found in accounts or aliases; selecting best available fallback")
 
     if not account:
         account = outreach_engine.mailbox_pool.select_next_mailbox()
@@ -655,7 +656,7 @@ def send_with_logging(lead_id: int, to_email: str, subject: str, body: str,
         account["smtp_user"]  = account.get("smtp_user") or account.get("email", "")
         account["smtp_pass"]  = account.get("smtp_pass") or account.get("app_password", "")
         account["display_name"] = account.get("display_name") or account.get("label") or _make_display_name(account["from_email"])
-        account["type"]       = account.get("type", "gmail")
+        account["type"]       = account.get("type", "spacemail")
 
     # Log as queued first (idempotent if already exists)
     if not email_id:
@@ -664,13 +665,15 @@ def send_with_logging(lead_id: int, to_email: str, subject: str, body: str,
     tracking_token = db.create_tracking_token(email_id)
     result = send_email_now(to_email, subject, body, account, tracking_token=tracking_token)
 
-    # 2. Automatic Failover to backup mailbox if temporary SMTP rate-limit or auth failure
-    if not result.get("success") and not result.get("bounce"):
+    # 2. Automatic Failover to backup mailbox ONLY for new cold openers.
+    # Replies, negotiations, and followups MUST preserve sender identity to never confuse prospects.
+    is_thread_or_reply = bool(from_account or message_type in ("negotiation_reply", "manual_reply", "reply", "followup_1", "followup_2", "followup_3", "followup_4", "followup_5") or (lead_id and message_type != "opener"))
+    if not result.get("success") and not result.get("bounce") and not is_thread_or_reply:
         err_msg = result.get("error", "SMTP send error")
         outreach_engine.mailbox_pool.trigger_cooldown(account["from_email"], minutes=15, reason=err_msg)
         backup_account = outreach_engine.mailbox_pool.select_next_mailbox()
         if backup_account and backup_account["email"] != account["from_email"]:
-            logger.info(f"Failing over dispatch from {account['from_email']} to backup {backup_account['email']}")
+            logger.info(f"Failing over cold opener dispatch from {account['from_email']} to backup {backup_account['email']}")
             result = send_email_now(to_email, subject, body, backup_account, tracking_token=tracking_token)
             if result.get("success"):
                 account = backup_account
@@ -688,7 +691,7 @@ def send_with_logging(lead_id: int, to_email: str, subject: str, body: str,
             subject=subject,
             lead_name=lead_name,
             company=company,
-            msg_type="Followup" if "followup" in message_type else "Campaign"
+            msg_type="Followup" if "followup" in message_type else ("Reply" if "reply" in message_type else "Campaign")
         )
         return {
             "success": True,
@@ -697,12 +700,19 @@ def send_with_logging(lead_id: int, to_email: str, subject: str, body: str,
             "message_id": result.get("message_id"),
         }
     else:
-        db.mark_email_failed(email_id, result.get("error", "Unknown error"))
-        db.log_activity("email_failed", f"To: {to_email} | Error: {result.get('error')}")
+        err_str = result.get("error", "Unknown error")
+        db.mark_email_failed(email_id, err_str)
+        db.log_activity("email_failed", f"To: {to_email} | Error: {err_str}")
+        notify_telegram_failed(
+            to_email=to_email,
+            from_addr=account["from_email"],
+            subject=subject,
+            error_msg=err_str
+        )
         return {
             "success": False,
             "email_id": email_id,
-            "error": result.get("error"),
+            "error": err_str,
         }
 
 
@@ -774,6 +784,61 @@ def notify_telegram_outbound(to_email: str, from_addr: str, subject: str, lead_n
             logger.debug(f"Telegram notification ignored: {e}")
 
     threading.Thread(target=_send, daemon=True, name="TelegramOutboundAlert").start()
+
+
+def notify_telegram_failed(to_email: str, from_addr: str, subject: str, error_msg: str):
+    """
+    Sends an instant Telegram alert when an outreach email fails to send.
+    Runs asynchronously in a background daemon thread.
+    """
+    def _send():
+        try:
+            import config
+            import requests
+            import html
+            import re
+            token = getattr(config, "TELEGRAM_BOT_TOKEN", "") or "8702594261:AAFiSqKkfanOJpxy5nhE-HmT-KNH3-xBk5c"
+            uid = getattr(config, "ALLOWED_USER_ID", "") or 6642913680
+            if not token or not uid:
+                return
+
+            esc_to = html.escape(str(to_email))
+            esc_from = html.escape(str(from_addr))
+            esc_sub = html.escape(str(subject or "No Subject"))
+            esc_err = html.escape(str(error_msg or "Unknown error"))
+
+            msg = (
+                "⚠️ <b>Outbound Email Failed!</b>\n"
+                "━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"📧 <b>To:</b> <code>{esc_to}</code>\n"
+                f"📬 <b>From:</b> <code>{esc_from}</code>\n"
+                f"📌 <b>Subject:</b> {esc_sub}\n"
+                f"❌ <b>Reason:</b> <code>{esc_err}</code>"
+            )
+
+            resp = requests.post(
+                f"https://api.telegram.org/bot{token}/sendMessage",
+                json={
+                    "chat_id": int(uid),
+                    "text": msg,
+                    "parse_mode": "HTML"
+                },
+                timeout=5
+            )
+            if resp.status_code != 200:
+                clean_text = re.sub(r'<[^>]*>', '', msg)
+                requests.post(
+                    f"https://api.telegram.org/bot{token}/sendMessage",
+                    json={
+                        "chat_id": int(uid),
+                        "text": clean_text
+                    },
+                    timeout=5
+                )
+        except Exception as e:
+            logger.debug(f"Telegram failure alert ignored: {e}")
+
+    threading.Thread(target=_send, daemon=True, name="TelegramFailedAlert").start()
 
 
 # ═══════════════════════════════════════════════════════════════

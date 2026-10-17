@@ -446,7 +446,7 @@ def _process_message(mail, msg_id, our_email, notify_callback):
         db.log_activity("inbox_email_received", f"Master {our_email} got email from: {sender_email} | Subj: {subject[:50]}")
 
         # Alert Telegram for general incoming mailbox messages as well
-        notify_telegram_reply({
+        gen_reply_dict = {
             "reply_id":       reply_id,
             "lead_id":        None,
             "lead_name":      _extract_name(from_header) or sender_email.split('@')[0].capitalize(),
@@ -461,7 +461,14 @@ def _process_message(mail, msg_id, our_email, notify_callback):
             "is_lead":        False,
             "ai_draft_subject": None,
             "ai_draft_body":    None,
-        })
+        }
+        notify_telegram_reply(gen_reply_dict)
+
+        if notify_callback:
+            try:
+                notify_callback(gen_reply_dict)
+            except Exception as e:
+                logger.warning(f"Failed to fire reply callback: {e}")
 
 
 # ═══════════════════════════════════════════════════════════════

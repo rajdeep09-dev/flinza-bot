@@ -254,8 +254,15 @@ def _process_loop(status_callback=None):
                     msg_type="Campaign"
                 )
             else:
-                db.mark_email_failed(email_id, result.get("error"))
-                _notify(status_callback, f"❌ Failed → {to_email}: {result.get('error')}")
+                err_text = result.get("error") or "Unknown send error"
+                db.mark_email_failed(email_id, err_text)
+                _notify(status_callback, f"❌ Failed → {to_email}: {err_text}")
+                email_sender.notify_telegram_failed(
+                    to_email=to_email,
+                    from_addr=from_addr,
+                    subject=subject,
+                    error_msg=err_text
+                )
 
             # Random delay between sends
             delay = random.randint(min_interval, max_interval)

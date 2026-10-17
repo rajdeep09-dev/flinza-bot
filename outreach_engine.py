@@ -389,12 +389,12 @@ class MailboxPoolRouter:
 
         now = time.time()
 
-        # If user explicitly preferred an account and it is healthy
+        # If caller explicitly requested a specific mailbox, strictly return it
         if preferred_email:
             for a in accounts:
                 if a["email"].lower() == preferred_email.lower():
-                    if self._cooldowns.get(a["email"], 0) <= now and a.get("sent_today", 0) < a.get("daily_limit", 50):
-                        return a
+                    return a
+            return None
 
         # Filter to active, under-cap, non-cooldown accounts
         candidates = []

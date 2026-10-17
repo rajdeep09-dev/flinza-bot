@@ -9,6 +9,7 @@ import json
 import hashlib
 from pathlib import Path
 from datetime import datetime, date, timedelta
+from typing import Optional, Dict, Any, List
 import supabase_db as _sb
 from config import (
     DB_PATH, DEFAULT_DAILY_LIMIT, DEFAULT_MIN_INTERVAL, DEFAULT_MAX_INTERVAL,
@@ -757,6 +758,47 @@ def get_all_accounts():
     rows = conn.execute("SELECT * FROM gmail_accounts ORDER BY added_at").fetchall()
     conn.close()
     return rows
+
+
+def get_account_by_email(email_addr: str) -> Optional[dict]:
+    """
+    Finds a sending account or alias by email address (case-insensitive).
+    Returns normalized dictionary with from_email, smtp_user, smtp_pass, smtp_host, smtp_port, provider, etc.
+    """
+    if not email_addr:
+        return None
+    clean = str(email_addr).strip().lower()
+    conn = get_db()
+    try:
+        row = conn.execute(
+            "SELECT *, email as from_email FROM gmail_accounts WHERE email = ? COLLATE NOCASE", (clean,)
+        ).fetchone()
+        if row:
+            acc = dict(row)
+            acc["from_email"] = acc.get("email")
+            acc["smtp_user"]  = acc.get("smtp_user") or acc.get("email")
+            acc["smtp_pass"]  = acc.get("smtp_pass") or acc.get("app_password")
+            return acc
+
+        alias_row = conn.execute("""
+            SELECT a.alias as id, a.alias as email, 'alias' as type, a.alias as from_email,
+                   COALESCE(a.custom_smtp_user, a.smtp_user) as smtp_user,
+                   COALESCE(a.custom_smtp_pass, a.smtp_pass, g.app_password) as smtp_pass,
+                   COALESCE(a.routing_mode, g.provider, 'spacemail') as routing_mode,
+                   COALESCE(a.smtp_host, g.smtp_host, 'mail.spacemail.com') as smtp_host,
+                   COALESCE(a.smtp_port, g.smtp_port, 465) as smtp_port,
+                   COALESCE(a.routing_mode, g.provider, 'spacemail') as provider,
+                   g.proxy_url, a.daily_sent as sent_today, a.daily_limit,
+                   NULL as last_used, a.display_name
+            FROM smtp_aliases a
+            LEFT JOIN gmail_accounts g ON a.smtp_user = g.email
+            WHERE a.alias = ? COLLATE NOCASE
+        """, (clean,)).fetchone()
+        if alias_row:
+            return dict(alias_row)
+    finally:
+        conn.close()
+    return None
 
 
 def set_account_active(email, active: bool):
@@ -1545,6 +1587,7 @@ def get_stats():
         stats["new_leads"]         = _safe_count("SELECT COUNT(*) as c FROM leads WHERE stage='new'")
         stats["total_sent"]        = _safe_count("SELECT COUNT(*) as c FROM emails_sent WHERE status='sent'")
         stats["sent_today"]        = _safe_count("SELECT COUNT(*) as c FROM emails_sent WHERE status='sent' AND DATE(sent_at)=?", (today,))
+        stats["emails_sent_today"] = stats["sent_today"]
         stats["queued"]            = _safe_count("SELECT COUNT(*) as c FROM emails_sent WHERE status='queued'")
         stats["failed"]            = _safe_count("SELECT COUNT(*) as c FROM emails_sent WHERE status='failed'")
         stats["total_replies"]     = _safe_count("SELECT COUNT(*) as c FROM replies")

@@ -1473,7 +1473,7 @@ async def send_unibox_reply(request: Request):
     subj = f"Re: {orig_subj}" if not orig_subj.lower().startswith("re:") else orig_subj
 
     # Maintain strict thread affinity: send from the exact account where the lead sent their message
-    target_from = (rep["to_email"] or "").strip().lower() if rep["to_email"] else None
+    target_from = (body.get("from_account") or rep["to_email"] or "").strip().lower() if (body.get("from_account") or rep["to_email"]) else None
     if not target_from and rep["lead_id"]:
         target_from = db.get_lead_starting_account(rep["lead_id"])
 
@@ -3210,11 +3210,11 @@ async def terminal_help():
 
 def _check_log_access(request: Request, key: Optional[str] = None):
     """Verifies access to live server logs via session cookie, header, or API key."""
-    if not _is_auth_required():
+    if not getattr(config, "REQUIRE_AUTH", True):
         return True
 
     expected_key = getattr(config, "DASHBOARD_API_KEY", "flinza-secret-2026") or "flinza-secret-2026"
-    provided_key = key or request.headers.get("X-API-Key") or request.query_params.get("api_key")
+    provided_key = key or request.headers.get("X-API-Key") or request.query_params.get("api_key") or request.query_params.get("key")
     if provided_key:
         if secrets.compare_digest(provided_key, expected_key) or secrets.compare_digest(provided_key, _api_key):
             return True
