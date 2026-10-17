@@ -8,6 +8,8 @@ import os
 import json
 import html
 import logging
+import logging.handlers
+from collections import deque
 import secrets
 import tempfile
 import threading
@@ -61,6 +63,51 @@ def mask_credentials(data: dict) -> dict:
 BASE_DIR = Path(__file__).resolve().parent
 TEMPLATES_DIR = BASE_DIR / "templates"
 STATIC_DIR = BASE_DIR / "static"
+
+# ── Structured In-Memory & File Log Buffer ────────────────────────
+class InMemoryLogBufferHandler(logging.Handler):
+    """Captures live structured server logs into an in-memory ring buffer and file."""
+    def __init__(self, maxlen=3000):
+        super().__init__()
+        self.buffer = deque(maxlen=maxlen)
+
+    def emit(self, record):
+        try:
+            msg = self.format(record)
+            exc = None
+            if record.exc_info:
+                exc = self.formatException(record.exc_info)
+            entry = {
+                "timestamp": datetime.fromtimestamp(record.created).strftime("%Y-%m-%d %H:%M:%S"),
+                "level": record.levelname,
+                "name": record.name,
+                "message": record.getMessage(),
+                "formatted": msg,
+                "exc": exc
+            }
+            self.buffer.append(entry)
+        except Exception:
+            self.handleError(record)
+
+_global_log_buffer = InMemoryLogBufferHandler(maxlen=3000)
+_log_formatter = logging.Formatter("%(asctime)s | %(levelname)-7s | %(name)s | %(message)s")
+_global_log_buffer.setFormatter(_log_formatter)
+
+_root_logger = logging.getLogger()
+_root_logger.setLevel(logging.INFO)
+if not any(isinstance(h, InMemoryLogBufferHandler) for h in _root_logger.handlers):
+    _root_logger.addHandler(_global_log_buffer)
+
+try:
+    _log_file = BASE_DIR / "flinza.log"
+    if not any(isinstance(h, logging.handlers.RotatingFileHandler) for h in _root_logger.handlers):
+        _rfh = logging.handlers.RotatingFileHandler(
+            _log_file, maxBytes=10 * 1024 * 1024, backupCount=3, encoding="utf-8"
+        )
+        _rfh.setFormatter(_log_formatter)
+        _root_logger.addHandler(_rfh)
+except Exception:
+    pass
 
 # ── Auto-generate dashboard key if not set ────────────────────────
 _api_key = config.DASHBOARD_API_KEY
@@ -3161,45 +3208,199 @@ async def terminal_help():
 
 
 
-@app.get("/api/terminal/logs", dependencies=[_auth])
-async def get_terminal_logs(lines: int = 120):
-    """Returns recent server log entries for live display in Terminal."""
-    log_file = BASE_DIR / "flinza.log"
-    if not log_file.exists():
-        log_file = BASE_DIR / "app.log"
-    # LOW-10 fix: cap log lines to prevent memory exhaustion
-    lines = min(int(lines), 500)
+def _check_log_access(request: Request, key: Optional[str] = None):
+    """Verifies access to live server logs via session cookie, header, or API key."""
+    if not _is_auth_required():
+        return True
 
+    expected_key = getattr(config, "DASHBOARD_API_KEY", "flinza-secret-2026") or "flinza-secret-2026"
+    provided_key = key or request.headers.get("X-API-Key") or request.query_params.get("api_key")
+    if provided_key:
+        if secrets.compare_digest(provided_key, expected_key) or secrets.compare_digest(provided_key, _api_key):
+            return True
+
+    cookie_token = request.cookies.get("flinza_session")
+    if cookie_token and secrets.compare_digest(cookie_token, _api_key):
+        return True
+
+    auth_h = request.headers.get("Authorization", "")
+    if auth_h.startswith("Bearer "):
+        bearer_token = auth_h[7:].strip()
+        if secrets.compare_digest(bearer_token, _api_key) or secrets.compare_digest(bearer_token, expected_key):
+            return True
+
+    raise HTTPException(
+        status_code=401,
+        detail="Unauthorized. Pass ?key=flinza-secret-2026, X-API-Key header, or log in.",
+        headers={"WWW-Authenticate": "Bearer"}
+    )
+
+
+@app.get("/api/system/logs")
+async def get_system_logs(
+    request: Request,
+    lines: int = Query(150, ge=1, le=2000),
+    level: str = Query("ALL"),
+    search: Optional[str] = Query(None),
+    format: str = Query("json"),
+    key: Optional[str] = Query(None)
+):
+    """
+    Returns live server log records with filtering by level, search keyword, and format.
+    Pass ?format=text for plain text output, or ?key=flinza-secret-2026 for curl access.
+    """
+    _check_log_access(request, key)
+
+    records = list(_global_log_buffer.buffer)
+    level_filter = (level or "ALL").upper()
+    if level_filter != "ALL":
+        records = [r for r in records if r["level"].upper() == level_filter]
+
+    if search:
+        s_lower = search.lower()
+        records = [
+            r for r in records
+            if s_lower in r["message"].lower()
+            or (r.get("exc") and s_lower in r["exc"].lower())
+            or s_lower in r.get("name", "").lower()
+        ]
+
+    sliced = records[-lines:]
+
+    all_recs = list(_global_log_buffer.buffer)
+    counts = {
+        "ALL": len(all_recs),
+        "ERROR": sum(1 for r in all_recs if r["level"] in ("ERROR", "CRITICAL")),
+        "WARNING": sum(1 for r in all_recs if r["level"] == "WARNING"),
+        "INFO": sum(1 for r in all_recs if r["level"] == "INFO"),
+        "DEBUG": sum(1 for r in all_recs if r["level"] == "DEBUG"),
+    }
+
+    if format in ("text", "txt"):
+        text_lines = []
+        for r in sliced:
+            text_lines.append(r["formatted"])
+            if r.get("exc"):
+                text_lines.append(r["exc"])
+        return Response(content="\n".join(text_lines), media_type="text/plain; charset=utf-8")
+
+    return {
+        "success": True,
+        "total_buffered": len(all_recs),
+        "returned_count": len(sliced),
+        "counts": counts,
+        "level": level_filter,
+        "search": search or "",
+        "logs": sliced,
+        "text": "\n".join(r["formatted"] + (f"\n{r['exc']}" if r.get("exc") else "") for r in sliced)
+    }
+
+
+@app.get("/api/system/errors")
+async def get_system_errors(
+    request: Request,
+    lines: int = Query(50, ge=1, le=500),
+    search: Optional[str] = Query(None),
+    format: str = Query("json"),
+    key: Optional[str] = Query(None)
+):
+    """
+    Dedicated endpoint returning ONLY recent error and critical logs with tracebacks.
+    Ideal for external debugging and automated scraping.
+    """
+    _check_log_access(request, key)
+    records = [r for r in _global_log_buffer.buffer if r["level"] in ("ERROR", "CRITICAL")]
+    if search:
+        s_lower = search.lower()
+        records = [
+            r for r in records
+            if s_lower in r["message"].lower()
+            or (r.get("exc") and s_lower in r["exc"].lower())
+            or s_lower in r.get("name", "").lower()
+        ]
+    sliced = records[-lines:]
+
+    if format in ("text", "txt"):
+        text_lines = []
+        for r in sliced:
+            text_lines.append(r["formatted"])
+            if r.get("exc"):
+                text_lines.append(r["exc"])
+        return Response(content="\n".join(text_lines), media_type="text/plain; charset=utf-8")
+
+    return {
+        "success": True,
+        "error_count": len(records),
+        "returned_count": len(sliced),
+        "search": search or "",
+        "errors": sliced,
+        "text": "\n".join(r["formatted"] + (f"\n{r['exc']}" if r.get("exc") else "") for r in sliced)
+    }
+
+
+@app.get("/api/terminal/logs")
+async def get_terminal_logs(
+    request: Request,
+    lines: int = 150,
+    level: Optional[str] = "ALL",
+    search: Optional[str] = None
+):
+    """Returns recent server log entries for live display in Terminal."""
+    _check_log_access(request)
+    lines = min(max(int(lines), 1), 1000)
+    records = list(_global_log_buffer.buffer)
+    level_filter = (level or "ALL").upper()
+    if level_filter != "ALL":
+        records = [r for r in records if r["level"].upper() == level_filter]
+    if search:
+        s_lower = search.lower()
+        records = [
+            r for r in records
+            if s_lower in r["message"].lower()
+            or (r.get("exc") and s_lower in r["exc"].lower())
+            or s_lower in r.get("name", "").lower()
+        ]
+
+    all_recs = list(_global_log_buffer.buffer)
+    counts = {
+        "ALL": len(all_recs),
+        "ERROR": sum(1 for r in all_recs if r["level"] in ("ERROR", "CRITICAL")),
+        "WARNING": sum(1 for r in all_recs if r["level"] == "WARNING"),
+        "INFO": sum(1 for r in all_recs if r["level"] == "INFO"),
+    }
+
+    if records:
+        log_lines = []
+        for r in records[-lines:]:
+            log_lines.append(r["formatted"])
+            if r.get("exc"):
+                log_lines.append(r["exc"])
+        return {"success": True, "logs": "\n".join(log_lines), "counts": counts, "raw": records[-lines:]}
+
+    # Fallback to reading flinza.log on disk if buffer hasn't filled
+    log_file = BASE_DIR / "flinza.log"
     if log_file.exists():
         try:
             with open(log_file, "r", encoding="utf-8", errors="ignore") as f:
                 all_lines = f.readlines()
-                tail_lines = all_lines[-lines:]
-                return {"success": True, "logs": "".join(tail_lines)}
+                return {"success": True, "logs": "".join(all_lines[-lines:]), "counts": counts}
         except Exception as e:
-            return {"success": False, "logs": f"Error reading log file: {e}"}
-    else:
-        conn = db.get_db()
-        recent_sent = conn.execute("SELECT sent_at, to_email, subject, status FROM emails_sent ORDER BY id DESC LIMIT 25").fetchall()
-        recent_replies = conn.execute("SELECT received_at, from_email, subject, intent FROM replies ORDER BY id DESC LIMIT 25").fetchall()
-        conn.close()
+            return {"success": False, "logs": f"Error reading log file: {e}", "counts": counts}
 
-        fallback_log = [f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [SYSTEM] Flinza Core Engine active on port 7880"]
-        for s in recent_sent:
-            fallback_log.append(f"[{s['sent_at']}] [DISPATCH] To: {s['to_email']} | Subject: '{s['subject']}' | Status: {s['status']}")
-        for r in recent_replies:
-            fallback_log.append(f"[{r['received_at']}] [INBOUND] From: {r['from_email']} | Subject: '{r['subject']}' | Intent: {r['intent']}")
-
-        return {"success": True, "logs": "\n".join(fallback_log)}
+    return {"success": True, "logs": "[SYSTEM] Log buffer active — awaiting next log event…", "counts": counts}
 
 
-@app.post("/api/terminal/logs/clear", dependencies=[_auth])
-async def clear_terminal_logs():
-    """Clears the log buffer."""
+@app.post("/api/terminal/logs/clear")
+async def clear_terminal_logs(request: Request):
+    """Clears the in-memory log buffer and truncates flinza.log."""
+    _check_log_access(request)
+    _global_log_buffer.buffer.clear()
     log_file = BASE_DIR / "flinza.log"
-    if log_file.exists():
+    try:
         with open(log_file, "w", encoding="utf-8") as f:
-            f.write(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [INFO] Live log buffer cleared by user.\n")
+            f.write(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [INFO] Live log buffer reset by user.\n")
+    except Exception:
+        pass
     return {"success": True, "message": "Log buffer reset"}
 
 

@@ -435,7 +435,14 @@ def send_email_now(to_email: str, subject: str, body: str, account: dict, tracki
                 fallback_account["smtp_user"] = b_user
                 fallback_account["smtp_pass"] = b_pass
                 logger.info(f"Retrying send immediately via Brevo SMTP failover for {from_email}...")
-                return send_email_now(to_email, subject, body, fallback_account, tracking_token, extra_headers)
+        if "jfe" in err_str.lower() or "jellyfish" in err_str.lower() or "high probability of spam" in err_str.lower():
+            logger.error(f"🚨 Spacemail/Jellyfish anti-spam block for {from_email}: {err_str}. Domain authentication (DMARC) or copy flagged.")
+            return {
+                "success": False,
+                "error": f"Spacemail Jellyfish Spam Block ({err_str}). Fix: Add DMARC TXT record for {from_email.split('@')[-1]} and avoid test gibberish.",
+                "account_used": from_email,
+                "is_spam_block": True
+            }
         return {"success": False, "error": f"SMTP {code} error: {err_str}", "account_used": from_email}
 
     except smtplib.SMTPRecipientsRefused as e:

@@ -329,7 +329,14 @@ document.addEventListener("DOMContentLoaded", () => {
         /(https?:\/\/[^\s<>"')]+)/g,
         '<a href="$1" target="_blank" rel="noopener noreferrer" style="color:#38bdf8; text-decoration:underline; font-weight:600; word-break:break-all;">$1</a>'
       );
-      bodyEl.innerHTML = `<div style="white-space: pre-wrap; font-family: inherit; line-height: 1.65;">${formatted || "No message content."}</div>`;
+      bodyEl.innerHTML = `
+        <div style="white-space: pre-wrap; font-family: inherit; line-height: 1.65;">${formatted || "No message content."}</div>
+        <div style="margin-top:14px;padding-top:10px;border-top:1px solid rgba(255,255,255,0.06);display:flex;align-items:center;justify-content:flex-end;gap:8px;">
+          <button class="btn-reply-msg-card" data-sender="${esc(thread.sender || '')}" data-name="${esc(thread.sender || 'Sender')}" style="font-size:11.5px;padding:5px 12px;border-radius:6px;border:1px solid rgba(56,189,248,0.35);color:#38bdf8;background:rgba(56,189,248,0.08);cursor:pointer;display:inline-flex;align-items:center;gap:5px;font-weight:600;">
+            ↩️ Reply to this message
+          </button>
+        </div>
+      `;
       bodyEl.style.display = "block";
     }
 
@@ -345,15 +352,47 @@ document.addEventListener("DOMContentLoaded", () => {
 
     const aiComposer = g("read-ai-composer");
     const aiDraft = g("read-ai-draft-text");
+    const badgeEl = g("read-composer-badge");
+    const titleEl = g("read-composer-title");
+    const genAiBtn = g("btn-manual-ai-draft");
     const senderAccEl = g("read-reply-sender-account");
     if (senderAccEl) {
       senderAccEl.textContent = thread.starting_account || thread.recipient || "Primary Account";
     }
-    if (aiComposer) {
-      aiComposer.style.display = "flex";
+
+    const isLead = !!(thread.lead_id || thread.is_lead);
+    if (isLead) {
+      // ONLY leads get an AI generated draft
+      if (badgeEl) {
+        badgeEl.textContent = "✦ AI";
+        badgeEl.style.display = "inline-block";
+        badgeEl.style.background = "linear-gradient(135deg, #a855f7, #6366f1)";
+      }
+      if (titleEl) titleEl.textContent = "✦ AI Lead Negotiation Draft Ready";
       if (aiDraft) {
+        aiDraft.placeholder = "Review AI suggested response or edit before sending…";
         aiDraft.value = thread.ai_draft_body || "";
       }
+      if (genAiBtn) genAiBtn.style.display = "none";
+    } else {
+      // Non-lead email (general inbound, notifications, receipts, partner inquiries):
+      // Clean, empty reply box ready for manual typing. NO unwanted sales draft!
+      if (badgeEl) {
+        badgeEl.textContent = "✉️ Reply";
+        badgeEl.style.display = "inline-block";
+        badgeEl.style.background = "rgba(56, 189, 248, 0.2)";
+        badgeEl.style.color = "#38bdf8";
+      }
+      if (titleEl) titleEl.textContent = "Reply to Message";
+      if (aiDraft) {
+        aiDraft.placeholder = `Write your reply to ${thread.sender || "this message"} here…`;
+        aiDraft.value = "";
+      }
+      if (genAiBtn) genAiBtn.style.display = "inline-flex";
+    }
+
+    if (aiComposer) {
+      aiComposer.style.display = "flex";
     }
   }
 
@@ -412,6 +451,11 @@ document.addEventListener("DOMContentLoaded", () => {
               </div>
               ${m.subject ? `<div style="font-size:12px;font-weight:600;color:var(--text-main);margin-bottom:8px;opacity:0.9;">Subject: ${esc(m.subject)}</div>` : ''}
               <div style="white-space:pre-wrap;font-family:inherit;line-height:1.6;font-size:13px;color:var(--text-main);">${bodyFormatted || '<i>(No message body)</i>'}</div>
+              <div style="margin-top:14px;padding-top:10px;border-top:1px solid rgba(255,255,255,0.06);display:flex;align-items:center;justify-content:flex-end;gap:8px;">
+                <button class="btn-reply-msg-card" data-sender="${senderEmail}" data-name="${roleLabel}" style="font-size:11.5px;padding:5px 12px;border-radius:6px;border:1px solid rgba(56,189,248,0.35);color:#38bdf8;background:rgba(56,189,248,0.08);cursor:pointer;display:inline-flex;align-items:center;gap:5px;font-weight:600;">
+                  ↩️ Reply to this message
+                </button>
+              </div>
             </div>
           `;
         });
@@ -423,14 +467,34 @@ document.addEventListener("DOMContentLoaded", () => {
         if (bodyEl) bodyEl.style.display = "block";
       }
 
-      // Update AI draft composer if available
+      // Check if thread belongs to a genuine outreach lead
+      const isLead = !!(data.lead_id || (fallbackThread && (fallbackThread.lead_id || fallbackThread.is_lead)));
       const aiDraft = g("read-ai-draft-text");
-      if (aiDraft && data.ai_draft_body && !aiDraft.value) {
-        aiDraft.value = data.ai_draft_body;
-      }
       const titleEl = g("read-composer-title");
-      if (titleEl) {
-        titleEl.textContent = data.ai_draft_body ? "✦ AI Reply Draft Ready" : "Reply to Conversation";
+      const badgeEl = g("read-composer-badge");
+
+      if (isLead && data.ai_draft_body) {
+        if (aiDraft && !aiDraft.value) {
+          aiDraft.value = data.ai_draft_body;
+        }
+        if (titleEl) titleEl.textContent = "✦ AI Lead Negotiation Draft Ready";
+        if (badgeEl) {
+          badgeEl.textContent = "✦ AI";
+          badgeEl.style.display = "inline-block";
+          badgeEl.style.background = "linear-gradient(135deg, #a855f7, #6366f1)";
+        }
+      } else if (!isLead) {
+        // NON-LEAD: Keep composer empty and clean for manual typing
+        if (aiDraft && !aiDraft.value) {
+          aiDraft.placeholder = `Write your reply to ${data.lead_name || (fallbackThread && fallbackThread.sender) || "this message"} here…`;
+        }
+        if (titleEl) titleEl.textContent = "Reply to Message";
+        if (badgeEl) {
+          badgeEl.textContent = "✉️ Reply";
+          badgeEl.style.display = "inline-block";
+          badgeEl.style.background = "rgba(56, 189, 248, 0.2)";
+          badgeEl.style.color = "#38bdf8";
+        }
       }
 
     } catch (e) {
@@ -2953,10 +3017,14 @@ document.addEventListener("DOMContentLoaded", () => {
   let cmdHistory = [];
   let historyIdx = -1;
   let _terminalLogsTimer = null;
+  let _currentLogLevel = "ALL";
+  let _logSearchQuery = "";
+  let _terminalListenersAttached = false;
 
   function loadTerminal() {
     const input = g("terminal-cli-input");
     if (input) input.focus();
+    initTerminalLogControls();
     fetchTerminalLogs();
     if (!_terminalLogsTimer) {
       _terminalLogsTimer = setInterval(() => {
@@ -2968,16 +3036,148 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
 
+  function initTerminalLogControls() {
+    if (_terminalListenersAttached) return;
+    _terminalListenersAttached = true;
+
+    // Filter Pills
+    document.querySelectorAll(".btn-log-filter").forEach(btn => {
+      btn.addEventListener("click", () => {
+        document.querySelectorAll(".btn-log-filter").forEach(b => {
+          b.classList.remove("active");
+          b.style.background = "transparent";
+        });
+        btn.classList.add("active");
+        const lvl = btn.dataset.level || "ALL";
+        _currentLogLevel = lvl;
+        if (lvl === "ERROR") btn.style.background = "rgba(239,68,68,0.2)";
+        else if (lvl === "WARNING") btn.style.background = "rgba(245,158,11,0.2)";
+        else btn.style.background = "rgba(56,189,248,0.2)";
+        fetchTerminalLogs();
+      });
+    });
+
+    // Search input
+    const logSearchInput = g("terminal-log-search");
+    if (logSearchInput) {
+      let _logDebounce = null;
+      logSearchInput.addEventListener("input", () => {
+        clearTimeout(_logDebounce);
+        _logDebounce = setTimeout(() => {
+          _logSearchQuery = logSearchInput.value.trim();
+          fetchTerminalLogs();
+        }, 300);
+      });
+    }
+
+    // Copy cURL API command
+    const btnCopyCurl = g("btn-copy-logs-curl");
+    if (btnCopyCurl) {
+      btnCopyCurl.addEventListener("click", () => {
+        const curlCmd = `curl -s "${window.location.origin}/api/system/logs?format=text"`;
+        navigator.clipboard.writeText(curlCmd).then(() => {
+          showToast("✓ cURL command copied: " + curlCmd, "success");
+        }).catch(() => {
+          prompt("Copy cURL command:", curlCmd);
+        });
+      });
+    }
+
+    // Topbar Logs button
+    const btnTopbarLogs = g("btn-topbar-logs");
+    if (btnTopbarLogs) {
+      btnTopbarLogs.addEventListener("click", () => {
+        switchView("terminal");
+        const logPanel = g("panel-server-logs");
+        if (logPanel) logPanel.scrollIntoView({ behavior: "smooth" });
+        fetchTerminalLogs();
+      });
+    }
+
+    // Global listener for "↩️ Reply to this message" buttons on conversation cards
+    document.addEventListener("click", (e) => {
+      const replyCardBtn = e.target.closest(".btn-reply-msg-card");
+      if (replyCardBtn) {
+        const sender = replyCardBtn.dataset.sender || "";
+        const name = replyCardBtn.dataset.name || "sender";
+        const composer = g("read-ai-composer");
+        const textarea = g("read-ai-draft-text");
+        if (composer) {
+          composer.scrollIntoView({ behavior: "smooth", block: "center" });
+        }
+        if (textarea) {
+          textarea.focus();
+          if (!textarea.value.trim()) {
+            textarea.placeholder = `Replying to ${name} <${sender}>…`;
+          }
+        }
+      }
+    });
+  }
+
   async function fetchTerminalLogs() {
     try {
-      const d = await apiFetch("/api/terminal/logs?lines=100");
+      const searchInput = g("terminal-log-search");
+      if (searchInput) _logSearchQuery = searchInput.value.trim();
+      const url = `/api/system/logs?lines=250&level=${encodeURIComponent(_currentLogLevel)}&search=${encodeURIComponent(_logSearchQuery)}`;
+      const d = await apiFetch(url);
       const logsEl = g("terminal-live-logs");
-      if (logsEl && d.success) {
-        logsEl.textContent = d.logs || "No logs available.";
+      if (!logsEl || !d || !d.success) return;
+
+      const counts = d.counts || {};
+      setEl("cnt-log-error", counts.ERROR || 0);
+      setEl("cnt-log-warn", counts.WARNING || 0);
+      setEl("log-stat-badge", `${d.total_buffered || 0} events`);
+
+      const topbarBadge = g("topbar-error-badge");
+      if (topbarBadge) {
+        if (counts.ERROR > 0) {
+          topbarBadge.textContent = counts.ERROR;
+          topbarBadge.style.display = "inline-block";
+        } else {
+          topbarBadge.style.display = "none";
+        }
+      }
+
+      const logs = d.logs || [];
+      if (logs.length === 0) {
+        logsEl.innerHTML = `<span style="color:#64748b;font-style:italic;">No log entries found${_currentLogLevel !== 'ALL' ? ' for ' + _currentLogLevel : ''}${_logSearchQuery ? ' matching "' + esc(_logSearchQuery) + '"' : ''}.</span>`;
+        return;
+      }
+
+      // Syntax highlight log entries by severity
+      let html = "";
+      logs.forEach(r => {
+        const lvl = (r.level || "INFO").toUpperCase();
+        let color = "#94a3b8";
+        let lvlBadge = `<span style="color:#38bdf8;font-weight:700;">${esc(lvl.padEnd(7))}</span>`;
+        if (lvl === "ERROR" || lvl === "CRITICAL") {
+          color = "#fca5a5";
+          lvlBadge = `<span style="background:rgba(239,68,68,0.25);color:#f87171;font-weight:700;padding:1px 5px;border-radius:4px;">${esc(lvl)}</span>`;
+        } else if (lvl === "WARNING") {
+          color = "#fde68a";
+          lvlBadge = `<span style="background:rgba(245,158,11,0.25);color:#fbbf24;font-weight:700;padding:1px 5px;border-radius:4px;">${esc(lvl)}</span>`;
+        } else if (lvl === "DEBUG") {
+          color = "#64748b";
+        }
+
+        const timeStr = esc(r.timestamp || "");
+        const nameStr = esc(r.name || "app");
+        const msgStr = esc(r.message || "");
+        let lineHtml = `<div style="padding:2px 0;line-height:1.55;"><span style="color:#64748b;">${timeStr}</span> | ${lvlBadge} | <span style="color:#7dd3fc;">${nameStr}</span> | <span style="color:${color};">${msgStr}</span></div>`;
+        if (r.exc) {
+          lineHtml += `<pre style="margin:2px 0 6px 20px;color:#f87171;background:rgba(239,68,68,0.06);padding:6px 10px;border-left:3px solid #ef4444;border-radius:4px;font-size:11px;overflow-x:auto;">${esc(r.exc)}</pre>`;
+        }
+        html += lineHtml;
+      });
+
+      const wasAtBottom = (logsEl.scrollHeight - logsEl.scrollTop - logsEl.clientHeight) < 60;
+      logsEl.innerHTML = html;
+      if (wasAtBottom) {
         logsEl.scrollTop = logsEl.scrollHeight;
       }
     } catch (err) {
-      console.error("Error fetching logs:", err);
+      console.warn("Error fetching logs:", err);
     }
   }
 

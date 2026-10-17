@@ -30,9 +30,25 @@ if hasattr(sys.stdout, "reconfigure"):
     except Exception:
         pass
 
+import logging.handlers
+
+_log_fmt = logging.Formatter("%(asctime)s | %(levelname)-7s | %(name)s | %(message)s")
+_handlers = [logging.StreamHandler(sys.stdout)]
+try:
+    _rfh = logging.handlers.RotatingFileHandler(
+        os.path.join(BASE_DIR, "flinza.log"),
+        maxBytes=10 * 1024 * 1024,
+        backupCount=3,
+        encoding="utf-8"
+    )
+    _rfh.setFormatter(_log_fmt)
+    _handlers.append(_rfh)
+except Exception:
+    pass
+
 logging.basicConfig(
-    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
     level=logging.INFO,
+    handlers=_handlers
 )
 logger = logging.getLogger("flinza-runner")
 
